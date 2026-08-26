@@ -10,11 +10,67 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from pathlib import Path
 
 from werkzeug.serving import make_server
 
 from web.desktop_app import create_desktop_app
 from petey.version import PROJECT_URL, __version__
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+ICON_DIRECTORY = PROJECT_ROOT / "assets" / "icons"
+
+
+def application_icon_path(platform: str | None = None) -> Path:
+    platform = platform or sys.platform
+    if platform == "win32":
+        return ICON_DIRECTORY / "petey.ico"
+    if platform == "darwin":
+        return ICON_DIRECTORY / "petey.icns"
+    return ICON_DIRECTORY / "petey-icon-256.png"
+
+
+def _desktop_exec_argument(value: str | Path) -> str:
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    escaped = escaped.replace("`", "\\`").replace("$", "\\$")
+    return f'"{escaped}"'
+
+
+def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
+    """Install a per-user Linux launcher and stable icon copy."""
+    if sys.platform != "linux":
+        raise RuntimeError("Desktop shortcut installation is currently available on Linux.")
+    root = Path(data_home) if data_home else Path(
+        os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    )
+    icon_directory = root / "icons" / "hicolor" / "256x256" / "apps"
+    application_directory = root / "applications"
+    icon_directory.mkdir(parents=True, exist_ok=True)
+    application_directory.mkdir(parents=True, exist_ok=True)
+    installed_icon = icon_directory / "petey-desktop.png"
+    shutil.copy2(application_icon_path("linux"), installed_icon)
+    launcher = application_directory / "petey-desktop.desktop"
+    launcher.write_text(
+        "\n".join(
+            [
+                "[Desktop Entry]",
+                "Type=Application",
+                "Name=PETEY Desktop",
+                f"Comment=Personal AI assistant · v{__version__}",
+                f"Exec={_desktop_exec_argument(sys.executable)} {_desktop_exec_argument(Path(__file__).resolve())}",
+                f"Path={PROJECT_ROOT}",
+                f"Icon={installed_icon}",
+                "Terminal=false",
+                "Categories=Utility;Development;",
+                "StartupNotify=true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    return launcher
 
 
 class DesktopBridge:
@@ -104,14 +160,23 @@ class DesktopBridge:
             return {"ok": False, "error": f"Could not save the generated file: {exc}"}
 
 
+def preferred_linux_webview_backend():
+    """Select an installed backend without making pywebview probe noisy failures."""
+    if sys.platform != "linux":
+        return None
+    if any(
+        importlib.util.find_spec(module) is not None
+        for module in ("PySide6", "PyQt6", "PySide2", "PyQt5")
+    ):
+        return "qt"
+    if importlib.util.find_spec("gi") is not None:
+        return "gtk"
+    return ""
+
+
 def linux_webview_backend_available():
     """Return whether this interpreter can supply GTK or Qt to pywebview."""
-    if sys.platform != "linux":
-        return True
-    return any(
-        importlib.util.find_spec(module) is not None
-        for module in ("gi", "PySide6", "PyQt6", "PySide2", "PyQt5")
-    )
+    return sys.platform != "linux" or bool(preferred_linux_webview_backend())
 
 
 def run_in_browser(url, reason=None):
@@ -153,7 +218,20 @@ def main():
         action="store_true",
         help="Open the local interface in a browser for development",
     )
+    parser.add_argument(
+        "--install-shortcut",
+        action="store_true",
+        help="Install PETEY Desktop in the current Linux user's application menu",
+    )
     args = parser.parse_args()
+
+    if args.install_shortcut:
+        try:
+            launcher = install_linux_desktop_shortcut()
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        print(f"[DESKTOP] Installed launcher: {launcher}")
+        return
 
     local = LocalServer()
     local.start()
@@ -192,7 +270,11 @@ def main():
             js_api=bridge,
         )
         try:
-            webview.start()
+            backend = preferred_linux_webview_backend()
+            if backend:
+                webview.start(gui=backend, icon=str(application_icon_path()))
+            else:
+                webview.start(icon=str(application_icon_path()))
         except Exception as exc:
             # A partially installed GTK backend may import successfully but still
             # lack WebKit. Keep Petey usable and show the exact native-window fix.

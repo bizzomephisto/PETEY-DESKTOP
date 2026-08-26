@@ -995,7 +995,7 @@ const mediaNonimageSource = document.getElementById('media-nonimage-source');
 const mediaPrompt = document.getElementById('media-prompt');
 const mediaStatus = document.getElementById('media-status');
 let mediaModelRequest = 0;
-let selectedVisualImageFile = null;
+let selectedVisualImage = null;
 let mediaSelectionUrl = '';
 
 const mediaOperationUI = {
@@ -1084,7 +1084,7 @@ async function loadMediaModels(operation) {
 mediaOperation.addEventListener('change', configureMediaOperation);
 
 function clearMediaSourceSelection() {
-    selectedVisualImageFile = null;
+    selectedVisualImage = null;
     mediaSource.value = '';
     mediaNonimageSource.value = '';
     if (mediaSelectionUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaSelectionUrl);
@@ -1104,7 +1104,7 @@ function showMediaImageSelection(file, previewUrl) {
 
 mediaSource.addEventListener('change', () => {
     const file = mediaSource.files[0];
-    selectedVisualImageFile = null;
+    selectedVisualImage = null;
     if (file) showMediaImageSelection(file, URL.createObjectURL(file));
 });
 document.getElementById('clear-media-image').addEventListener('click', clearMediaSourceSelection);
@@ -1227,16 +1227,14 @@ async function selectVisualImage(item, button) {
     button.disabled = true;
     setFeedback(status, `Selecting ${item.name}…`);
     try {
-        const fileUrl = imageBrowserUrl('file', item.path);
-        const response = await fetch(fileUrl);
-        if (!response.ok) {
-            const payload = await response.json().catch(() => ({}));
-            throw new Error(payload.error || 'Could not load the selected image.');
-        }
-        const blob = await response.blob();
-        selectedVisualImageFile = new File([blob], item.name, {type: blob.type || 'application/octet-stream'});
+        selectedVisualImage = {
+            token: imageBrowserToken,
+            path: item.path,
+            name: item.name,
+            size: item.size,
+        };
         mediaSource.value = '';
-        showMediaImageSelection(selectedVisualImageFile, fileUrl);
+        showMediaImageSelection(item, imageBrowserUrl('thumbnail', item.path));
         imageBrowserDialog.close();
         setFeedback(mediaStatus, `Selected ${item.name}.`, 'success');
     } catch (error) {
@@ -1312,9 +1310,10 @@ document.getElementById('generate-media').addEventListener('click', async () => 
     const operation = mediaOperation.value;
     const config = mediaOperationUI[operation];
     const file = config.source === 'image'
-        ? (selectedVisualImageFile || mediaSource.files[0])
+        ? mediaSource.files[0]
         : mediaNonimageSource.files[0];
-    if (['image', 'video'].includes(config.source) && !file) {
+    const hasVisualImage = config.source === 'image' && Boolean(selectedVisualImage);
+    if (['image', 'video'].includes(config.source) && !file && !hasVisualImage) {
         setFeedback(mediaStatus, `Choose a source ${config.source} first.`, 'error');
         return;
     }
@@ -1329,6 +1328,10 @@ document.getElementById('generate-media').addEventListener('click', async () => 
     body.append('prompt', mediaPrompt.value);
     body.append('parameters', JSON.stringify(mediaParameters()));
     if (file) body.append('source', file);
+    if (hasVisualImage) {
+        body.append('source_browser_token', selectedVisualImage.token);
+        body.append('source_browser_path', selectedVisualImage.path);
+    }
 
     button.disabled = true;
     setFeedback(mediaStatus, 'Adding generation to Petey’s media queue…');

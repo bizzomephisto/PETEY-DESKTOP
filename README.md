@@ -52,6 +52,15 @@ python run_desktop.py --browser
 On Linux, the requirements install the PySide6 backend for pywebview. Do not run
 `pip install gi`; PyGObject is supplied through Linux distribution packages.
 
+Install PETEY Desktop in your Linux application menu with:
+
+```bash
+python run_desktop.py --install-shortcut
+```
+
+Application artwork is available under `assets/icons/` as a transparent PNG
+master, Linux PNG, Windows ICO, and macOS ICNS file.
+
 Provider keys and models can be configured from **Settings**. Values saved there
 are stored in PETEY's platform application-data directory. Environment variables
 from `.env` are also supported.

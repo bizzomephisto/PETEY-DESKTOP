@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 from pathlib import PurePath
 
 from flask import Flask, jsonify, render_template, request, send_file, url_for
@@ -19,6 +20,9 @@ from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.tools import build_desktop_tool_registry
 from petey.version import PROJECT_URL, __version__
+
+
+MAX_MEDIA_SOURCE_BYTES = 25 * 1024 * 1024
 
 
 class AsyncRuntime:
@@ -710,13 +714,25 @@ def create_desktop_app(
 
         uploaded = request.files.get("source")
         source = None
-        if uploaded and uploaded.filename:
-            source = MediaInput(
-                filename=PurePath(uploaded.filename.replace("\\", "/")).name,
-                content_type=uploaded.mimetype or "application/octet-stream",
-                data=uploaded.read(),
-            )
         try:
+            if uploaded and uploaded.filename:
+                source = MediaInput(
+                    filename=PurePath(uploaded.filename.replace("\\", "/")).name,
+                    content_type=uploaded.mimetype or "application/octet-stream",
+                    data=uploaded.read(),
+                )
+            elif request.form.get("source_browser_token"):
+                path = app.config["PETEY_IMAGE_BROWSER"].image_file(
+                    request.form.get("source_browser_token", ""),
+                    request.form.get("source_browser_path", ""),
+                )
+                if path.stat().st_size > MAX_MEDIA_SOURCE_BYTES:
+                    raise ValueError("The selected image exceeds the 25 MB media input limit.")
+                source = MediaInput(
+                    filename=path.name,
+                    content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                    data=path.read_bytes(),
+                )
             job = get_media_jobs().submit(
                 operation=operation,
                 prompt=prompt,

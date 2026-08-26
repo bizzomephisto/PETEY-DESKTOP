@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from petey.assistant import AssistantReply
@@ -224,6 +225,41 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(jobs.submit.call_args.kwargs["installation_id"], state.installation_id)
             self.assertEqual(state.selected_model("txt2img"), "flux-desktop")
             memory_store.record_image_generation.assert_called_once_with(state.installation_id, state.person_id, "A desktop robot")
+
+    def test_media_generation_reads_visual_browser_selection_server_side(self):
+        queued = {
+            "id": "job-visual", "status": "queued", "kind": "image",
+            "operation": "img2img", "prompt": "Restyle it", "model_slug": "",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "images"
+            root.mkdir()
+            image_path = root / "selected.png"
+            image_path.write_bytes(b"local-image-bytes")
+            state = DesktopState(Path(directory) / "state")
+            jobs = MagicMock()
+            jobs.submit.return_value = queued
+            app = create_desktop_app(state=state, runtime=AsyncRuntime(), job_manager=jobs)
+            client = app.test_client()
+            opened = client.post("/api/desktop/image-browser/open", json={"path": str(root)})
+            token = opened.get_json()["token"]
+
+            response = client.post(
+                "/api/desktop/media/generate",
+                data={
+                    "operation": "img2img",
+                    "prompt": "Restyle it",
+                    "parameters": "{}",
+                    "source_browser_token": token,
+                    "source_browser_path": "selected.png",
+                },
+            )
+
+            self.assertEqual(response.status_code, 202)
+            source = jobs.submit.call_args.kwargs["source"]
+            self.assertEqual(source.filename, "selected.png")
+            self.assertEqual(source.content_type, "image/png")
+            self.assertEqual(source.data, b"local-image-bytes")
 
     def test_media_balance_is_returned_without_exposing_key(self):
         with tempfile.TemporaryDirectory() as directory:
