@@ -1,0 +1,70 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+envbak/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Runtime data
+*.db
+*.sqlite
+*.sqlite3
+config_*.json
+chroma_db/
+user_images/
+petey/wiki/
+*.log
+*.mp3
+
+# Local tools and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.fuse_hidden*
+
+# Bundled executables are local deployment artifacts
+petey/ffmpeg/
+
+# Legacy Discord bot and web-admin source retained only in the local migration tree
+main.py
+run_web.py
+generate_codes.py
+peteyhelp.txt
+whatsnew.txt
+petey/cogs/
+petey/database.py
+petey/db.py
+petey/flow_engine.py
+petey/music.py
+petey/scheduler.py
+petey/setup_guide.md
+petey/utils.py
+petey/voice.py
+petey/wiki.py
+petey/flux.json
+petey/image_z_image_turbo.json
+petey/thinking.gif
+petey/gemini_api.py
+web/app.py
+web/templates/creator.html
+web/templates/dashboard.html
+web/templates/guide.html
+web/templates/index.html
+web/templates/invite.html
+web/templates/invite_verify.html
+web/templates/privacy.html
+web/templates/tasks.html
+web/templates/tos.html
+web/templates/wizard.html
+web/static/chode_avatar.jpg
+web/static/chode_avatar.png
+web/static/flow_builder.js
+web/static/style.css
+web/static/wizard.css
