@@ -17,6 +17,8 @@ from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
+from petey.tools import build_desktop_tool_registry
+from petey.version import PROJECT_URL, __version__
 
 
 class AsyncRuntime:
@@ -97,7 +99,9 @@ def create_desktop_app(
 
     @app.get("/")
     def desktop_home():
-        return render_template("desktop.html")
+        return render_template(
+            "desktop.html", app_version=__version__, project_url=PROJECT_URL
+        )
 
     @app.get("/api/desktop/bootstrap")
     def desktop_bootstrap():
@@ -105,6 +109,8 @@ def create_desktop_app(
         return jsonify(
             {
                 "name": "Petey",
+                "version": __version__,
+                "project_url": PROJECT_URL,
                 "person_name": current.display_name,
                 "conversation_id": current.conversation_id,
                 "conversations": current.conversations,
@@ -292,10 +298,19 @@ def create_desktop_app(
             person_id=current.person_id,
             display_name=current.display_name,
         )
-        service = AssistantService(
-            current.system_prompt, current.ai_provider, app.config["PETEY_MEMORY"]
-        )
         temporary = request.form.get("temporary", "").lower() in {"1", "true", "yes"}
+        tools = build_desktop_tool_registry(
+            current,
+            get_media_jobs,
+            app.config["PETEY_MEMORY"],
+            temporary=temporary,
+        )
+        service = AssistantService(
+            current.system_prompt,
+            current.ai_provider,
+            app.config["PETEY_MEMORY"],
+            tool_registry=tools,
+        )
         temporary_history = []
         if temporary:
             try:
@@ -314,7 +329,13 @@ def create_desktop_app(
                     temporary_history=temporary_history,
                 )
             )
-            return jsonify({"text": reply.text, "gif_url": reply.gif_url})
+            return jsonify(
+                {
+                    "text": reply.text,
+                    "gif_url": reply.gif_url,
+                    "tool_events": list(reply.tool_events),
+                }
+            )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except AIProviderError as exc:
@@ -424,13 +445,43 @@ def create_desktop_app(
     def desktop_personality():
         current: DesktopState = app.config["PETEY_STATE"]
         if request.method == "GET":
-            return jsonify({"persona": current.persona, "presets": PERSONA_PRESETS})
+            return jsonify(
+                {
+                    "persona": current.persona,
+                    "presets": PERSONA_PRESETS,
+                    "saved_personas": current.saved_personas,
+                }
+            )
         try:
             changes = request.get_json(silent=True) or {}
             if not isinstance(changes, dict):
                 return jsonify({"error": "Personality settings must be an object."}), 400
             persona = current.update_persona(changes)
             return jsonify({"status": "saved", "persona": persona})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.route("/api/desktop/personality/slots/<int:slot>", methods=["PUT", "DELETE"])
+    def desktop_personality_slot(slot):
+        current: DesktopState = app.config["PETEY_STATE"]
+        try:
+            if request.method == "DELETE":
+                removed = current.clear_persona_slot(slot)
+                return jsonify(
+                    {"removed": removed, "saved_personas": current.saved_personas}
+                )
+            changes = request.get_json(silent=True) or {}
+            if not isinstance(changes, dict):
+                return jsonify({"error": "Personality settings must be an object."}), 400
+            persona = current.save_persona_slot(slot, changes)
+            return jsonify(
+                {
+                    "status": "saved",
+                    "slot": slot,
+                    "persona": persona,
+                    "saved_personas": current.saved_personas,
+                }
+            )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 

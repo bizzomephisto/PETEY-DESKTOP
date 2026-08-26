@@ -7,6 +7,7 @@ from petey.assistant import AssistantReply
 from petey.desktop_state import DesktopState
 from petey.media_jobs import MediaGallery
 from web.desktop_app import AsyncRuntime, create_desktop_app
+from petey.version import PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
@@ -21,10 +22,13 @@ class DesktopAppTests(unittest.TestCase):
 
             self.assertEqual(shell.status_code, 200)
             self.assertIn("Message Petey", shell.get_data(as_text=True))
+            self.assertIn(f"v{__version__}", shell.get_data(as_text=True))
+            self.assertIn(PROJECT_URL, shell.get_data(as_text=True))
             self.assertEqual(bootstrap.status_code, 200)
             self.assertEqual(
                 bootstrap.get_json()["installation_id"], state.installation_id
             )
+            self.assertEqual(bootstrap.get_json()["version"], __version__)
 
     def test_messages_are_labeled_by_speaker(self):
         rows = [
@@ -127,6 +131,25 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn("friendly_helper", current.get_json()["presets"])
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["persona"]["name"], "Desktop Petey")
+
+    def test_personality_slots_can_be_saved_and_cleared(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            app = create_desktop_app(state=state, runtime=object())
+            client = app.test_client()
+
+            saved = client.put(
+                "/api/desktop/personality/slots/2",
+                json={"name": "Writer Petey", "system_prompt": "You are a writing partner."},
+            )
+            current = client.get("/api/desktop/personality")
+            cleared = client.delete("/api/desktop/personality/slots/2")
+
+            self.assertEqual(saved.status_code, 200)
+            self.assertEqual(saved.get_json()["persona"]["name"], "Writer Petey")
+            self.assertEqual(current.get_json()["saved_personas"][1]["name"], "Writer Petey")
+            self.assertTrue(cleared.get_json()["removed"])
+            self.assertIsNone(cleared.get_json()["saved_personas"][1])
 
     def test_knowledge_upload_queues_document_and_replaces_same_name(self):
         with tempfile.TemporaryDirectory() as directory:

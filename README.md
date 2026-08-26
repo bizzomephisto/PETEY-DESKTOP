@@ -1,5 +1,7 @@
 # PETEY Desktop
 
+Current release: **v0.10.0**
+
 PETEY is a standalone desktop AI assistant with local conversations, configurable
 personality, universal SQLite memory, RAG document management, deAPI media tools,
 and an approval-gated project workspace.
@@ -9,10 +11,11 @@ and an approval-gated project workspace.
 - Gemini, OpenAI, LM Studio, Ollama, and other OpenAI-compatible chat providers
 - Local SQLite conversation memory with configurable local or hosted embeddings
 - Temporary chats that do not read or write memory
-- Personality presets and editable system prompts
+- Built-in personality templates, editable system prompts, and five saved persona slots
 - RAG uploads, retrieval testing, vector rebuilding, and local database controls
 - Parallel deAPI image, video, music, speech, background-removal, and upscale jobs
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
+- Conversational image generation through modular model tools
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
@@ -91,5 +94,6 @@ Core layout:
 - `petey/deapi_client.py` — deAPI transport and progress polling
 - `petey/media_jobs.py` — concurrent generation queue and gallery capture
 - `petey/workspace.py` — approved-folder file and command operations
+- `petey/tools/` — permission-aware model tool registry and capability modules
 - `web/desktop_app.py` — loopback Flask API
 - `web/templates/desktop.html` and `web/static/desktop.*` — desktop interface

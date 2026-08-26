@@ -26,8 +26,7 @@
                 <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
             </nav>
             <div class="coming-next">
-                <span>Local installation</span>
-                <small id="installation-label">Loading identity…</small>
+                <a id="project-link" href="{{ project_url }}" target="_blank" rel="noopener">GitHub · PETEY-DESKTOP ↗</a>
             </div>
         </aside>
 
@@ -36,7 +35,7 @@
                 <div><h1>Petey</h1><p id="status">Starting up…</p></div>
                 <div class="chat-header-actions">
                     <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary</span></label>
-                    <span class="local-badge">Local</span>
+                    <span class="version-badge">v{{ app_version }}</span>
                 </div>
             </header>
 
@@ -254,6 +253,10 @@
             <header class="tool-header"><div><h1>Settings · Personality</h1><p>Shape how Petey talks and responds.</p></div><span id="personality-status" class="save-status"></span></header>
             <div class="settings-tabs" role="tablist"><button class="settings-tab" data-settings-view="settings" type="button">General</button><button class="settings-tab active" data-settings-view="personality" type="button">Personality</button><button class="settings-tab" data-settings-view="knowledge" type="button">Knowledge / RAG</button><button class="settings-tab" data-settings-view="memory" type="button">Memory</button></div>
             <div class="tool-content">
+                <section class="settings-card">
+                    <div class="card-heading"><div><h2>Saved personas</h2><p>Keep up to five personality snapshots on this machine.</p></div><span class="provider-badge">5 local slots</span></div>
+                    <div id="saved-persona-slots" class="persona-slot-grid"></div>
+                </section>
                 <section class="settings-card">
                     <div class="field-grid two-column">
                         <label><span>Preset</span><select id="persona-preset"><option value="">Custom</option></select></label>

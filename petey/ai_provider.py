@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import json
+import uuid
 from urllib.parse import urlparse
 
 import requests
@@ -62,6 +64,158 @@ class AIProvider:
         if self.provider in {"openai", "local"}:
             return self._openai_compatible(prompt, system_message, history or [])
         raise AIProviderError("Unsupported AI provider.")
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        system_message: str,
+        history: list[dict] | None,
+        tools: list[dict],
+        execute_tool,
+        max_rounds: int = 3,
+    ) -> tuple[str, list[dict]]:
+        """Run an OpenAI-compatible tool loop with duplicate-call protection."""
+        if not tools or self.provider not in {"openai", "local"}:
+            return self.complete(prompt, system_message, history), []
+
+        selected = self._selected()
+        api_key = self._api_key()
+        if self.provider == "openai" and not api_key:
+            raise AIProviderError("OpenAI needs an API key in Settings or OPENAI_API_KEY.")
+        model = str(selected.get("model") or "").strip()
+        if not model:
+            raise AIProviderError("Choose or enter a model name.")
+        base_url = (
+            "https://api.openai.com/v1"
+            if self.provider == "openai"
+            else str(selected.get("base_url") or "http://localhost:1234/v1").rstrip("/")
+        )
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        messages = [{"role": "system", "content": system_message}]
+        messages.extend(
+            {
+                "role": "assistant" if item.get("role") == "assistant" else "user",
+                "content": str(item.get("content") or ""),
+            }
+            for item in (history or [])
+        )
+        messages.append({"role": "user", "content": prompt})
+        events = []
+        executed = {}
+
+        for _round in range(max(1, min(5, int(max_rounds)))):
+            request_payload = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto",
+            }
+            if not bool(selected.get("thinking_enabled", True)):
+                if self.provider == "local" or model.startswith(("gpt-5", "o1", "o3", "o4")):
+                    request_payload["reasoning_effort"] = "none"
+            try:
+                response = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=request_payload,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                message = response.json()["choices"][0]["message"]
+            except requests.RequestException as exc:
+                if self.provider == "local":
+                    raise AIProviderError(self._local_connection_help(base_url, exc)) from exc
+                raise AIProviderError(f"Could not reach OpenAI: {exc}") from exc
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise AIProviderError("The model returned an unreadable tool response.") from exc
+
+            content = self._message_content(message.get("content", ""))
+            tool_calls = self._normalize_tool_calls(message.get("tool_calls"), content)
+            if not tool_calls:
+                if not content:
+                    raise AIProviderError("The model returned an empty response.")
+                return self._clean_output(content), events
+
+            assistant_content = re.sub(
+                r"<tool_call>.*?</tool_call>", "", content, flags=re.DOTALL
+            ).strip()
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_content or None,
+                    "tool_calls": tool_calls,
+                }
+            )
+            for call in tool_calls:
+                function = call["function"]
+                try:
+                    arguments = json.loads(function.get("arguments") or "{}")
+                    if not isinstance(arguments, dict):
+                        raise ValueError
+                    cache_key = f"{function['name']}:{json.dumps(arguments, sort_keys=True)}"
+                    if cache_key in executed:
+                        result = {**executed[cache_key], "duplicate_call_ignored": True}
+                    else:
+                        result = execute_tool(function["name"], arguments)
+                        executed[cache_key] = result
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    result = {"status": "error", "error": f"Invalid tool call: {exc}"}
+                except Exception as exc:
+                    result = {"status": "error", "error": str(exc)}
+                events.append({"name": function["name"], "result": result})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+
+        if events:
+            final = events[-1]["result"]
+            return str(final.get("message") or final.get("error") or "The tool request finished."), events
+        raise AIProviderError("The model did not finish its tool request.")
+
+    @staticmethod
+    def _message_content(content) -> str:
+        if isinstance(content, list):
+            return "".join(
+                str(part.get("text") or "") for part in content if isinstance(part, dict)
+            ).strip()
+        return str(content or "").strip()
+
+    @staticmethod
+    def _normalize_tool_calls(raw_calls, content: str) -> list[dict]:
+        calls = raw_calls if isinstance(raw_calls, list) else []
+        if not calls and "<tool_call>" in content:
+            calls = []
+            for match in re.findall(r"<tool_call>\s*(.*?)\s*</tool_call>", content, re.DOTALL):
+                try:
+                    parsed = json.loads(match)
+                    calls.append({"function": parsed})
+                except (json.JSONDecodeError, TypeError):
+                    continue
+        normalized = []
+        for call in calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            if not isinstance(function, dict) or not function.get("name"):
+                continue
+            arguments = function.get("arguments", "{}")
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments)
+            normalized.append(
+                {
+                    "id": str(call.get("id") or f"call_{uuid.uuid4().hex}"),
+                    "type": "function",
+                    "function": {
+                        "name": str(function["name"]),
+                        "arguments": str(arguments or "{}"),
+                    },
+                }
+            )
+        return normalized
 
     def _gemini(self, prompt: str, system_message: str, history: list[dict]) -> str:
         selected = self._selected()

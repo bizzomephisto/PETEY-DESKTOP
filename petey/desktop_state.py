@@ -14,6 +14,8 @@ from pathlib import Path
 
 from petey.config import _build_enriched_prompt, make_default_persona
 
+PERSONA_SLOT_COUNT = 5
+
 
 def default_data_dir() -> Path:
     override = os.getenv("PETEY_DATA_DIR")
@@ -72,6 +74,19 @@ class DesktopState:
         if "persona" not in settings:
             settings["persona"] = make_default_persona(1)
             changed = True
+        saved_personas = settings.get("saved_personas")
+        if not isinstance(saved_personas, list):
+            settings["saved_personas"] = [None] * PERSONA_SLOT_COUNT
+            changed = True
+        else:
+            normalized_slots = [
+                copy.deepcopy(item) if isinstance(item, dict) else None
+                for item in saved_personas[:PERSONA_SLOT_COUNT]
+            ]
+            normalized_slots.extend([None] * (PERSONA_SLOT_COUNT - len(normalized_slots)))
+            if normalized_slots != saved_personas:
+                settings["saved_personas"] = normalized_slots
+                changed = True
         if "selected_models" not in settings:
             settings["selected_models"] = {}
             changed = True
@@ -373,7 +388,15 @@ class DesktopState:
 
     def update_persona(self, changes: dict) -> dict:
         """Validate and persist the editable parts of the desktop persona."""
-        persona = self.persona
+        persona = self._validated_persona(self.persona, changes)
+        with self._lock:
+            self.settings["persona"] = persona
+            self._write_json(self.settings_path, self.settings)
+        return self.persona
+
+    @staticmethod
+    def _validated_persona(base: dict, changes: dict) -> dict:
+        persona = copy.deepcopy(base)
         for key in ("name", "role_tag", "tagline", "system_prompt", "preset_key"):
             if key in changes:
                 persona[key] = str(changes[key]).strip()
@@ -401,10 +424,44 @@ class DesktopState:
             persona["name"] = "Petey"
         if not persona.get("system_prompt"):
             raise ValueError("The personality prompt cannot be empty.")
+        return persona
 
-        self.settings["persona"] = persona
-        self._write_json(self.settings_path, self.settings)
-        return self.persona
+    @property
+    def saved_personas(self) -> list[dict | None]:
+        slots = self.settings.get("saved_personas", [])
+        return [copy.deepcopy(item) if isinstance(item, dict) else None for item in slots]
+
+    @staticmethod
+    def _persona_slot_index(slot: int) -> int:
+        try:
+            index = int(slot) - 1
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Persona slot must be between 1 and 5.") from exc
+        if not 0 <= index < PERSONA_SLOT_COUNT:
+            raise ValueError("Persona slot must be between 1 and 5.")
+        return index
+
+    def save_persona_slot(self, slot: int, changes: dict) -> dict:
+        index = self._persona_slot_index(slot)
+        persona = self._validated_persona(self.persona, changes)
+        persona["slot"] = index + 1
+        persona["is_default"] = False
+        with self._lock:
+            slots = self.saved_personas
+            slots[index] = persona
+            self.settings["saved_personas"] = slots
+            self._write_json(self.settings_path, self.settings)
+        return copy.deepcopy(persona)
+
+    def clear_persona_slot(self, slot: int) -> bool:
+        index = self._persona_slot_index(slot)
+        with self._lock:
+            slots = self.saved_personas
+            existed = slots[index] is not None
+            slots[index] = None
+            self.settings["saved_personas"] = slots
+            self._write_json(self.settings_path, self.settings)
+        return existed
 
     def selected_model(self, inference_type: str) -> str:
         return str(self.settings.get("selected_models", {}).get(inference_type, ""))

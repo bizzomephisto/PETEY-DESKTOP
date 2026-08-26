@@ -7,6 +7,73 @@ from petey.ai_provider import AIProvider, AIProviderError
 
 
 class AIProviderTests(unittest.TestCase):
+    def test_local_model_can_call_a_tool_and_receive_its_result(self):
+        tool_response = MagicMock()
+        tool_response.raise_for_status.return_value = None
+        tool_response.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "generate_image",
+                            "arguments": '{"prompt":"a friendly robot"}',
+                        },
+                    }],
+                }
+            }]
+        }
+        final_response = MagicMock()
+        final_response.raise_for_status.return_value = None
+        final_response.json.return_value = {
+            "choices": [{"message": {"content": "I queued your image."}}]
+        }
+        provider = AIProvider({
+            "provider": "local",
+            "local": {"model": "qwen3-8b", "base_url": "http://localhost:1234/v1"},
+        })
+        executor = MagicMock(return_value={
+            "status": "queued", "job_id": "job-1", "message": "Queued."
+        })
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "generate_image",
+                "description": "Generate an image.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }]
+
+        with patch(
+            "petey.ai_provider.requests.post",
+            side_effect=[tool_response, final_response],
+        ) as post:
+            text, events = provider.complete_with_tools(
+                "Generate an image", "You are Petey", [], tools, executor
+            )
+
+        self.assertEqual(text, "I queued your image.")
+        self.assertEqual(events[0]["result"]["job_id"], "job-1")
+        executor.assert_called_once_with("generate_image", {"prompt": "a friendly robot"})
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["tools"], tools)
+        followup_messages = post.call_args_list[1].kwargs["json"]["messages"]
+        self.assertEqual(followup_messages[-1]["role"], "tool")
+        self.assertEqual(followup_messages[-1]["tool_call_id"], "call-1")
+
+    def test_qwen_tool_call_markup_is_normalized(self):
+        calls = AIProvider._normalize_tool_calls(
+            None,
+            '<tool_call>{"name":"generate_image","arguments":{"prompt":"a cat"}}</tool_call>',
+        )
+
+        self.assertEqual(calls[0]["function"]["name"], "generate_image")
+        self.assertEqual(
+            calls[0]["function"]["arguments"], '{"prompt": "a cat"}'
+        )
+
     def test_openai_compatible_request_contains_system_history_and_prompt(self):
         response = MagicMock()
         response.raise_for_status.return_value = None

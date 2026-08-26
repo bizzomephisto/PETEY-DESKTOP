@@ -18,6 +18,7 @@ venv/
 config_*.json
 chroma_db/
 user_images/
+gens/
 petey/wiki/
 *.log
 *.mp3

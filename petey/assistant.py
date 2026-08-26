@@ -50,15 +50,23 @@ class AssistantAttachment:
 class AssistantReply:
     text: str
     gif_url: Optional[str] = None
+    tool_events: tuple[dict, ...] = ()
 
 
 class AssistantService:
     """Build prompts, retrieve memory, call the LLM, and persist both speakers."""
 
-    def __init__(self, system_prompt: str, ai_config: dict | None = None, memory=None):
+    def __init__(
+        self,
+        system_prompt: str,
+        ai_config: dict | None = None,
+        memory=None,
+        tool_registry=None,
+    ):
         self.system_prompt = system_prompt or "You are Petey, a friendly chatbot."
         self.ai = AIProvider(ai_config)
         self.memory = memory or _EmptyMemory()
+        self.tool_registry = tool_registry
 
     async def respond(
         self,
@@ -136,14 +144,30 @@ class AssistantService:
                 "past conversations, inspect attached images, search the web, and generate "
                 "media through the desktop application's tools."
             ),
+            (
+                "Use an offered tool only when it directly fulfills the user's current request. "
+                "Never claim a tool succeeded until its result says so, and never repeat the same "
+                "tool call just because its result is still being processed."
+            ),
             "If you want to send a GIF or meme, include [GIF: <search query>] in your response.",
         ]
         final_system = "\n".join(part for part in system_parts if part)
-        response = self.ai.complete(
-            user_prompt + "\nRespond as Petey:",
-            final_system,
-            history,
-        )
+        tool_events = []
+        tool_schemas = self.tool_registry.schemas_for(cleaned) if self.tool_registry else []
+        if tool_schemas:
+            response, tool_events = self.ai.complete_with_tools(
+                user_prompt + "\nRespond as Petey:",
+                final_system,
+                history,
+                tool_schemas,
+                lambda name, arguments: self.tool_registry.execute(name, arguments, cleaned),
+            )
+        else:
+            response = self.ai.complete(
+                user_prompt + "\nRespond as Petey:",
+                final_system,
+                history,
+            )
         response = self._clean_model_response(response)
         gif_query, response = self._extract_gif(response)
         gif_url = await self._fetch_gif(gif_query) if gif_query else None
@@ -157,7 +181,7 @@ class AssistantService:
                 PETEY_USER_ID,
                 response,
             )
-        return AssistantReply(text=response, gif_url=gif_url)
+        return AssistantReply(text=response, gif_url=gif_url, tool_events=tuple(tool_events))
 
     async def _describe_image(
         self, attachment: AssistantAttachment | None, installation_id: str

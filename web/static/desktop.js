@@ -7,6 +7,7 @@ const sendButton = document.getElementById('send');
 const statusText = document.getElementById('status');
 let personName = 'You';
 let personaPresets = {};
+let savedPersonas = [];
 let personalityLoaded = false;
 let aiProviderLoaded = false;
 let aiProviderConfiguration = null;
@@ -34,10 +35,41 @@ function removeEmptyState() {
     document.getElementById('empty-state')?.remove();
 }
 
+async function copyChatText(text, button) {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            throw new Error('Clipboard API unavailable');
+        }
+    } catch (_error) {
+        const helper = document.createElement('textarea');
+        helper.value = text;
+        helper.setAttribute('readonly', '');
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        document.body.append(helper);
+        helper.select();
+        const copied = document.execCommand('copy');
+        helper.remove();
+        if (!copied) {
+            window.alert('Could not access the clipboard. Select the message and press Ctrl+C.');
+            return;
+        }
+    }
+    const previous = button.textContent;
+    button.textContent = 'Copied';
+    button.classList.add('copied');
+    window.setTimeout(() => {
+        button.textContent = previous;
+        button.classList.remove('copied');
+    }, 1200);
+}
+
 function addMessage(role, text, options = {}) {
     removeEmptyState();
     const item = document.createElement('article');
-    item.className = `message ${role}${options.thinking ? ' thinking' : ''}`;
+    item.className = `message ${role}${options.typing ? ' typing' : ''}`;
 
     const avatar = document.createElement('div');
     avatar.className = 'avatar';
@@ -46,7 +78,18 @@ function addMessage(role, text, options = {}) {
     const content = document.createElement('div');
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.textContent = role === 'assistant' ? 'Petey' : personName;
+    const speaker = document.createElement('span');
+    speaker.textContent = role === 'assistant' ? 'Petey' : personName;
+    meta.append(speaker);
+    if (!options.typing && text) {
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'copy-message';
+        copyButton.textContent = 'Copy';
+        copyButton.title = 'Copy message';
+        copyButton.addEventListener('click', () => copyChatText(text, copyButton));
+        meta.append(copyButton);
+    }
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = text;
@@ -58,6 +101,19 @@ function addMessage(role, text, options = {}) {
         image.src = options.gifUrl;
         image.alt = 'GIF selected by Petey';
         content.append(image);
+    }
+    if ((options.toolEvents || []).some(event =>
+        event.name === 'generate_image' && event.result?.status === 'queued'
+    )) {
+        const action = document.createElement('button');
+        action.type = 'button';
+        action.className = 'message-action';
+        action.textContent = 'View generation progress';
+        action.addEventListener('click', () => {
+            showView('media');
+            loadMediaJobs();
+        });
+        content.append(action);
     }
     item.append(avatar, content);
     messages.append(item);
@@ -74,7 +130,6 @@ async function loadDesktop() {
         preferences = {...preferences, ...(bootstrap.preferences || {})};
         workspaces = bootstrap.workspaces || [];
         activeWorkspaceId = bootstrap.active_workspace_id || '';
-        document.getElementById('installation-label').textContent = bootstrap.installation_id;
         applyPreferences();
         renderConversations();
         await loadConversationMessages();
@@ -185,7 +240,7 @@ composer.addEventListener('submit', async event => {
     const temporary = document.getElementById('temporary-mode').checked;
     const priorTemporaryHistory = temporaryHistory.slice();
     addMessage('user', displayedText);
-    const thinking = addMessage('assistant', 'Thinking…', {thinking: true});
+    const typing = addMessage('assistant', 'Typing…', {typing: true});
     const body = new FormData();
     body.append('message', text);
     if (file) body.append('attachment', file);
@@ -200,17 +255,20 @@ composer.addEventListener('submit', async event => {
     attachmentInput.value = '';
     attachmentChip.hidden = true;
     sendButton.disabled = true;
-    statusText.textContent = 'Petey is thinking…';
+    statusText.textContent = 'Petey is typing…';
     try {
         const response = await fetch('/api/desktop/chat', {method: 'POST', body});
         const payload = await response.json();
-        thinking.remove();
+        typing.remove();
         if (!response.ok) throw new Error(payload.error || 'Request failed');
-        addMessage('assistant', payload.text || '', {gifUrl: payload.gif_url});
+        addMessage('assistant', payload.text || '', {
+            gifUrl: payload.gif_url,
+            toolEvents: payload.tool_events || [],
+        });
         if (temporary) temporaryHistory.push({role: 'assistant', content: payload.text || ''});
         statusText.textContent = temporary ? 'Temporary · nothing saved' : `Ready for ${personName}`;
     } catch (error) {
-        thinking.remove();
+        typing.remove();
         addMessage('assistant', `I hit a problem: ${error.message}`);
         statusText.textContent = 'Something went wrong';
     } finally {
@@ -497,6 +555,12 @@ document.querySelectorAll('.settings-tab').forEach(button => {
     button.addEventListener('click', () => showView(button.dataset.settingsView));
 });
 
+document.getElementById('project-link').addEventListener('click', async event => {
+    if (!window.pywebview?.api?.open_project_repository) return;
+    event.preventDefault();
+    await window.pywebview.api.open_project_repository();
+});
+
 const sliderKeys = ['tone', 'verbosity', 'formality', 'empathy'];
 sliderKeys.forEach(key => {
     const input = document.getElementById(`persona-${key}`);
@@ -519,12 +583,104 @@ function fillPersona(persona) {
     });
 }
 
+function readPersonaForm() {
+    return {
+        preset_key: document.getElementById('persona-preset').value,
+        name: document.getElementById('persona-name').value,
+        role_tag: document.getElementById('persona-role').value,
+        tagline: document.getElementById('persona-tagline').value,
+        system_prompt: document.getElementById('persona-prompt').value,
+        traits: document.getElementById('persona-traits').value.split(','),
+        sliders: Object.fromEntries(sliderKeys.map(key =>
+            [key, document.getElementById(`persona-${key}`).value]
+        )),
+    };
+}
+
+function renderSavedPersonaSlots() {
+    const container = document.getElementById('saved-persona-slots');
+    container.innerHTML = '';
+    Array.from({length: 5}, (_, index) => {
+        const persona = savedPersonas[index] || null;
+        const card = document.createElement('article');
+        card.className = 'persona-slot';
+        const title = document.createElement('strong');
+        title.textContent = persona?.name || `Slot ${index + 1}`;
+        title.title = title.textContent;
+        const description = document.createElement('small');
+        description.textContent = persona
+            ? (persona.role_tag || `Saved in slot ${index + 1}`)
+            : 'Empty';
+        const actions = document.createElement('div');
+        actions.className = 'persona-slot-actions';
+        const load = document.createElement('button');
+        load.type = 'button';
+        load.textContent = 'Load';
+        load.disabled = !persona;
+        load.addEventListener('click', () => {
+            fillPersona({...persona, preset_key: ''});
+            setFeedback(
+                document.getElementById('personality-status'),
+                `Loaded slot ${index + 1} into the editor — save personality to activate it.`,
+                'success',
+            );
+        });
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = persona ? 'Replace' : 'Save';
+        save.addEventListener('click', () => savePersonaSlot(index + 1, Boolean(persona)));
+        actions.append(load, save);
+        if (persona) {
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.className = 'clear-slot';
+            clear.textContent = '×';
+            clear.title = `Clear slot ${index + 1}`;
+            clear.addEventListener('click', () => clearPersonaSlot(index + 1));
+            actions.append(clear);
+        }
+        card.append(title, description, actions);
+        container.append(card);
+    });
+}
+
+async function savePersonaSlot(slot, replacing) {
+    if (replacing && !window.confirm(`Replace the persona saved in slot ${slot}?`)) return;
+    const feedback = document.getElementById('personality-status');
+    try {
+        const result = await apiJson(`/api/desktop/personality/slots/${slot}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(readPersonaForm()),
+        });
+        savedPersonas = result.saved_personas || [];
+        renderSavedPersonaSlots();
+        setFeedback(feedback, `Saved the current editor values to slot ${slot}.`, 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    }
+}
+
+async function clearPersonaSlot(slot) {
+    if (!window.confirm(`Clear saved persona slot ${slot}?`)) return;
+    const feedback = document.getElementById('personality-status');
+    try {
+        const result = await apiJson(`/api/desktop/personality/slots/${slot}`, {method: 'DELETE'});
+        savedPersonas = result.saved_personas || [];
+        renderSavedPersonaSlots();
+        setFeedback(feedback, `Cleared persona slot ${slot}.`, 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    }
+}
+
 async function loadPersonality() {
     const feedback = document.getElementById('personality-status');
     setFeedback(feedback, 'Loading…');
     try {
         const payload = await apiJson('/api/desktop/personality');
         personaPresets = payload.presets || {};
+        savedPersonas = payload.saved_personas || [];
         const select = document.getElementById('persona-preset');
         select.innerHTML = '<option value="">Custom</option>';
         Object.entries(personaPresets).forEach(([key, preset]) => {
@@ -534,6 +690,7 @@ async function loadPersonality() {
             select.append(option);
         });
         fillPersona(payload.persona);
+        renderSavedPersonaSlots();
         personalityLoaded = true;
         setFeedback(feedback, '');
     } catch (error) {
@@ -560,15 +717,7 @@ document.getElementById('save-personality').addEventListener('click', async () =
     const button = document.getElementById('save-personality');
     button.disabled = true;
     setFeedback(feedback, 'Saving…');
-    const payload = {
-        preset_key: document.getElementById('persona-preset').value,
-        name: document.getElementById('persona-name').value,
-        role_tag: document.getElementById('persona-role').value,
-        tagline: document.getElementById('persona-tagline').value,
-        system_prompt: document.getElementById('persona-prompt').value,
-        traits: document.getElementById('persona-traits').value.split(','),
-        sliders: Object.fromEntries(sliderKeys.map(key => [key, document.getElementById(`persona-${key}`).value])),
-    };
+    const payload = readPersonaForm();
     try {
         const result = await apiJson('/api/desktop/personality', {
             method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
@@ -1350,11 +1499,28 @@ function buildGalleryCard(item) {
     open.target = '_blank';
     open.rel = 'noopener';
     open.textContent = 'Open';
+    open.addEventListener('click', async event => {
+        if (!window.pywebview?.api?.open_gallery_item || !item.local_filename) return;
+        event.preventDefault();
+        const result = await window.pywebview.api.open_gallery_item(item.id);
+        if (!result?.ok && !result?.cancelled) {
+            window.alert(result?.error || 'Could not open this gallery item.');
+        }
+    });
     actions.append(open);
     if (item.local_filename) {
         const download = document.createElement('a');
         download.href = `${item.media_url}?download=1`;
+        download.download = '';
         download.textContent = 'Download';
+        download.addEventListener('click', async event => {
+            if (!window.pywebview?.api?.download_gallery_item) return;
+            event.preventDefault();
+            const result = await window.pywebview.api.download_gallery_item(item.id);
+            if (!result?.ok && !result?.cancelled) {
+                window.alert(result?.error || 'Could not save this gallery item.');
+            }
+        });
         actions.append(download);
     }
     const remove = document.createElement('button');

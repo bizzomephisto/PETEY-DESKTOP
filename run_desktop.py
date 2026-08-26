@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
+import shutil
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -11,13 +14,15 @@ import webbrowser
 from werkzeug.serving import make_server
 
 from web.desktop_app import create_desktop_app
+from petey.version import PROJECT_URL, __version__
 
 
 class DesktopBridge:
     """Small native-window API exposed to the local web interface."""
 
-    def __init__(self):
+    def __init__(self, gallery=None):
         self.window = None
+        self.gallery = gallery
 
     def set_always_on_top(self, enabled):
         if self.window is None:
@@ -43,6 +48,60 @@ class DesktopBridge:
 
     def choose_image_folder(self):
         return self.choose_workspace_folder()
+
+    def open_project_repository(self):
+        return bool(webbrowser.open(PROJECT_URL))
+
+    def open_gallery_item(self, item_id):
+        """Open a generated file in the operating system's default media viewer."""
+        if self.gallery is None:
+            return {"ok": False, "error": "The desktop gallery is unavailable."}
+        path = self.gallery.file_path(str(item_id or ""))
+        if path is None:
+            return {"ok": False, "error": "The local gallery file could not be found."}
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+            return {"ok": True}
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not open the generated file: {exc}"}
+
+    def download_gallery_item(self, item_id):
+        """Copy a generated file to a location selected with a native Save As dialog."""
+        if self.window is None or self.gallery is None:
+            return {"ok": False, "error": "The native save dialog is unavailable."}
+        source = self.gallery.file_path(str(item_id or ""))
+        if source is None:
+            return {"ok": False, "error": "The local gallery file could not be found."}
+        import webview
+
+        dialog_type = getattr(getattr(webview, "FileDialog", None), "SAVE", None)
+        if dialog_type is None:
+            dialog_type = getattr(webview, "SAVE_DIALOG", None)
+        if dialog_type is None:
+            return {"ok": False, "error": "This desktop backend has no Save As dialog."}
+        result = self.window.create_file_dialog(
+            dialog_type,
+            allow_multiple=False,
+            save_filename=source.name,
+        )
+        if isinstance(result, (list, tuple)):
+            destination = str(result[0]) if result else ""
+        else:
+            destination = str(result or "")
+        if not destination:
+            return {"ok": False, "cancelled": True}
+        try:
+            destination_path = os.path.abspath(destination)
+            if destination_path != os.path.abspath(source):
+                shutil.copy2(source, destination_path)
+            return {"ok": True, "path": destination_path}
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not save the generated file: {exc}"}
 
 
 def linux_webview_backend_available():
@@ -121,14 +180,15 @@ def main():
             return
 
         state = local.app.config["PETEY_STATE"]
-        bridge = DesktopBridge()
+        bridge = DesktopBridge(local.app.config["PETEY_GALLERY"])
         bridge.window = webview.create_window(
-            "Petey",
+            f"Petey v{__version__}",
             local.url,
             width=1180,
             height=780,
             min_size=(760, 560),
             on_top=bool(state.preferences.get("always_on_top", False)),
+            text_select=True,
             js_api=bridge,
         )
         try:

@@ -50,6 +50,26 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await service.respond("   ", identity)
 
+    async def test_explicit_request_uses_registered_model_tools(self):
+        registry = MagicMock()
+        registry.schemas_for.return_value = [{"type": "function", "function": {"name": "generate_image"}}]
+        service = AssistantService("You are Petey.", tool_registry=registry)
+        identity = AssistantIdentity("desktop-test", "main", "owner")
+        event = {"name": "generate_image", "result": {"status": "queued"}}
+        with patch(
+            "petey.assistant.AIProvider.complete_with_tools",
+            return_value=("Queued your image.", [event]),
+        ) as complete:
+            reply = await service.respond("Generate an image of a moon base", identity)
+
+        self.assertEqual(reply.text, "Queued your image.")
+        self.assertEqual(reply.tool_events, (event,))
+        self.assertEqual(complete.call_args.args[3], registry.schemas_for.return_value)
+        complete.call_args.args[4]("generate_image", {"prompt": "moon base"})
+        registry.execute.assert_called_once_with(
+            "generate_image", {"prompt": "moon base"}, "Generate an image of a moon base"
+        )
+
     async def test_temporary_response_uses_ephemeral_history_without_database_access(self):
         service = AssistantService("You are Petey.")
         identity = AssistantIdentity("desktop-test", "main", "owner", "Pat")

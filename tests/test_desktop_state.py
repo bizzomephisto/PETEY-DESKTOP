@@ -56,6 +56,24 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(persona["sliders"]["verbosity"], 22)
             self.assertIn("precise local assistant", DesktopState(directory).system_prompt)
 
+    def test_five_persona_slots_can_be_saved_loaded_and_cleared(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            saved = state.save_persona_slot(
+                5,
+                {"name": "Coder Petey", "system_prompt": "You are a coding partner."},
+            )
+
+            reloaded = DesktopState(directory)
+            self.assertEqual(len(reloaded.saved_personas), 5)
+            self.assertEqual(saved["slot"], 5)
+            self.assertEqual(reloaded.saved_personas[4]["name"], "Coder Petey")
+            self.assertNotEqual(reloaded.persona["name"], "Coder Petey")
+            self.assertTrue(reloaded.clear_persona_slot(5))
+            self.assertIsNone(reloaded.saved_personas[4])
+            with self.assertRaises(ValueError):
+                reloaded.save_persona_slot(6, {"system_prompt": "Invalid slot"})
+
     def test_selected_media_models_are_persisted_per_operation(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
