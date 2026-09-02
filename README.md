@@ -1,6 +1,6 @@
 # PETEY Desktop
 
-Current release: **v0.10.0**
+Current release: **v0.11.0**
 
 PETEY is a standalone desktop AI assistant with local conversations, configurable
 personality, universal SQLite memory, RAG document management, deAPI media tools,
@@ -15,7 +15,9 @@ and an approval-gated project workspace.
 - RAG uploads, retrieval testing, vector rebuilding, and local database controls
 - Parallel deAPI image, video, music, speech, background-removal, and upscale jobs
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
+- Per-operation media prompt drafts that remain available across app restarts
 - Conversational image generation through modular model tools
+- Gemini image inspection with an independently selectable vision model
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
@@ -27,7 +29,9 @@ browser.
 ## Requirements
 
 - Python 3.12 or newer
+- FFmpeg for browser-compatible generated-video previews
 - A language-model provider: Gemini, OpenAI, or a local OpenAI-compatible server
+- A Gemini API key if you want Petey to inspect chat image attachments
 - A deAPI key only if you want media generation
 
 ## Install and run
@@ -73,8 +77,10 @@ temporary chat when a conversation should not be retained.
 
 When a hosted chat or embedding provider is selected, relevant prompts, selected
 workspace-file context, or memory text are sent to that provider. Local-provider
-mode keeps those model requests on the configured local endpoint. deAPI media
-requests are sent to deAPI.
+mode keeps those model requests on the configured local endpoint. Chat image
+attachments are sent to the independently selected Gemini vision model, and its
+text description is passed to the active chat provider. deAPI media requests are
+sent to deAPI.
 
 ## Workspace safety
 

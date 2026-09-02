@@ -15,7 +15,7 @@ from pathlib import Path
 from werkzeug.serving import make_server
 
 from web.desktop_app import create_desktop_app
-from petey.version import PROJECT_URL, __version__
+from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -107,6 +107,9 @@ class DesktopBridge:
 
     def open_project_repository(self):
         return bool(webbrowser.open(PROJECT_URL))
+
+    def open_media_provider(self):
+        return bool(webbrowser.open(MEDIA_PROVIDER_URL))
 
     def open_gallery_item(self, item_id):
         """Open a generated file in the operating system's default media viewer."""

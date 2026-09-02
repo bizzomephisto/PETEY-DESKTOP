@@ -19,10 +19,19 @@ from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.tools import build_desktop_tool_registry
-from petey.version import PROJECT_URL, __version__
+from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 MAX_MEDIA_SOURCE_BYTES = 25 * 1024 * 1024
+
+
+def _public_media_error(exc: Exception) -> str:
+    return (
+        str(exc)
+        .replace("DEAPI_KEY", "media service key")
+        .replace("deAPI", "media provider")
+        .replace("DeAPI", "Media provider")
+    )
 
 
 class AsyncRuntime:
@@ -97,6 +106,11 @@ def create_desktop_app(
                 url_for("desktop_gallery_file", item_id=item["id"]) if local
                 else item.get("remote_url", "")
             ),
+            "preview_url": (
+                url_for("desktop_gallery_preview", item_id=item["id"])
+                if local and item.get("kind") == "video"
+                else ""
+            ),
         }
 
     app.config["PETEY_MEMORY"].init_db()
@@ -104,7 +118,10 @@ def create_desktop_app(
     @app.get("/")
     def desktop_home():
         return render_template(
-            "desktop.html", app_version=__version__, project_url=PROJECT_URL
+            "desktop.html",
+            app_version=__version__,
+            project_url=PROJECT_URL,
+            media_provider_url=MEDIA_PROVIDER_URL,
         )
 
     @app.get("/api/desktop/bootstrap")
@@ -124,6 +141,15 @@ def create_desktop_app(
                 "active_workspace_id": current.active_workspace_id,
             }
         )
+
+    @app.put("/api/desktop/identity")
+    def desktop_identity():
+        current: DesktopState = app.config["PETEY_STATE"]
+        payload = request.get_json(silent=True) or {}
+        try:
+            return jsonify({"person_name": current.update_display_name(payload.get("display_name", ""))})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.route("/api/desktop/workspaces", methods=["GET", "POST"])
     def desktop_workspaces():
@@ -374,6 +400,24 @@ def create_desktop_app(
         try:
             conversation = current.select_conversation(conversation_id)
             return jsonify({"conversation": conversation, "conversation_id": current.conversation_id})
+        except KeyError as exc:
+            return jsonify({"error": str(exc).strip("'")}), 404
+
+    @app.patch("/api/desktop/conversations/<conversation_id>")
+    def desktop_rename_conversation(conversation_id):
+        current: DesktopState = app.config["PETEY_STATE"]
+        payload = request.get_json(silent=True) or {}
+        try:
+            conversation = current.rename_conversation(
+                conversation_id, payload.get("title", "")
+            )
+            return jsonify({
+                "conversation": conversation,
+                "conversation_id": current.conversation_id,
+                "conversations": current.conversations,
+            })
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         except KeyError as exc:
             return jsonify({"error": str(exc).strip("'")}), 404
 
@@ -666,7 +710,7 @@ def create_desktop_app(
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
-            return jsonify({"error": f"Could not load deAPI models: {exc}"}), 502
+            return jsonify({"error": f"Could not load media models: {_public_media_error(exc)}"}), 502
 
     @app.get("/api/desktop/media/balance")
     def desktop_media_balance():
@@ -676,7 +720,7 @@ def create_desktop_app(
             )
             return jsonify({"balance": balance, "currency": "USD"})
         except Exception as exc:
-            return jsonify({"error": f"Could not load deAPI balance: {exc}"}), 502
+            return jsonify({"error": f"Could not load media balance: {_public_media_error(exc)}"}), 502
 
     @app.post("/api/desktop/media/enhance")
     def desktop_media_enhance():
@@ -751,7 +795,7 @@ def create_desktop_app(
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             print(f"[DESKTOP] Could not queue deAPI generation: {exc}")
-            return jsonify({"error": f"Could not queue generation: {exc}"}), 500
+            return jsonify({"error": f"Could not queue generation: {_public_media_error(exc)}"}), 500
 
     @app.get("/api/desktop/media/jobs")
     def desktop_media_jobs():
@@ -779,6 +823,19 @@ def create_desktop_app(
             path,
             as_attachment=request.args.get("download") == "1",
             download_name=path.name,
+        )
+
+    @app.get("/api/desktop/gallery/preview/<item_id>")
+    def desktop_gallery_preview(item_id):
+        gallery_store: MediaGallery = app.config["PETEY_GALLERY"]
+        path = gallery_store.video_preview_path(item_id)
+        if path is None:
+            return jsonify({"error": "Local video preview not found."}), 404
+        return send_file(
+            path,
+            mimetype="video/webm" if path.suffix.lower() == ".webm" else None,
+            conditional=True,
+            max_age=86400,
         )
 
     @app.delete("/api/desktop/gallery/<item_id>")

@@ -43,6 +43,12 @@ class DesktopLauncherTests(unittest.TestCase):
             self.assertTrue(bridge.open_project_repository())
         opened.assert_called_once_with(run_desktop.PROJECT_URL)
 
+    def test_desktop_bridge_opens_media_provider(self):
+        bridge = run_desktop.DesktopBridge()
+        with patch("run_desktop.webbrowser.open", return_value=True) as opened:
+            self.assertTrue(bridge.open_media_provider())
+        opened.assert_called_once_with(run_desktop.MEDIA_PROVIDER_URL)
+
     def test_desktop_bridge_opens_gallery_file_with_system_viewer(self):
         gallery = MagicMock()
         gallery.file_path.return_value = Path("/tmp/generated.png")

@@ -8,7 +8,7 @@ from petey.assistant import AssistantReply
 from petey.desktop_state import DesktopState
 from petey.media_jobs import MediaGallery
 from web.desktop_app import AsyncRuntime, create_desktop_app
-from petey.version import PROJECT_URL, __version__
+from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
@@ -25,11 +25,29 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn("Message Petey", shell.get_data(as_text=True))
             self.assertIn(f"v{__version__}", shell.get_data(as_text=True))
             self.assertIn(PROJECT_URL, shell.get_data(as_text=True))
+            self.assertIn(MEDIA_PROVIDER_URL, shell.get_data(as_text=True))
+            self.assertNotIn("deAPI Media", shell.get_data(as_text=True))
+            self.assertEqual(shell.get_data(as_text=True).count("deAPI"), 1)
             self.assertEqual(bootstrap.status_code, 200)
             self.assertEqual(
                 bootstrap.get_json()["installation_id"], state.installation_id
             )
             self.assertEqual(bootstrap.get_json()["version"], __version__)
+
+    def test_user_can_save_their_display_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            app = create_desktop_app(state=state, runtime=object())
+            client = app.test_client()
+
+            response = client.put(
+                "/api/desktop/identity", json={"display_name": "  Casey  "}
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["person_name"], "Casey")
+            self.assertEqual(client.get("/api/desktop/bootstrap").get_json()["person_name"], "Casey")
+            self.assertEqual(DesktopState(directory).display_name, "Casey")
 
     def test_messages_are_labeled_by_speaker(self):
         rows = [
@@ -44,6 +62,39 @@ class DesktopAppTests(unittest.TestCase):
             response = app.test_client().get("/api/desktop/messages")
 
             self.assertEqual([item["role"] for item in response.get_json()], ["user", "assistant"])
+
+    def test_gallery_exposes_qt_compatible_video_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            preview = Path(directory) / "video-1.preview.webm"
+            preview.write_bytes(b"webm-data")
+            gallery = MagicMock()
+            gallery.list_items.return_value = [{
+                "id": "video-1",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "operation": "txt2video",
+                "kind": "video",
+                "prompt": "A robot",
+                "model_slug": "video-model",
+                "remote_url": "https://media.example/video.mp4",
+                "local_filename": "video-1.mp4",
+                "content_type": "video/mp4",
+                "download_error": "",
+            }]
+            gallery.video_preview_path.return_value = preview
+            app = create_desktop_app(
+                state=DesktopState(directory), runtime=object(), gallery=gallery
+            )
+            client = app.test_client()
+
+            item = client.get("/api/desktop/gallery").get_json()["items"][0]
+            response = client.get(item["preview_url"])
+
+            self.assertEqual(item["media_url"], "/api/desktop/gallery/file/video-1")
+            self.assertEqual(item["preview_url"], "/api/desktop/gallery/preview/video-1")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content_type, "video/webm")
+            self.assertEqual(response.data, b"webm-data")
+            response.close()
 
     def test_chat_route_returns_assistant_reply(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -74,12 +125,17 @@ class DesktopAppTests(unittest.TestCase):
                     "/api/desktop/preferences",
                     json={"always_on_top": True, "ui_scale": 1.3},
                 )
+                renamed = client.patch(
+                    f"/api/desktop/conversations/{conversation_id}",
+                    json={"title": "Named ideas"},
+                )
                 deleted = client.delete(f"/api/desktop/conversations/{conversation_id}")
 
             self.assertEqual(created.status_code, 201)
             self.assertEqual(created.get_json()["conversation"]["title"], "Ideas")
             self.assertTrue(saved.get_json()["preferences"]["always_on_top"])
             self.assertEqual(saved.get_json()["preferences"]["ui_scale"], 1.3)
+            self.assertEqual(renamed.get_json()["conversation"]["title"], "Named ideas")
             self.assertNotEqual(deleted.get_json()["conversation_id"], conversation_id)
 
     def test_ai_provider_configuration_never_returns_saved_key(self):
@@ -95,6 +151,27 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(payload["provider"], "openai")
             self.assertTrue(payload["has_api_key"])
             self.assertNotIn("sk-private", response.get_data(as_text=True))
+
+    def test_vision_model_is_saved_independently_of_chat_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            app = create_desktop_app(state=state, runtime=object())
+            response = app.test_client().put(
+                "/api/desktop/ai-provider",
+                json={
+                    "provider": "local",
+                    "model": "qwen",
+                    "base_url": "http://localhost:1234/v1",
+                    "vision_model": "gemini-vision-test",
+                },
+            )
+
+            payload = response.get_json()["configuration"]
+            self.assertEqual(payload["provider"], "local")
+            self.assertEqual(payload["vision_model"], "gemini-vision-test")
+            self.assertEqual(
+                state.ai_provider["gemini"]["vision_model"], "gemini-vision-test"
+            )
 
     def test_chat_route_passes_temporary_history(self):
         with tempfile.TemporaryDirectory() as directory:

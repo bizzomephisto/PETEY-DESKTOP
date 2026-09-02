@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from petey.desktop_state import DesktopState
 
@@ -37,6 +38,27 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(state.person_id, "person-7")
             self.assertEqual(state.display_name, "Alex")
             self.assertEqual(state.conversation_id, "kitchen")
+
+    def test_new_and_legacy_automatic_names_are_neutral_until_customized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            self.assertEqual(state.display_name, "User")
+            self.assertEqual(state.update_display_name("  Casey  "), "Casey")
+            self.assertEqual(DesktopState(directory).display_name, "Casey")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "installation.json").write_text(
+                json.dumps({
+                    "installation_id": "desktop-legacy",
+                    "person_id": "owner",
+                    "display_name": "machine-login",
+                    "default_conversation_id": "main",
+                }),
+                encoding="utf-8",
+            )
+            with patch("petey.desktop_state.getpass.getuser", return_value="machine-login"):
+                self.assertEqual(DesktopState(path).display_name, "User")
 
     def test_persona_updates_are_validated_and_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -98,11 +120,16 @@ class DesktopStateTests(unittest.TestCase):
             reloaded = DesktopState(directory)
             self.assertEqual(reloaded.conversation_id, created["id"])
             self.assertEqual(reloaded.conversations[0]["title"], "Project notes")
+            renamed = reloaded.rename_conversation(created["id"], "Renamed project")
+            self.assertEqual(renamed["title"], "Renamed project")
+            self.assertEqual(
+                DesktopState(directory).conversations[0]["title"], "Renamed project"
+            )
             self.assertEqual(reloaded.preferences["ui_scale"], 1.2)
             self.assertTrue(reloaded.preferences["always_on_top"])
 
             deleted, active_id = reloaded.delete_conversation(created["id"])
-            self.assertEqual(deleted["title"], "Project notes")
+            self.assertEqual(deleted["title"], "Renamed project")
             self.assertNotEqual(active_id, created["id"])
 
     def test_deleting_the_last_conversation_creates_a_replacement(self):

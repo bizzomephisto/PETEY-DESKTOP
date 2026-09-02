@@ -42,7 +42,7 @@ def build_media_tools(
 ) -> list[ToolSpec]:
     def generate_image(arguments: dict) -> dict:
         if not os.getenv("DEAPI_KEY", "").strip():
-            raise ToolError("deAPI is not configured. Add DEAPI_KEY before generating images.")
+            raise ToolError("Media generation is not configured. Add the media service key before generating images.")
         prompt = str(arguments.get("prompt") or "").strip()[:2000]
         if not prompt:
             raise ToolError("An image prompt is required.")
@@ -76,7 +76,7 @@ def build_media_tools(
         ToolSpec(
             name="generate_image",
             description=(
-                "Generate a new image with deAPI. Use only when the user explicitly asks to "
+                "Generate a new image. Use only when the user explicitly asks to "
                 "create or generate an image. Do not call it merely because an image might be useful."
             ),
             parameters={

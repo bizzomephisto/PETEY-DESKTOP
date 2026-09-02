@@ -59,7 +59,7 @@ class ToolRegistryTests(unittest.TestCase):
         state = MagicMock()
         registry = ToolRegistry(build_media_tools(state, MagicMock(), MagicMock()))
         with patch.dict("os.environ", {}, clear=True):
-            with self.assertRaisesRegex(ToolError, "DEAPI_KEY"):
+            with self.assertRaisesRegex(ToolError, "Media generation is not configured"):
                 registry.execute(
                     "generate_image",
                     {"prompt": "A robot"},

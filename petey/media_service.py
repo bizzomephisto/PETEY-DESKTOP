@@ -109,10 +109,10 @@ class MediaService:
             raise ValueError("Unsupported media operation.")
 
         if not isinstance(result, dict):
-            raise RuntimeError("deAPI returned an invalid generation result.")
+            raise RuntimeError("The media provider returned an invalid generation result.")
         result_url = result.get("result_url") or result.get("url")
         if not result_url:
-            raise RuntimeError("deAPI completed without returning a media URL.")
+            raise RuntimeError("The media provider completed without returning a media URL.")
         return {"result_url": result_url, "kind": config["kind"], "operation": operation}
 
     @staticmethod

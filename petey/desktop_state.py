@@ -58,13 +58,28 @@ class DesktopState:
 
     def _load_or_create_identity(self) -> dict:
         identity = self._read_json(self.identity_path)
+        changed = False
         if not identity.get("installation_id"):
             identity = {
                 "installation_id": f"desktop-{uuid.uuid4()}",
                 "person_id": "owner",
-                "display_name": getpass.getuser() or "You",
+                "display_name": "User",
+                "display_name_customized": False,
                 "default_conversation_id": "main",
             }
+            changed = True
+        elif "display_name_customized" not in identity:
+            legacy_name = str(identity.get("display_name") or "").strip()
+            system_name = str(getpass.getuser() or "").strip()
+            was_automatic = not legacy_name or legacy_name.casefold() == system_name.casefold()
+            identity["display_name"] = "User" if was_automatic else legacy_name
+            identity["display_name_customized"] = not was_automatic
+            changed = True
+        if not str(identity.get("display_name") or "").strip():
+            identity["display_name"] = "User"
+            identity["display_name_customized"] = False
+            changed = True
+        if changed:
             self._write_json(self.identity_path, identity)
         return identity
 
@@ -118,7 +133,11 @@ class DesktopState:
         if not isinstance(settings.get("ai_provider"), dict):
             settings["ai_provider"] = {
                 "provider": "gemini",
-                "gemini": {"model": "gemini-2.5-flash", "api_key": ""},
+                "gemini": {
+                    "model": "gemini-2.5-flash",
+                    "vision_model": "gemini-2.5-flash",
+                    "api_key": "",
+                },
                 "openai": {"model": "gpt-4.1-mini", "api_key": ""},
                 "local": {
                     "model": "",
@@ -128,7 +147,12 @@ class DesktopState:
             }
             changed = True
         ai_defaults = {
-            "gemini": {"model": "gemini-2.5-flash", "api_key": "", "thinking_enabled": True},
+            "gemini": {
+                "model": "gemini-2.5-flash",
+                "vision_model": "gemini-2.5-flash",
+                "api_key": "",
+                "thinking_enabled": True,
+            },
             "openai": {"model": "gpt-4.1-mini", "api_key": "", "thinking_enabled": True},
             "local": {
                 "model": "",
@@ -193,7 +217,19 @@ class DesktopState:
 
     @property
     def display_name(self) -> str:
-        return str(self.identity.get("display_name", "You"))
+        return str(self.identity.get("display_name") or "User")
+
+    def update_display_name(self, display_name: str) -> str:
+        display_name = str(display_name or "").strip()
+        if not display_name:
+            raise ValueError("Enter a user name.")
+        if len(display_name) > 50:
+            raise ValueError("The user name must be 50 characters or fewer.")
+        with self._lock:
+            self.identity["display_name"] = display_name
+            self.identity["display_name_customized"] = True
+            self._write_json(self.identity_path, self.identity)
+        return self.display_name
 
     @property
     def conversation_id(self) -> str:
@@ -225,6 +261,23 @@ class DesktopState:
             if match is None:
                 raise KeyError("Conversation not found.")
             self.settings["active_conversation_id"] = conversation_id
+            self._write_json(self.settings_path, self.settings)
+        return copy.deepcopy(match)
+
+    def rename_conversation(self, conversation_id: str, title: str) -> dict:
+        title = str(title or "").strip()
+        if not title:
+            raise ValueError("Enter a chat name.")
+        if len(title) > 80:
+            raise ValueError("Chat names must be 80 characters or fewer.")
+        with self._lock:
+            match = next(
+                (item for item in self.settings["conversations"] if item["id"] == conversation_id),
+                None,
+            )
+            if match is None:
+                raise KeyError("Conversation not found.")
+            match["title"] = title
             self._write_json(self.settings_path, self.settings)
         return copy.deepcopy(match)
 
@@ -346,6 +399,13 @@ class DesktopState:
         if "thinking_enabled" in changes:
             provider_settings["thinking_enabled"] = bool(changes["thinking_enabled"])
         current[provider] = provider_settings
+        if "vision_model" in changes:
+            gemini_settings = dict(current.get("gemini", {}))
+            vision_model = str(changes.get("vision_model") or "").strip()[:200]
+            if not vision_model:
+                raise ValueError("Choose a Gemini vision model.")
+            gemini_settings["vision_model"] = vision_model
+            current["gemini"] = gemini_settings
         with self._lock:
             self.settings["ai_provider"] = current
             self._write_json(self.settings_path, self.settings)

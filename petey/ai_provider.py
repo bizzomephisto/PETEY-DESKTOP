@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import json
@@ -55,6 +56,11 @@ class AIProvider:
         return {
             "provider": self.provider,
             "providers": providers,
+            "vision_model": str(
+                (self.config.get("gemini") or {}).get("vision_model")
+                or "gemini-2.5-flash"
+            ),
+            "vision_has_api_key": providers["gemini"]["has_api_key"],
             **providers[self.provider],
         }
 
@@ -252,6 +258,62 @@ class AIProvider:
         except requests.RequestException as exc:
             raise AIProviderError(f"Could not reach Gemini: {exc}") from exc
         return self._response_text(response, "Gemini")
+
+    def describe_image(
+        self,
+        image_data: bytes,
+        content_type: str,
+        user_request: str = "",
+    ) -> str:
+        """Inspect an image with the independently configured Gemini vision model."""
+        gemini = dict(self.config.get("gemini") or {})
+        api_key = str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
+        if not api_key:
+            raise AIProviderError(
+                "Gemini vision needs an API key. Select Google Gemini in Settings, save "
+                "its key, then switch back to your preferred chat provider if needed."
+            )
+        model = str(gemini.get("vision_model") or "gemini-2.5-flash").strip()
+        if not model:
+            raise AIProviderError("Choose a Gemini vision model in Settings.")
+        mime_type = str(content_type or "").split(";", 1)[0].strip().lower()
+        if not mime_type.startswith("image/"):
+            raise AIProviderError("Gemini vision can only inspect image attachments.")
+        if not image_data:
+            raise AIProviderError("The attached image is empty.")
+
+        request_context = str(user_request or "").strip()
+        instruction = (
+            "Inspect this image carefully for another assistant. Describe the visible people, "
+            "objects, text, setting, composition, colors, and any details relevant to the user's "
+            "request. Be factual, mention uncertainty, and do not invent hidden details."
+        )
+        if request_context:
+            instruction += f"\nThe user's request is: {request_context}"
+        try:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                json={
+                    "contents": [{
+                        "role": "user",
+                        "parts": [
+                            {"text": instruction},
+                            {
+                                "inlineData": {
+                                    "mimeType": mime_type,
+                                    "data": base64.b64encode(image_data).decode("ascii"),
+                                }
+                            },
+                        ],
+                    }],
+                    "generationConfig": {"temperature": 0.2},
+                },
+                timeout=120,
+            )
+        except requests.RequestException as exc:
+            raise AIProviderError(f"Could not reach Gemini vision: {exc}") from exc
+        return self._response_text(response, "Gemini vision")
 
     def _openai_compatible(self, prompt: str, system_message: str, history: list[dict]) -> str:
         selected = self._selected()

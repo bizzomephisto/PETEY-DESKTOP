@@ -4,6 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from petey.media_jobs import MediaGallery, MediaJobManager
@@ -61,6 +62,40 @@ class MediaGalleryTests(unittest.TestCase):
             self.assertTrue(gallery.delete("item-1"))
             self.assertFalse((Path(directory) / "item-1.png").exists())
             self.assertEqual(gallery.list_items(), [])
+
+    def test_video_preview_is_cached_as_webm_and_removed_with_original(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gallery = MediaGallery(directory)
+            source = Path(directory) / "video-1.mp4"
+            source.write_bytes(b"original-video")
+            gallery._items = [{
+                "id": "video-1",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "operation": "txt2video",
+                "kind": "video",
+                "prompt": "A robot",
+                "model_slug": "video-model",
+                "remote_url": "https://media.example/video.mp4",
+                "local_filename": source.name,
+                "content_type": "video/mp4",
+                "download_error": "",
+            }]
+
+            def fake_run(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"webm-preview")
+                return SimpleNamespace(returncode=0)
+
+            with patch("petey.media_jobs.subprocess.run", side_effect=fake_run) as run:
+                preview = gallery.video_preview_path("video-1")
+                cached = gallery.video_preview_path("video-1")
+
+            self.assertEqual(preview, cached)
+            self.assertEqual(preview.read_bytes(), b"webm-preview")
+            self.assertEqual(run.call_count, 1)
+            self.assertIn("libvpx", run.call_args.args[0])
+            self.assertTrue(gallery.delete("video-1"))
+            self.assertFalse(source.exists())
+            self.assertFalse(preview.exists())
 
 
 class MediaJobManagerTests(unittest.TestCase):

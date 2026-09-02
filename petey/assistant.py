@@ -36,7 +36,7 @@ class AssistantIdentity:
     installation_id: str
     conversation_id: str
     person_id: str
-    display_name: str = "You"
+    display_name: str = "User"
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,7 @@ class AssistantService:
         semantic_memory = "" if temporary else self.memory.search_memories(
             cleaned or attachment.filename, identity.installation_id, 5
         )
-        image_description = await self._describe_image(attachment, identity.installation_id)
+        image_description = await self._describe_image(attachment, cleaned)
 
         if temporary:
             history = []
@@ -184,19 +184,16 @@ class AssistantService:
         return AssistantReply(text=response, gif_url=gif_url, tool_events=tuple(tool_events))
 
     async def _describe_image(
-        self, attachment: AssistantAttachment | None, installation_id: str
+        self, attachment: AssistantAttachment | None, user_request: str
     ) -> str | None:
         if attachment is None or not attachment.content_type.startswith("image/"):
             return None
-        from petey.deapi_client import deapi
-        try:
-            result = await deapi.image_to_text(
-                attachment.data, guild_id=installation_id
-            )
-            return result.strip() if result else None
-        except Exception as exc:
-            print(f"[ASSISTANT] Image description failed: {exc}")
-            return None
+        result = self.ai.describe_image(
+            attachment.data,
+            attachment.content_type,
+            user_request,
+        )
+        return result.strip() if result else None
 
     @staticmethod
     def _clean_model_response(response: str) -> str:

@@ -5,7 +5,7 @@ const attachmentInput = document.getElementById('attachment');
 const attachmentChip = document.getElementById('attachment-chip');
 const sendButton = document.getElementById('send');
 const statusText = document.getElementById('status');
-let personName = 'You';
+let personName = 'User';
 let personaPresets = {};
 let savedPersonas = [];
 let personalityLoaded = false;
@@ -124,7 +124,8 @@ function addMessage(role, text, options = {}) {
 async function loadDesktop() {
     try {
         const bootstrap = await apiJson('/api/desktop/bootstrap');
-        personName = bootstrap.person_name || 'You';
+        personName = bootstrap.person_name || 'User';
+        document.getElementById('user-display-name').value = personName;
         activeConversationId = bootstrap.conversation_id;
         conversations = bootstrap.conversations || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
@@ -159,15 +160,48 @@ function renderConversations() {
         select.textContent = conversation.title;
         select.title = conversation.title;
         select.addEventListener('click', () => selectConversation(conversation.id));
+        select.addEventListener('dblclick', event => {
+            event.preventDefault();
+            renameConversation(conversation);
+        });
+        const rename = document.createElement('button');
+        rename.className = 'conversation-rename';
+        rename.type = 'button';
+        rename.textContent = '✎';
+        rename.title = `Rename ${conversation.title}`;
+        rename.setAttribute('aria-label', `Rename ${conversation.title}`);
+        rename.addEventListener('click', () => renameConversation(conversation));
         const remove = document.createElement('button');
         remove.className = 'conversation-delete';
         remove.type = 'button';
         remove.textContent = '×';
         remove.title = `Delete ${conversation.title}`;
         remove.addEventListener('click', () => deleteConversation(conversation));
-        row.append(select, remove);
+        row.append(select, rename, remove);
         list.append(row);
     });
+}
+
+async function renameConversation(conversation) {
+    const requested = window.prompt('Rename chat:', conversation.title);
+    if (requested === null) return;
+    const title = requested.trim();
+    if (!title) {
+        window.alert('Enter a chat name.');
+        return;
+    }
+    try {
+        const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversation.id)}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title}),
+        });
+        conversations = payload.conversations;
+        renderConversations();
+        if (conversation.id === activeConversationId) statusText.textContent = payload.conversation.title;
+    } catch (error) {
+        window.alert(error.message);
+    }
 }
 
 async function selectConversation(conversationId) {
@@ -399,6 +433,7 @@ function showView(view) {
 
 const aiProviderSelect = document.getElementById('ai-provider');
 const aiModelInput = document.getElementById('ai-model');
+const aiVisionModelInput = document.getElementById('ai-vision-model');
 const aiBaseUrlInput = document.getElementById('ai-base-url');
 const aiApiKeyInput = document.getElementById('ai-api-key');
 
@@ -411,6 +446,7 @@ const aiProviderDefaults = {
 function configureAIProvider(provider = aiProviderSelect.value) {
     const saved = aiProviderConfiguration?.providers?.[provider] || aiProviderDefaults[provider];
     aiModelInput.value = saved.model || aiProviderDefaults[provider].model;
+    aiVisionModelInput.value = aiProviderConfiguration?.vision_model || 'gemini-2.5-flash';
     aiBaseUrlInput.value = saved.base_url || aiProviderDefaults.local.base_url;
     document.getElementById('ai-base-url-field').hidden = provider !== 'local';
     document.getElementById('local-provider-presets').hidden = provider !== 'local';
@@ -421,6 +457,9 @@ function configureAIProvider(provider = aiProviderSelect.value) {
         ? 'optional for most local servers'
         : saved.api_key_source === 'environment' ? 'configured by environment' : saved.has_api_key ? 'saved securely in local settings' : 'not configured';
     document.getElementById('ai-key-state').textContent = source;
+    document.getElementById('vision-key-state').textContent = aiProviderConfiguration?.vision_has_api_key
+        ? 'Gemini key configured'
+        : 'Gemini key not configured';
     document.getElementById('ai-provider-badge').textContent = {gemini: 'Gemini', openai: 'OpenAI', local: 'Local'}[provider];
     document.getElementById('ai-provider-note').textContent = provider === 'local'
         ? 'Compatible with LM Studio, Ollama, and other servers exposing /v1/chat/completions.'
@@ -464,6 +503,7 @@ async function saveAIProvider(showFeedback = true, extra = {}) {
     const payload = {
         provider: aiProviderSelect.value,
         model: aiModelInput.value.trim(),
+        vision_model: aiVisionModelInput.value.trim(),
         base_url: aiBaseUrlInput.value.trim(),
         api_key: aiApiKeyInput.value.trim(),
         thinking_enabled: document.getElementById('ai-thinking-enabled').checked,
@@ -559,6 +599,34 @@ document.getElementById('project-link').addEventListener('click', async event =>
     if (!window.pywebview?.api?.open_project_repository) return;
     event.preventDefault();
     await window.pywebview.api.open_project_repository();
+});
+
+document.getElementById('media-provider-link').addEventListener('click', async event => {
+    if (!window.pywebview?.api?.open_media_provider) return;
+    event.preventDefault();
+    await window.pywebview.api.open_media_provider();
+});
+
+document.getElementById('save-user-display-name').addEventListener('click', async () => {
+    const input = document.getElementById('user-display-name');
+    const feedback = document.getElementById('user-display-name-status');
+    const button = document.getElementById('save-user-display-name');
+    button.disabled = true;
+    try {
+        const payload = await apiJson('/api/desktop/identity', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({display_name: input.value}),
+        });
+        personName = payload.person_name || 'User';
+        input.value = personName;
+        await loadConversationMessages();
+        setFeedback(feedback, `Saved as ${personName}.`, 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
 });
 
 const sliderKeys = ['tone', 'verbosity', 'formality', 'empathy'];
@@ -997,6 +1065,7 @@ const mediaStatus = document.getElementById('media-status');
 let mediaModelRequest = 0;
 let selectedVisualImage = null;
 let mediaSelectionUrl = '';
+const mediaPromptDraftStorageKey = 'petey.media-prompt-drafts.v1';
 
 const mediaOperationUI = {
     txt2img: {source: null, prompt: 'Image prompt', placeholder: 'Describe the image you want…', visual: true},
@@ -1010,9 +1079,40 @@ const mediaOperationUI = {
     'img-upscale': {source: 'image', prompt: null, upscale: true},
 };
 
+function loadMediaPromptDrafts() {
+    try {
+        const saved = JSON.parse(window.localStorage.getItem(mediaPromptDraftStorageKey) || '{}');
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+        return Object.fromEntries(
+            Object.entries(saved).filter(([operation, prompt]) =>
+                mediaOperationUI[operation]?.prompt && typeof prompt === 'string'
+            )
+        );
+    } catch (_error) {
+        return {};
+    }
+}
+
+const mediaPromptDrafts = loadMediaPromptDrafts();
+let activeMediaOperation = mediaOperation.value;
+
+function saveMediaPromptDrafts() {
+    try {
+        window.localStorage.setItem(mediaPromptDraftStorageKey, JSON.stringify(mediaPromptDrafts));
+    } catch (_error) {
+        // Draft persistence is optional when browser storage is unavailable.
+    }
+}
+
+function rememberMediaPrompt(operation = activeMediaOperation) {
+    if (!mediaOperationUI[operation]?.prompt) return;
+    mediaPromptDrafts[operation] = mediaPrompt.value;
+    saveMediaPromptDrafts();
+}
+
 async function loadMediaCatalog() {
     const connection = document.getElementById('media-connection');
-    setFeedback(connection, 'Loading deAPI…');
+    setFeedback(connection, 'Connecting…');
     try {
         const payload = await apiJson('/api/desktop/media');
         mediaSelectedModels = payload.selected_models || {};
@@ -1020,7 +1120,7 @@ async function loadMediaCatalog() {
         configureMediaOperation();
         startMediaPolling();
         refreshDeapiBalance();
-        setFeedback(connection, payload.configured ? 'deAPI key loaded' : 'DEAPI_KEY missing', payload.configured ? 'success' : 'error');
+        setFeedback(connection, payload.configured ? 'Media service connected' : 'Media service not configured', payload.configured ? 'success' : 'error');
     } catch (error) {
         setFeedback(connection, error.message, 'error');
     }
@@ -1035,6 +1135,9 @@ function configureMediaOperation() {
     if (hasPrompt) {
         document.getElementById('media-prompt-label').textContent = config.prompt;
         mediaPrompt.placeholder = config.placeholder;
+        mediaPrompt.value = mediaPromptDrafts[operation] || '';
+    } else {
+        mediaPrompt.value = '';
     }
     mediaSourceField.hidden = !config.source;
     if (config.source) {
@@ -1073,7 +1176,7 @@ async function loadMediaModels(operation) {
         });
         mediaModel.value = mediaSelectedModels[operation] || '';
         mediaModel.disabled = false;
-        if (!payload.models?.length) setFeedback(mediaStatus, 'No compatible models were returned. Check DEAPI_KEY.', 'error');
+        if (!payload.models?.length) setFeedback(mediaStatus, 'No compatible models were returned. Check the media service configuration.', 'error');
     } catch (error) {
         if (requestNumber !== mediaModelRequest) return;
         mediaModel.innerHTML = '<option value="">Models unavailable</option>';
@@ -1081,7 +1184,12 @@ async function loadMediaModels(operation) {
     }
 }
 
-mediaOperation.addEventListener('change', configureMediaOperation);
+mediaPrompt.addEventListener('input', () => rememberMediaPrompt(mediaOperation.value));
+mediaOperation.addEventListener('change', () => {
+    rememberMediaPrompt(activeMediaOperation);
+    activeMediaOperation = mediaOperation.value;
+    configureMediaOperation();
+});
 
 function clearMediaSourceSelection() {
     selectedVisualImage = null;
@@ -1252,15 +1360,21 @@ document.getElementById('image-browser-up').addEventListener('click', () => {
 document.getElementById('enhance-media-prompt').addEventListener('click', async () => {
     const button = document.getElementById('enhance-media-prompt');
     if (!mediaPrompt.value.trim()) return;
+    const operation = mediaOperation.value;
+    const prompt = mediaPrompt.value;
     button.disabled = true;
     setFeedback(mediaStatus, 'Gemini is enhancing the prompt…');
     try {
         const payload = await apiJson('/api/desktop/media/enhance', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({operation: mediaOperation.value, prompt: mediaPrompt.value}),
+            body: JSON.stringify({operation, prompt}),
         });
-        mediaPrompt.value = payload.prompt;
-        setFeedback(mediaStatus, 'Prompt enhanced. Review it, then generate.', 'success');
+        mediaPromptDrafts[operation] = payload.prompt;
+        saveMediaPromptDrafts();
+        if (mediaOperation.value === operation) {
+            mediaPrompt.value = payload.prompt;
+            setFeedback(mediaStatus, 'Prompt enhanced. Review it, then generate.', 'success');
+        }
     } catch (error) {
         setFeedback(mediaStatus, error.message, 'error');
     } finally {
@@ -1292,15 +1406,21 @@ function renderMediaResult(payload) {
     let media;
     if (payload.kind === 'image') {
         media = document.createElement('img');
-        media.alt = 'Generated by Petey through deAPI';
+        media.alt = 'Generated by Petey';
     } else if (payload.kind === 'video') {
         media = document.createElement('video');
         media.controls = true;
+        media.preload = 'auto';
+        media.playsInline = true;
     } else {
         media = document.createElement('audio');
         media.controls = true;
     }
-    media.src = payload.result_url;
+    const localItem = payload.gallery_item;
+    const previewUrl = localItem?.local_filename
+        ? `/api/desktop/gallery/preview/${encodeURIComponent(localItem.id)}`
+        : payload.result_url;
+    media.src = previewUrl;
     container.append(media);
     openLink.href = payload.result_url;
     openLink.hidden = false;
@@ -1371,10 +1491,23 @@ async function loadMediaJobs() {
             dot.className = 'media-job-dot';
             let preview = null;
             if (job.preview_url) {
-                preview = document.createElement('img');
+                const previewPath = (() => {
+                    try { return new URL(job.preview_url).pathname.toLowerCase(); }
+                    catch (_error) { return ''; }
+                })();
+                const videoPreview = /\.(mp4|webm|mov|m4v)$/.test(previewPath);
+                preview = document.createElement(videoPreview ? 'video' : 'img');
                 preview.className = 'media-job-preview';
                 preview.src = job.preview_url;
-                preview.alt = 'Live deAPI preview';
+                if (videoPreview) {
+                    preview.muted = true;
+                    preview.autoplay = true;
+                    preview.loop = true;
+                    preview.playsInline = true;
+                    preview.preload = 'metadata';
+                } else {
+                    preview.alt = 'Live generation preview';
+                }
             }
             const copy = document.createElement('div');
             copy.className = 'media-job-copy';
@@ -1433,7 +1566,7 @@ async function refreshDeapiBalance() {
         const payload = await apiJson('/api/desktop/media/balance');
         const amount = Number(payload.balance);
         button.innerHTML = `Balance: $${amount.toFixed(2)} <span>↻</span>`;
-        button.title = 'Refresh deAPI balance';
+        button.title = 'Refresh media balance';
     } catch (error) {
         button.innerHTML = 'Balance unavailable <span>↻</span>';
         button.title = error.message;
@@ -1478,12 +1611,13 @@ function buildGalleryCard(item) {
         media = document.createElement('video');
         media.controls = true;
         media.preload = 'metadata';
+        media.playsInline = true;
     } else {
         media = document.createElement('audio');
         media.controls = true;
         media.preload = 'metadata';
     }
-    media.src = item.media_url;
+    media.src = item.kind === 'video' && item.preview_url ? item.preview_url : item.media_url;
     preview.append(media);
 
     const details = document.createElement('div');

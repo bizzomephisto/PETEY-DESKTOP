@@ -6,6 +6,7 @@ import asyncio
 import json
 import mimetypes
 import queue
+import subprocess
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ class MediaGallery:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.index_path = self.directory / "index.json"
         self._lock = threading.RLock()
+        self._preview_lock = threading.Lock()
         self._items = self._load()
 
     def _load(self) -> list[dict]:
@@ -81,7 +83,10 @@ class MediaGallery:
                             if total > self.MAX_DOWNLOAD_BYTES:
                                 raise ValueError("Generated file exceeded the 500 MB local gallery limit.")
                             output.write(chunk)
-            partial.replace(self.directory / local_filename)
+            local_path = self.directory / local_filename
+            partial.replace(local_path)
+            if result["kind"] == "video":
+                self._create_video_preview(local_path, self._video_preview_path(item_id))
         except Exception as exc:
             download_error = str(exc)
             local_filename = ""
@@ -116,6 +121,7 @@ class MediaGallery:
             if item.get("local_filename"):
                 try:
                     (self.directory / item["local_filename"]).unlink(missing_ok=True)
+                    self._video_preview_path(item_id).unlink(missing_ok=True)
                 except OSError as exc:
                     print(f"[GALLERY] Could not delete media file: {exc}")
             self._items = [existing for existing in self._items if existing["id"] != item_id]
@@ -128,6 +134,54 @@ class MediaGallery:
             return None
         path = self.directory / item["local_filename"]
         return path if path.is_file() else None
+
+    def video_preview_path(self, item_id: str) -> Path | None:
+        """Return a Qt-compatible WebM derivative, creating it for legacy videos."""
+        item = self.get(item_id)
+        source = self.file_path(item_id)
+        if not item or item.get("kind") != "video" or source is None:
+            return None
+        preview = self._video_preview_path(item_id)
+        if preview.is_file() and preview.stat().st_size > 0:
+            return preview
+        with self._preview_lock:
+            if preview.is_file() and preview.stat().st_size > 0:
+                return preview
+            if self._create_video_preview(source, preview):
+                return preview
+        # Serving the original is still useful in browsers with H.264 support.
+        return source
+
+    def _video_preview_path(self, item_id: str) -> Path:
+        return self.directory / f"{item_id}.preview.webm"
+
+    @staticmethod
+    def _create_video_preview(source: Path, destination: Path) -> bool:
+        temporary = destination.with_suffix(".tmp.webm")
+        try:
+            completed = subprocess.run(
+                [
+                    "ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(source),
+                    "-map", "0:v:0", "-map", "0:a?", "-c:v", "libvpx",
+                    "-deadline", "good", "-cpu-used", "5", "-crf", "32", "-b:v", "0",
+                    "-c:a", "libopus", "-b:a", "96k", str(temporary),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=180,
+                check=False,
+            )
+            if completed.returncode != 0 or not temporary.is_file() or temporary.stat().st_size == 0:
+                return False
+            temporary.replace(destination)
+            return True
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            return False
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _extension(content_type: str, kind: str) -> str:

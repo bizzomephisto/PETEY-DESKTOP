@@ -27,6 +27,7 @@
             </nav>
             <div class="coming-next">
                 <a id="project-link" href="{{ project_url }}" target="_blank" rel="noopener">GitHub · PETEY-DESKTOP ↗</a>
+                <a id="media-provider-link" href="{{ media_provider_url }}" target="_blank" rel="noopener">Media powered by deAPI ↗</a>
             </div>
         </aside>
 
@@ -62,7 +63,7 @@
         </section>
 
         <section id="view-media" class="tool-view app-view">
-            <header class="tool-header"><div><h1>deAPI Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh deAPI balance">Balance: — <span>↻</span></button></div></header>
+            <header class="tool-header"><div><h1>Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>
             <div class="tool-content media-layout">
                 <section class="settings-card media-form-card">
                     <div class="field-grid two-column">
@@ -124,7 +125,7 @@
                     <div id="media-upscale-fields" class="media-parameter-group" hidden>
                         <label class="full-field"><span>Scale</span><select id="media-scale"><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select></label>
                     </div>
-                    <button id="generate-media" class="primary-button media-generate-button" type="button">Generate with deAPI</button>
+                    <button id="generate-media" class="primary-button media-generate-button" type="button">Generate</button>
                     <div id="media-status" class="wide-status"></div>
                 </section>
 
@@ -222,6 +223,7 @@
                             </select>
                         </label>
                         <label><span>Model</span><input id="ai-model" type="text" list="ai-model-options" placeholder="Model identifier"><datalist id="ai-model-options"></datalist></label>
+                        <label class="full-span"><span>Gemini vision model <small id="vision-key-state">Gemini key not configured</small></span><input id="ai-vision-model" type="text" list="ai-vision-model-options" placeholder="gemini-2.5-flash"><datalist id="ai-vision-model-options"><option value="gemini-2.5-flash"></option><option value="gemini-2.5-pro"></option><option value="gemini-2.0-flash"></option></datalist></label>
                         <label id="ai-base-url-field" class="full-span" hidden><span>Server URL</span><input id="ai-base-url" type="url" placeholder="http://localhost:1234/v1"></label>
                         <label><span>API key <small id="ai-key-state">not configured</small></span><input id="ai-api-key" type="password" autocomplete="new-password" placeholder="Leave blank to keep the existing key"></label>
                         <label class="ai-thinking-control"><span><strong>Model thinking</strong><small>Allow supported reasoning models to think before answering.</small></span><input id="ai-thinking-enabled" type="checkbox" role="switch" checked></label>
@@ -232,6 +234,7 @@
                         <span class="hint">Start its local server and load a model first.</span>
                     </div>
                     <p id="ai-provider-note" class="hint"></p>
+                    <p class="hint">Image attachments are inspected by the Gemini vision model above, then its description is passed to your selected chat provider.</p>
                     <div class="inline-actions">
                         <button id="save-ai-provider" class="primary-button" type="button">Save provider</button>
                         <button id="test-ai-provider" class="secondary-button" type="button">Test connection</button>
@@ -239,6 +242,13 @@
                         <button id="clear-ai-key" class="text-button" type="button">Clear saved key</button>
                     </div>
                     <span id="ai-provider-status" class="wide-status"></span>
+                </section>
+                <section class="settings-card">
+                    <div class="card-heading"><div><h2>Your name</h2><p>Choose how Petey addresses you and labels your chat messages.</p></div><span class="provider-badge">Local profile</span></div>
+                    <div class="field-grid two-column">
+                        <label><span>User name</span><input id="user-display-name" type="text" maxlength="50" placeholder="User"></label>
+                    </div>
+                    <div class="inline-actions"><button id="save-user-display-name" class="primary-button" type="button">Save name</button><span id="user-display-name-status" class="wide-status"></span></div>
                 </section>
                 <section class="settings-card preference-list">
                     <label class="preference-row"><span><strong>Always on top</strong><small>Keep Petey above other desktop windows.</small></span><input id="always-on-top" type="checkbox" role="switch"></label>

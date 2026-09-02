@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from petey.assistant import AssistantIdentity, AssistantService, PETEY_USER_ID
+from petey.assistant import (
+    AssistantAttachment,
+    AssistantIdentity,
+    AssistantService,
+    PETEY_USER_ID,
+)
 
 
 class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +88,25 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(reply.text, "Got it")
         self.assertEqual(llm.call_args.args[2], temporary_history)
+
+    async def test_image_attachment_is_inspected_by_configured_gemini_vision(self):
+        service = AssistantService("You are Petey.")
+        identity = AssistantIdentity("desktop-test", "main", "owner", "Pat")
+        attachment = AssistantAttachment("robot.png", "image/png", b"image-data")
+        with (
+            patch(
+                "petey.assistant.AIProvider.describe_image",
+                return_value="A small green robot on a desk.",
+            ) as vision,
+            patch("petey.assistant.AIProvider.complete", return_value="I see a robot.") as llm,
+        ):
+            reply = await service.respond("What is in this image?", identity, attachment)
+
+        self.assertEqual(reply.text, "I see a robot.")
+        vision.assert_called_once_with(
+            b"image-data", "image/png", "What is in this image?"
+        )
+        self.assertIn("A small green robot on a desk.", llm.call_args.args[0])
 
     def test_model_tokens_and_gif_directive_are_removed(self):
         cleaned = AssistantService._clean_model_response("Hi <|junk|> there")
