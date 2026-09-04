@@ -83,13 +83,20 @@ class DesktopStateTests(unittest.TestCase):
             state = DesktopState(directory)
             saved = state.save_persona_slot(
                 5,
-                {"name": "Coder Petey", "system_prompt": "You are a coding partner."},
+                {
+                    "name": "Coder Petey", "system_prompt": "You are a coding partner.",
+                    "speech": {
+                        "provider": "gemini", "gemini_voice": "Sulafat",
+                        "gemini_model": "gemini-3.1-flash-tts-preview",
+                    },
+                },
             )
 
             reloaded = DesktopState(directory)
             self.assertEqual(len(reloaded.saved_personas), 5)
             self.assertEqual(saved["slot"], 5)
             self.assertEqual(reloaded.saved_personas[4]["name"], "Coder Petey")
+            self.assertEqual(reloaded.saved_personas[4]["speech"]["gemini_voice"], "Sulafat")
             self.assertNotEqual(reloaded.persona["name"], "Coder Petey")
             self.assertTrue(reloaded.clear_persona_slot(5))
             self.assertIsNone(reloaded.saved_personas[4])
@@ -114,7 +121,11 @@ class DesktopStateTests(unittest.TestCase):
             state = DesktopState(directory)
             created = state.create_conversation("Project notes")
             state.update_preferences(
-                {"always_on_top": True, "sidebar_collapsed": True, "ui_scale": 1.2}
+                {
+                    "always_on_top": True, "sidebar_collapsed": True,
+                    "ui_scale": 1.2, "visual_mode": True,
+                    "visual_style": "orbital_mind",
+                }
             )
 
             reloaded = DesktopState(directory)
@@ -127,6 +138,10 @@ class DesktopStateTests(unittest.TestCase):
             )
             self.assertEqual(reloaded.preferences["ui_scale"], 1.2)
             self.assertTrue(reloaded.preferences["always_on_top"])
+            self.assertTrue(reloaded.preferences["visual_mode"])
+            self.assertEqual(reloaded.preferences["visual_style"], "orbital_mind")
+            with self.assertRaises(ValueError):
+                state.update_preferences({"visual_style": "unknown"})
 
             deleted, active_id = reloaded.delete_conversation(created["id"])
             self.assertEqual(deleted["title"], "Renamed project")
@@ -178,6 +193,44 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(memory["provider"], "local")
             self.assertEqual(memory["models"]["local"], "nomic-embed-text")
             self.assertEqual(memory["local_base_url"], "http://localhost:11434/v1")
+
+    def test_speech_provider_can_use_gemini_or_be_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            speech = state.update_speech({
+                "provider": "gemini",
+                "gemini_model": "gemini-3.1-flash-tts-preview",
+                "gemini_voice": "Sulafat",
+                "style": "Warm and measured",
+                "consistent_voice": False,
+                "auto_speak": True,
+            })
+            self.assertEqual(speech["gemini_voice"], "Sulafat")
+            self.assertTrue(speech["auto_speak"])
+            self.assertFalse(speech["consistent_voice"])
+            self.assertEqual(DesktopState(directory).speech["style"], "Warm and measured")
+            disabled = state.update_speech({"provider": "disabled"})
+            self.assertEqual(disabled["provider"], "disabled")
+            self.assertFalse(disabled["auto_speak"])
+            with self.assertRaises(ValueError):
+                state.update_speech({"provider": "gemini", "gemini_voice": "Unknown"})
+
+    def test_microphone_modes_are_persisted_and_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            self.assertEqual(state.voice_input["mode"], "disabled")
+            saved = state.update_voice_input({
+                "mode": "wake_word", "model": "gemini-3.5-transcribe",
+                "wake_word": "Petey", "device_id": "usb-mic-1", "sensitivity": "high",
+            })
+            self.assertEqual(saved["mode"], "wake_word")
+            self.assertEqual(saved["device_id"], "usb-mic-1")
+            self.assertEqual(saved["sensitivity"], "high")
+            self.assertEqual(DesktopState(directory).voice_input["wake_word"], "Petey")
+            with self.assertRaises(ValueError):
+                state.update_voice_input({"mode": "secret_recording"})
+            with self.assertRaises(ValueError):
+                state.update_voice_input({"sensitivity": "maximum"})
 
 
 if __name__ == "__main__":

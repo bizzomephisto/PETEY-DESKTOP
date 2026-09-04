@@ -15,6 +15,7 @@ from pathlib import Path
 import aiohttp
 
 from petey.deapi_client import DeapiClient
+from petey.gemini_tts import GeminiTTS
 from petey.media_service import MediaInput, MediaService
 
 
@@ -69,20 +70,31 @@ class MediaGallery:
         download_error = ""
         partial = self.directory / f"{item_id}.part"
         try:
-            timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_read=120)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(remote_url) as response:
-                    response.raise_for_status()
-                    content_type = response.headers.get("Content-Type", "").split(";", 1)[0]
-                    extension = self._extension(content_type, result["kind"])
-                    local_filename = f"{item_id}{extension}"
-                    total = 0
-                    with partial.open("wb") as output:
-                        async for chunk in response.content.iter_chunked(1024 * 1024):
-                            total += len(chunk)
-                            if total > self.MAX_DOWNLOAD_BYTES:
-                                raise ValueError("Generated file exceeded the 500 MB local gallery limit.")
-                            output.write(chunk)
+            inline_data = result.get("data")
+            if inline_data is not None:
+                if not isinstance(inline_data, bytes):
+                    raise ValueError("Generated inline media was not binary data.")
+                if len(inline_data) > self.MAX_DOWNLOAD_BYTES:
+                    raise ValueError("Generated file exceeded the 500 MB local gallery limit.")
+                content_type = str(result.get("content_type") or "application/octet-stream")
+                extension = self._extension(content_type, result["kind"])
+                local_filename = f"{item_id}{extension}"
+                partial.write_bytes(inline_data)
+            else:
+                timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_read=120)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(remote_url) as response:
+                        response.raise_for_status()
+                        content_type = response.headers.get("Content-Type", "").split(";", 1)[0]
+                        extension = self._extension(content_type, result["kind"])
+                        local_filename = f"{item_id}{extension}"
+                        total = 0
+                        with partial.open("wb") as output:
+                            async for chunk in response.content.iter_chunked(1024 * 1024):
+                                total += len(chunk)
+                                if total > self.MAX_DOWNLOAD_BYTES:
+                                    raise ValueError("Generated file exceeded the 500 MB local gallery limit.")
+                                output.write(chunk)
             local_path = self.directory / local_filename
             partial.replace(local_path)
             if result["kind"] == "video":
@@ -220,6 +232,9 @@ class MediaJobManager:
         model_slug: str,
         source: MediaInput | None,
         parameters: dict,
+        speech_settings: dict | None = None,
+        ai_config: dict | None = None,
+        save_to_gallery: bool = True,
     ) -> dict:
         if self._closed:
             raise RuntimeError("The media job manager is shutting down.")
@@ -234,6 +249,9 @@ class MediaJobManager:
         MediaService._validate_source(config["file"], source)
         if operation not in {"img-rmbg", "img-upscale"} and not (prompt or "").strip():
             raise ValueError("A prompt or text value is required.")
+        speech_settings = dict(speech_settings or {})
+        if operation == "txt2audio" and speech_settings.get("provider") == "disabled":
+            raise ValueError("Text to speech is disabled in Settings.")
 
         job_id = uuid.uuid4().hex
         job = {
@@ -256,6 +274,11 @@ class MediaJobManager:
             "_installation_id": installation_id,
             "_source": source,
             "_parameters": dict(parameters),
+            "_speech_settings": speech_settings,
+            "_ai_config": dict(ai_config or {}),
+            "_save_to_gallery": bool(save_to_gallery),
+            "_result_data": None,
+            "_result_content_type": "",
         }
         with self._lock:
             self._jobs[job_id] = job
@@ -298,9 +321,13 @@ class MediaJobManager:
                     job["status"] = "completed"
                     job["provider_status"] = "done"
                     job["progress"] = 100.0
-                    job["result"] = {**result, "gallery_item": gallery_item}
+                    job["_result_data"] = result.get("data")
+                    job["_result_content_type"] = str(result.get("content_type") or "")
+                    public_result = {key: value for key, value in result.items() if key != "data"}
+                    job["result"] = {**public_result, "gallery_item": gallery_item}
                     job["completed_at"] = _now()
                     job["_source"] = None
+                    job["_ai_config"] = {}
             except Exception as exc:
                 print(f"[MEDIA JOB] {job_id} failed: {exc}")
                 with self._lock:
@@ -309,8 +336,29 @@ class MediaJobManager:
                     job["error"] = str(exc)
                     job["completed_at"] = _now()
                     job["_source"] = None
+                    job["_ai_config"] = {}
 
     async def _execute(self, job: dict) -> tuple[dict, dict]:
+        speech = job.get("_speech_settings") or {}
+        if job["operation"] == "txt2audio" and speech.get("provider") == "gemini":
+            # MediaJobManager already executes this coroutine on a dedicated
+            # worker thread, so the blocking HTTP request does not touch Flask.
+            result = GeminiTTS(job.get("_ai_config") or {}).generate(
+                job["prompt"][:32000],
+                job.get("model_slug") or speech.get("gemini_model", ""),
+                job["_parameters"].get("voice") or speech.get("gemini_voice", "Kore"),
+                job["_parameters"].get("style") or speech.get("style", ""),
+                bool(speech.get("consistent_voice", True)),
+            )
+            result.update({"kind": "audio", "operation": "txt2audio"})
+            gallery_item = None
+            if job.get("_save_to_gallery", True):
+                gallery_item = await self.gallery.capture(
+                    job["id"], result, job["prompt"],
+                    job.get("model_slug") or speech.get("gemini_model", ""),
+                )
+            return result, gallery_item
+
         client = DeapiClient(
             progress_callback=lambda update: self._update_progress(job["id"], update)
         )
@@ -323,9 +371,11 @@ class MediaJobManager:
                 source=job["_source"],
                 parameters=job["_parameters"],
             )
-            gallery_item = await self.gallery.capture(
-                job["id"], result, job["prompt"], job["model_slug"]
-            )
+            gallery_item = None
+            if job.get("_save_to_gallery", True):
+                gallery_item = await self.gallery.capture(
+                    job["id"], result, job["prompt"], job["model_slug"]
+                )
             return result, gallery_item
         finally:
             await client.close()
@@ -357,6 +407,14 @@ class MediaJobManager:
         )
         for job in finished[: max(0, len(self._jobs) - 100)]:
             self._jobs.pop(job["id"], None)
+
+    def result_data(self, job_id: str) -> tuple[bytes, str] | None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            data = job.get("_result_data") if job else None
+            if not isinstance(data, bytes):
+                return None
+            return data, str(job.get("_result_content_type") or "application/octet-stream")
 
     @staticmethod
     def _public(job: dict) -> dict:

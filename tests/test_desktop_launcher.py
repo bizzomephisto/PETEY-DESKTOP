@@ -9,11 +9,12 @@ import run_desktop
 class DesktopLauncherTests(unittest.TestCase):
     def test_desktop_bridge_updates_native_window(self):
         bridge = run_desktop.DesktopBridge()
-        window = type("Window", (), {"on_top": False})()
+        window = type("Window", (), {"on_top": False, "toggle_fullscreen": lambda self: None})()
         bridge.window = window
 
         self.assertTrue(bridge.set_always_on_top(True))
         self.assertTrue(window.on_top)
+        self.assertEqual(bridge.toggle_fullscreen(), {"ok": True, "fullscreen": True})
 
     def test_platform_icon_formats_are_selected(self):
         self.assertEqual(run_desktop.application_icon_path("linux").name, "petey-icon-256.png")

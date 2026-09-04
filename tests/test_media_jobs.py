@@ -45,6 +45,18 @@ class _FakeSession:
 
 
 class MediaGalleryTests(unittest.TestCase):
+    def test_capture_writes_inline_gemini_audio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gallery = MediaGallery(directory)
+            result = {
+                "result_url": "", "data": b"RIFF-audio", "content_type": "audio/wav",
+                "kind": "audio", "operation": "txt2audio",
+            }
+            item = asyncio.run(gallery.capture("speech-1", result, "Hello", "gemini-tts"))
+
+            self.assertEqual(item["local_filename"], "speech-1.wav")
+            self.assertEqual((Path(directory) / "speech-1.wav").read_bytes(), b"RIFF-audio")
+
     def test_capture_persists_file_index_and_delete(self):
         with tempfile.TemporaryDirectory() as directory:
             gallery = MediaGallery(directory)
@@ -99,6 +111,41 @@ class MediaGalleryTests(unittest.TestCase):
 
 
 class MediaJobManagerTests(unittest.TestCase):
+    def test_gemini_speech_runs_through_queue_and_gallery(self):
+        generated = {
+            "result_url": "", "data": b"RIFF-gemini", "content_type": "audio/wav",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            gallery = MediaGallery(directory)
+            with patch("petey.media_jobs.GeminiTTS.generate", return_value=generated) as generate:
+                manager = MediaJobManager(gallery, max_workers=2)
+                queued = manager.submit(
+                    "txt2audio", "Hello", "desktop-test", "gemini-3.1-flash-tts-preview",
+                    None, {"voice": "Kore", "style": "Friendly"},
+                    speech_settings={"provider": "gemini"},
+                    ai_config={"gemini": {"api_key": "secret"}},
+                )
+                deadline = time.time() + 3
+                while time.time() < deadline and manager.get(queued["id"])["status"] != "completed":
+                    time.sleep(0.02)
+                job = manager.get(queued["id"])
+                manager.close()
+
+            self.assertEqual(job["status"], "completed")
+            self.assertNotIn("data", job["result"])
+            self.assertEqual(job["result"]["gallery_item"]["local_filename"].split(".")[-1], "wav")
+            generate.assert_called_once()
+            self.assertTrue(generate.call_args.args[4])
+
+    def test_disabled_speech_is_rejected_before_queueing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = MediaJobManager(MediaGallery(directory), max_workers=2)
+            with self.assertRaisesRegex(ValueError, "disabled"):
+                manager.submit(
+                    "txt2audio", "Hello", "desktop-test", "", None, {},
+                    speech_settings={"provider": "disabled"},
+                )
+            manager.close()
     def test_provider_progress_is_normalized_and_exposed(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = MediaJobManager(MediaGallery(directory), max_workers=2)

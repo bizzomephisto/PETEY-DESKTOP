@@ -1,6 +1,6 @@
 # PETEY Desktop
 
-Current release: **v0.11.0**
+Current release: **v0.12.0**
 
 PETEY is a standalone desktop AI assistant with local conversations, configurable
 personality, universal SQLite memory, RAG document management, deAPI media tools,
@@ -11,9 +11,14 @@ and an approval-gated project workspace.
 - Gemini, OpenAI, LM Studio, Ollama, and other OpenAI-compatible chat providers
 - Local SQLite conversation memory with configurable local or hosted embeddings
 - Temporary chats that do not read or write memory
-- Built-in personality templates, editable system prompts, and five saved persona slots
+- Built-in personality templates, editable system prompts, and five persona-and-voice slots
 - RAG uploads, retrieval testing, vector rebuilding, and local database controls
-- Parallel deAPI image, video, music, speech, background-removal, and upscale jobs
+- Parallel image, video, music, speech, background-removal, and upscale jobs
+- Selectable Gemini or media-provider text to speech with named voices and delivery direction
+- Per-reply Speak controls and optional automatic playback for new chat responses
+- Push-to-talk, always-on microphone, and wake-name voice input with local activity detection
+- Keyboard Space push-to-talk and four audio-reactive neural-network chat views
+- F11 visual fullscreen with progressive captions during Petey's spoken replies
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
 - Per-operation media prompt drafts that remain available across app restarts
 - Conversational image generation through modular model tools
@@ -31,7 +36,7 @@ browser.
 - Python 3.12 or newer
 - FFmpeg for browser-compatible generated-video previews
 - A language-model provider: Gemini, OpenAI, or a local OpenAI-compatible server
-- A Gemini API key if you want Petey to inspect chat image attachments
+- A Gemini API key if you want image inspection, Gemini speech, or microphone transcription
 - A deAPI key only if you want media generation
 
 ## Install and run
@@ -79,8 +84,10 @@ When a hosted chat or embedding provider is selected, relevant prompts, selected
 workspace-file context, or memory text are sent to that provider. Local-provider
 mode keeps those model requests on the configured local endpoint. Chat image
 attachments are sent to the independently selected Gemini vision model, and its
-text description is passed to the active chat provider. deAPI media requests are
-sent to deAPI.
+text description is passed to the active chat provider. Microphone activity is
+detected locally; completed utterance clips are sent to Gemini for transcription
+when voice input is enabled. Recordings are not stored in the gallery or memory.
+deAPI media requests are sent to deAPI.
 
 ## Workspace safety
 

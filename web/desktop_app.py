@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import mimetypes
+import os
+from io import BytesIO
 from pathlib import PurePath
 
-from flask import Flask, jsonify, render_template, request, send_file, url_for
+from flask import Flask, Response, jsonify, render_template, request, send_file, url_for
 
 from petey.assistant import AssistantAttachment, AssistantIdentity, AssistantService, PETEY_USER_ID
 from petey.ai_provider import AIProvider, AIProviderError
 from petey.config import PERSONA_PRESETS
 from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
+from petey.gemini_tts import GeminiTTS, GeminiTTSError, GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
+from petey.gemini_stt import GeminiSTT, GeminiSTTError, GEMINI_STT_MODELS
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.workspace import WorkspaceError, WorkspaceService
@@ -136,6 +141,8 @@ def create_desktop_app(
                 "conversation_id": current.conversation_id,
                 "conversations": current.conversations,
                 "preferences": current.preferences,
+                "speech": current.speech,
+                "voice_input": current.voice_input,
                 "installation_id": current.installation_id,
                 "workspaces": current.workspaces,
                 "active_workspace_id": current.active_workspace_id,
@@ -374,6 +381,51 @@ def create_desktop_app(
             print(f"[DESKTOP] Chat failed: {exc}")
             return jsonify({"error": "Petey had trouble processing that message."}), 500
 
+    @app.route("/api/desktop/voice-input", methods=["GET", "PUT"])
+    def desktop_voice_input_settings():
+        current: DesktopState = app.config["PETEY_STATE"]
+        if request.method == "PUT":
+            try:
+                current.update_voice_input(request.get_json(silent=True) or {})
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+        gemini = current.ai_provider.get("gemini", {})
+        return jsonify({
+            "configuration": current.voice_input,
+            "models": list(GEMINI_STT_MODELS),
+            "gemini_has_api_key": bool(
+                str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
+            ),
+        })
+
+    @app.post("/api/desktop/voice-input/transcribe")
+    def desktop_voice_input_transcribe():
+        current: DesktopState = app.config["PETEY_STATE"]
+        configuration = current.voice_input
+        if configuration.get("mode") == "disabled":
+            return jsonify({"error": "Microphone input is disabled in Settings."}), 400
+        uploaded = request.files.get("audio")
+        if not uploaded:
+            return jsonify({"error": "No microphone recording was provided."}), 400
+        audio = uploaded.read()
+        if not audio:
+            return jsonify({"error": "The microphone recording was empty."}), 400
+        if len(audio) > 20 * 1024 * 1024:
+            return jsonify({"error": "The microphone recording exceeds 20 MB."}), 413
+        wake_word = str(configuration.get("wake_word") or "Petey")
+        try:
+            transcript = GeminiSTT({
+                "gemini": current.ai_provider.get("gemini", {})
+            }).transcribe(
+                audio,
+                uploaded.mimetype or "audio/wav",
+                str(configuration.get("model") or GEMINI_STT_MODELS[0]),
+                vocabulary=[wake_word],
+            )
+            return jsonify({"transcript": transcript})
+        except GeminiSTTError as exc:
+            return jsonify({"error": str(exc)}), 502
+
     @app.route("/api/desktop/conversations", methods=["GET", "POST"])
     def desktop_conversations():
         current: DesktopState = app.config["PETEY_STATE"]
@@ -467,6 +519,109 @@ def create_desktop_app(
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
+    @app.route("/api/desktop/speech", methods=["GET", "PUT"])
+    def desktop_speech_settings():
+        current: DesktopState = app.config["PETEY_STATE"]
+        if request.method == "PUT":
+            payload = request.get_json(silent=True) or {}
+            if not isinstance(payload, dict):
+                return jsonify({"error": "Speech settings must be an object."}), 400
+            try:
+                current.update_speech(payload)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+        gemini = current.ai_provider.get("gemini", {})
+        return jsonify({
+            "configuration": current.speech,
+            "gemini_has_api_key": bool(
+                gemini.get("api_key") or os.getenv("GEMINI_API_KEY")
+            ),
+            "gemini_models": list(GEMINI_TTS_MODELS),
+            "gemini_voices": [
+                {"name": name, "description": description}
+                for name, description in GEMINI_TTS_VOICES.items()
+            ],
+            "billing_url": "https://aistudio.google.com/billing",
+            "balance_available_via_api": False,
+        })
+
+    @app.post("/api/desktop/chat/speech")
+    def desktop_chat_speech():
+        current: DesktopState = app.config["PETEY_STATE"]
+        payload = request.get_json(silent=True) or {}
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return jsonify({"error": "There is no reply to speak."}), 400
+        if len(text) > 32000:
+            return jsonify({"error": "This reply is too long to speak."}), 400
+        speech = current.speech
+        if speech.get("provider") == "disabled":
+            return jsonify({"error": "Text to speech is disabled in Settings."}), 400
+        model_slug = (
+            speech.get("gemini_model", "")
+            if speech.get("provider") == "gemini"
+            else current.selected_model("txt2audio")
+        )
+        try:
+            job = get_media_jobs().submit(
+                operation="txt2audio",
+                prompt=text,
+                installation_id=current.installation_id,
+                model_slug=model_slug,
+                source=None,
+                parameters={
+                    "voice": speech.get(
+                        "gemini_voice" if speech.get("provider") == "gemini" else "deapi_voice"
+                    ),
+                    "style": speech.get("style", ""),
+                },
+                speech_settings=speech,
+                ai_config={"gemini": current.ai_provider.get("gemini", {})},
+                save_to_gallery=False,
+            )
+            return jsonify({"status": "queued", "job": job}), 202
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": f"Could not queue speech: {_public_media_error(exc)}"}), 500
+
+    @app.post("/api/desktop/chat/speech/stream")
+    def desktop_chat_speech_stream():
+        current: DesktopState = app.config["PETEY_STATE"]
+        payload = request.get_json(silent=True) or {}
+        text = str(payload.get("text") or "").strip()
+        speech = current.speech
+        model = str(speech.get("gemini_model") or "")
+        if not text:
+            return jsonify({"error": "There is no reply to speak."}), 400
+        if len(text) > 32000:
+            return jsonify({"error": "This reply is too long to speak."}), 400
+        if speech.get("provider") != "gemini" or not model.startswith("gemini-3.1-"):
+            return jsonify({"error": "Streaming requires Gemini 3.1 Flash TTS."}), 400
+        client = GeminiTTS({"gemini": current.ai_provider.get("gemini", {})})
+        voice = str(speech.get("gemini_voice") or "Kore")
+        style = str(speech.get("style") or "")
+        consistent_voice = bool(speech.get("consistent_voice", True))
+
+        def generate_stream():
+            yield json.dumps({"status": "connecting"}) + "\n"
+            try:
+                for chunk in client.stream_pcm(
+                    text, model, voice, style, consistent_voice
+                ):
+                    yield json.dumps({
+                        "audio": base64.b64encode(chunk).decode("ascii")
+                    }) + "\n"
+                yield json.dumps({"status": "done"}) + "\n"
+            except GeminiTTSError as exc:
+                yield json.dumps({"error": str(exc)}) + "\n"
+
+        return Response(
+            generate_stream(),
+            mimetype="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @app.post("/api/desktop/ai-provider/test")
     def desktop_test_ai_provider():
         current: DesktopState = app.config["PETEY_STATE"]
@@ -498,14 +653,15 @@ def create_desktop_app(
                     "persona": current.persona,
                     "presets": PERSONA_PRESETS,
                     "saved_personas": current.saved_personas,
+                    "speech": current.speech,
                 }
             )
         try:
             changes = request.get_json(silent=True) or {}
             if not isinstance(changes, dict):
                 return jsonify({"error": "Personality settings must be an object."}), 400
-            persona = current.update_persona(changes)
-            return jsonify({"status": "saved", "persona": persona})
+            persona, speech = current.update_persona_with_speech(changes)
+            return jsonify({"status": "saved", "persona": persona, "speech": speech})
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -690,19 +846,32 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         operations = MediaService.operation_catalog()
         service = MediaService()
+        selected_models = {
+            operation: current.selected_model(operation) for operation in operations
+        }
+        if current.speech.get("provider") == "gemini":
+            if selected_models["txt2audio"] not in GEMINI_TTS_MODELS:
+                selected_models["txt2audio"] = current.speech.get("gemini_model", "")
         return jsonify(
             {
                 "operations": operations,
                 "configured": bool(service.client.api_key),
-                "selected_models": {
-                    operation: current.selected_model(operation) for operation in operations
-                },
+                "selected_models": selected_models,
+                "speech": current.speech,
             }
         )
 
     @app.get("/api/desktop/media/models/<operation>")
     def desktop_media_models(operation):
         try:
+            current: DesktopState = app.config["PETEY_STATE"]
+            if operation == "txt2audio" and current.speech.get("provider") == "disabled":
+                return jsonify({"operation": operation, "models": []})
+            if operation == "txt2audio" and current.speech.get("provider") == "gemini":
+                return jsonify({
+                    "operation": operation,
+                    "models": [{"slug": model, "name": model} for model in GEMINI_TTS_MODELS],
+                })
             models = app.config["PETEY_RUNTIME"].call(
                 MediaService().models(operation), timeout=90
             )
@@ -784,6 +953,8 @@ def create_desktop_app(
                 model_slug=model_slug,
                 source=source,
                 parameters=parameters,
+                speech_settings=current.speech,
+                ai_config={"gemini": current.ai_provider.get("gemini", {})},
             )
             current.update_selected_model(operation, model_slug)
             if job["kind"] == "image":
@@ -807,6 +978,16 @@ def create_desktop_app(
         if not job:
             return jsonify({"error": "Generation job not found."}), 404
         return jsonify({"job": job})
+
+    @app.get("/api/desktop/media/jobs/<job_id>/file")
+    def desktop_media_job_file(job_id):
+        result = get_media_jobs().result_data(job_id)
+        if result is None:
+            return jsonify({"error": "Generated speech file not found."}), 404
+        data, content_type = result
+        return send_file(
+            BytesIO(data), mimetype=content_type, download_name=f"petey-{job_id[:8]}.wav"
+        )
 
     @app.get("/api/desktop/gallery")
     def desktop_gallery():

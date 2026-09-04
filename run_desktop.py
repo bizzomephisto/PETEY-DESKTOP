@@ -79,12 +79,20 @@ class DesktopBridge:
     def __init__(self, gallery=None):
         self.window = None
         self.gallery = gallery
+        self.fullscreen = False
 
     def set_always_on_top(self, enabled):
         if self.window is None:
             return False
         self.window.on_top = bool(enabled)
         return True
+
+    def toggle_fullscreen(self):
+        if self.window is None:
+            return {"ok": False, "fullscreen": False}
+        self.window.toggle_fullscreen()
+        self.fullscreen = not self.fullscreen
+        return {"ok": True, "fullscreen": self.fullscreen}
 
     def choose_workspace_folder(self):
         """Open the native folder picker; the Flask API performs final validation."""

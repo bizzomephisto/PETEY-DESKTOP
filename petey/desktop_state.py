@@ -119,7 +119,13 @@ class DesktopState:
         if not isinstance(settings.get("preferences"), dict):
             settings["preferences"] = {}
             changed = True
-        defaults = {"always_on_top": False, "sidebar_collapsed": False, "ui_scale": 1.0}
+        defaults = {
+            "always_on_top": False,
+            "sidebar_collapsed": False,
+            "ui_scale": 1.0,
+            "visual_mode": False,
+            "visual_style": "neural_core",
+        }
         for key, value in defaults.items():
             if key not in settings["preferences"]:
                 settings["preferences"][key] = value
@@ -169,6 +175,37 @@ class DesktopState:
                 if key not in settings["ai_provider"][provider]:
                     settings["ai_provider"][provider][key] = value
                     changed = True
+        speech_defaults = {
+            "provider": "deapi",
+            "gemini_model": "gemini-3.1-flash-tts-preview",
+            "gemini_voice": "Kore",
+            "deapi_voice": "af_sky",
+            "style": "",
+            "consistent_voice": True,
+            "auto_speak": False,
+        }
+        if not isinstance(settings.get("speech"), dict):
+            settings["speech"] = copy.deepcopy(speech_defaults)
+            changed = True
+        for key, value in speech_defaults.items():
+            if key not in settings["speech"]:
+                settings["speech"][key] = value
+                changed = True
+        voice_input_defaults = {
+            "mode": "disabled",
+            "provider": "gemini",
+            "model": "gemini-3.5-transcribe",
+            "wake_word": "Petey",
+            "device_id": "",
+            "sensitivity": "normal",
+        }
+        if not isinstance(settings.get("voice_input"), dict):
+            settings["voice_input"] = copy.deepcopy(voice_input_defaults)
+            changed = True
+        for key, value in voice_input_defaults.items():
+            if key not in settings["voice_input"]:
+                settings["voice_input"][key] = value
+                changed = True
         if not isinstance(settings.get("memory_provider"), dict):
             settings["memory_provider"] = {
                 "semantic_enabled": True,
@@ -302,6 +339,13 @@ class DesktopState:
             preferences["always_on_top"] = bool(changes["always_on_top"])
         if "sidebar_collapsed" in changes:
             preferences["sidebar_collapsed"] = bool(changes["sidebar_collapsed"])
+        if "visual_mode" in changes:
+            preferences["visual_mode"] = bool(changes["visual_mode"])
+        if "visual_style" in changes:
+            style = str(changes.get("visual_style") or "neural_core")
+            if style not in {"neural_core", "synapse_drift", "orbital_mind", "signal_bloom"}:
+                raise ValueError("Choose a supported visual style.")
+            preferences["visual_style"] = style
         if "ui_scale" in changes:
             try:
                 preferences["ui_scale"] = round(max(0.75, min(1.5, float(changes["ui_scale"]))), 2)
@@ -412,6 +456,86 @@ class DesktopState:
         return self.ai_provider
 
     @property
+    def speech(self) -> dict:
+        return copy.deepcopy(self.settings.get("speech", {}))
+
+    def update_speech(self, changes: dict) -> dict:
+        current = self._validated_speech(self.speech, changes)
+        with self._lock:
+            self.settings["speech"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.speech
+
+    @staticmethod
+    def _validated_speech(base: dict, changes: dict) -> dict:
+        from petey.gemini_tts import GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
+
+        current = copy.deepcopy(base)
+        provider = str(changes.get("provider") or current.get("provider") or "deapi")
+        if provider not in {"disabled", "deapi", "gemini"}:
+            raise ValueError("Unsupported speech provider.")
+        current["provider"] = provider
+        if "gemini_model" in changes:
+            model = str(changes.get("gemini_model") or "").strip()
+            if model not in GEMINI_TTS_MODELS:
+                raise ValueError("Choose a supported Gemini TTS model.")
+            current["gemini_model"] = model
+        if "gemini_voice" in changes:
+            voice = str(changes.get("gemini_voice") or "").strip()
+            if voice not in GEMINI_TTS_VOICES:
+                raise ValueError("Choose a supported Gemini voice.")
+            current["gemini_voice"] = voice
+        if "deapi_voice" in changes:
+            current["deapi_voice"] = str(changes.get("deapi_voice") or "af_sky").strip()[:100]
+        if "style" in changes:
+            current["style"] = str(changes.get("style") or "").strip()[:2000]
+        if "consistent_voice" in changes:
+            current["consistent_voice"] = bool(changes["consistent_voice"])
+        if "auto_speak" in changes:
+            current["auto_speak"] = bool(changes["auto_speak"])
+        if provider == "disabled":
+            current["auto_speak"] = False
+        return current
+
+    @property
+    def voice_input(self) -> dict:
+        return copy.deepcopy(self.settings.get("voice_input", {}))
+
+    def update_voice_input(self, changes: dict) -> dict:
+        from petey.gemini_stt import GEMINI_STT_MODELS
+
+        current = self.voice_input
+        mode = str(changes.get("mode") or current.get("mode") or "disabled")
+        if mode not in {"disabled", "push_to_talk", "always_on", "wake_word"}:
+            raise ValueError("Unsupported microphone mode.")
+        current["mode"] = mode
+        provider = str(changes.get("provider") or current.get("provider") or "gemini")
+        if provider != "gemini":
+            raise ValueError("Unsupported transcription provider.")
+        current["provider"] = provider
+        if "model" in changes:
+            model = str(changes.get("model") or "").strip()
+            if model not in GEMINI_STT_MODELS:
+                raise ValueError("Choose a supported Gemini transcription model.")
+            current["model"] = model
+        if "wake_word" in changes:
+            wake_word = str(changes.get("wake_word") or "Petey").strip()[:40]
+            if not wake_word:
+                raise ValueError("Enter a wake name.")
+            current["wake_word"] = wake_word
+        if "device_id" in changes:
+            current["device_id"] = str(changes.get("device_id") or "").strip()[:500]
+        if "sensitivity" in changes:
+            sensitivity = str(changes.get("sensitivity") or "normal")
+            if sensitivity not in {"high", "normal", "low"}:
+                raise ValueError("Choose a supported microphone sensitivity.")
+            current["sensitivity"] = sensitivity
+        with self._lock:
+            self.settings["voice_input"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.voice_input
+
+    @property
     def memory_provider(self) -> dict:
         return copy.deepcopy(self.settings.get("memory_provider", {}))
 
@@ -453,6 +577,18 @@ class DesktopState:
             self.settings["persona"] = persona
             self._write_json(self.settings_path, self.settings)
         return self.persona
+
+    def update_persona_with_speech(self, changes: dict) -> tuple[dict, dict]:
+        persona = self._validated_persona(self.persona, changes)
+        speech_changes = changes.get("speech")
+        speech = self.speech
+        if isinstance(speech_changes, dict):
+            speech = self._validated_speech(speech, speech_changes)
+        with self._lock:
+            self.settings["persona"] = persona
+            self.settings["speech"] = speech
+            self._write_json(self.settings_path, self.settings)
+        return self.persona, self.speech
 
     @staticmethod
     def _validated_persona(base: dict, changes: dict) -> dict:
@@ -504,6 +640,11 @@ class DesktopState:
     def save_persona_slot(self, slot: int, changes: dict) -> dict:
         index = self._persona_slot_index(slot)
         persona = self._validated_persona(self.persona, changes)
+        speech_changes = changes.get("speech")
+        persona["speech"] = self._validated_speech(
+            self.speech,
+            speech_changes if isinstance(speech_changes, dict) else self.speech,
+        )
         persona["slot"] = index + 1
         persona["is_default"] = False
         with self._lock:

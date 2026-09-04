@@ -1,3 +1,4 @@
+import base64
 import tempfile
 import unittest
 from io import BytesIO
@@ -203,12 +204,21 @@ class DesktopAppTests(unittest.TestCase):
             current = client.get("/api/desktop/personality")
             saved = client.put(
                 "/api/desktop/personality",
-                json={"name": "Desktop Petey", "system_prompt": "You are Desktop Petey."},
+                json={
+                    "name": "Desktop Petey", "system_prompt": "You are Desktop Petey.",
+                    "speech": {
+                        "provider": "gemini", "gemini_voice": "Sulafat",
+                        "gemini_model": "gemini-3.1-flash-tts-preview",
+                        "auto_speak": True,
+                    },
+                },
             )
 
             self.assertIn("friendly_helper", current.get_json()["presets"])
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["persona"]["name"], "Desktop Petey")
+            self.assertEqual(saved.get_json()["speech"]["gemini_voice"], "Sulafat")
+            self.assertTrue(state.speech["auto_speak"])
 
     def test_personality_slots_can_be_saved_and_cleared(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,7 +228,13 @@ class DesktopAppTests(unittest.TestCase):
 
             saved = client.put(
                 "/api/desktop/personality/slots/2",
-                json={"name": "Writer Petey", "system_prompt": "You are a writing partner."},
+                json={
+                    "name": "Writer Petey", "system_prompt": "You are a writing partner.",
+                    "speech": {
+                        "provider": "gemini", "gemini_voice": "Kore",
+                        "gemini_model": "gemini-3.1-flash-tts-preview",
+                    },
+                },
             )
             current = client.get("/api/desktop/personality")
             cleared = client.delete("/api/desktop/personality/slots/2")
@@ -226,6 +242,7 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["persona"]["name"], "Writer Petey")
             self.assertEqual(current.get_json()["saved_personas"][1]["name"], "Writer Petey")
+            self.assertEqual(current.get_json()["saved_personas"][1]["speech"]["gemini_voice"], "Kore")
             self.assertTrue(cleared.get_json()["removed"])
             self.assertIsNone(cleared.get_json()["saved_personas"][1])
 
@@ -351,6 +368,112 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.get_json(), {"balance": 19.72, "currency": "USD"})
             self.assertNotIn("key", response.get_data(as_text=True).lower())
+
+    def test_speech_settings_expose_gemini_choices_without_exposing_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_ai_provider({"provider": "gemini", "api_key": "private-gemini-key"})
+            app = create_desktop_app(state=state, runtime=object())
+            client = app.test_client()
+
+            response = client.put("/api/desktop/speech", json={
+                "provider": "gemini",
+                "gemini_model": "gemini-3.1-flash-tts-preview",
+                "gemini_voice": "Kore",
+                "consistent_voice": True,
+            })
+
+            payload = response.get_json()
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(payload["gemini_has_api_key"])
+            self.assertTrue(payload["configuration"]["consistent_voice"])
+            self.assertFalse(payload["balance_available_via_api"])
+            self.assertIn("Kore", [voice["name"] for voice in payload["gemini_voices"]])
+            self.assertNotIn("private-gemini-key", response.get_data(as_text=True))
+
+    def test_microphone_settings_and_transcription_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_ai_provider({"provider": "gemini", "api_key": "private-key"})
+            app = create_desktop_app(state=state, runtime=object())
+            client = app.test_client()
+
+            saved = client.put("/api/desktop/voice-input", json={
+                "mode": "wake_word", "provider": "gemini",
+                "model": "gemini-3.5-transcribe", "wake_word": "Petey",
+                "device_id": "usb-mic-1", "sensitivity": "high",
+            })
+            self.assertEqual(saved.status_code, 200)
+            self.assertEqual(saved.get_json()["configuration"]["mode"], "wake_word")
+            self.assertEqual(saved.get_json()["configuration"]["device_id"], "usb-mic-1")
+            self.assertNotIn("private-key", saved.get_data(as_text=True))
+
+            with patch("web.desktop_app.GeminiSTT.transcribe", return_value="Petey hello") as transcribe:
+                response = client.post(
+                    "/api/desktop/voice-input/transcribe",
+                    data={"audio": (BytesIO(b"RIFF-audio"), "microphone.wav")},
+                    content_type="multipart/form-data",
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["transcript"], "Petey hello")
+            self.assertEqual(transcribe.call_args.args[1], "audio/x-wav")
+            self.assertEqual(transcribe.call_args.kwargs["vocabulary"], ["Petey"])
+
+    def test_chat_speech_queues_temporary_audio_outside_gallery(self):
+        queued = {"id": "speech-job", "status": "queued", "kind": "audio"}
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_speech({
+                "provider": "gemini", "gemini_model": "gemini-3.1-flash-tts-preview",
+                "gemini_voice": "Kore", "auto_speak": True,
+            })
+            jobs = MagicMock()
+            jobs.submit.return_value = queued
+            app = create_desktop_app(state=state, runtime=object(), job_manager=jobs)
+            client = app.test_client()
+
+            response = client.post("/api/desktop/chat/speech", json={"text": "Hello there"})
+
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.get_json()["job"]["id"], "speech-job")
+            self.assertFalse(jobs.submit.call_args.kwargs["save_to_gallery"])
+            self.assertEqual(jobs.submit.call_args.kwargs["parameters"]["voice"], "Kore")
+            self.assertTrue(client.get("/api/desktop/bootstrap").get_json()["speech"]["auto_speak"])
+
+    def test_chat_speech_serves_inline_generated_audio(self):
+        jobs = MagicMock()
+        jobs.result_data.return_value = (b"RIFF-speech", "audio/wav")
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_desktop_app(
+                state=DesktopState(directory), runtime=object(), job_manager=jobs
+            )
+            response = app.test_client().get("/api/desktop/media/jobs/speech-job/file")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content_type, "audio/wav")
+            self.assertEqual(response.data, b"RIFF-speech")
+            response.close()
+
+    def test_gemini_chat_speech_streams_audio_chunks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_ai_provider({"provider": "gemini", "api_key": "private-key"})
+            state.update_speech({
+                "provider": "gemini", "gemini_model": "gemini-3.1-flash-tts-preview",
+                "gemini_voice": "Kore",
+            })
+            app = create_desktop_app(state=state, runtime=object())
+            with patch("web.desktop_app.GeminiTTS.stream_pcm", return_value=iter([b"pcm-one", b"pcm-two"])) as stream:
+                response = app.test_client().post(
+                    "/api/desktop/chat/speech/stream", json={"text": "Hello"}
+                )
+                body = response.get_data(as_text=True)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.content_type, "application/x-ndjson")
+            self.assertIn(base64.b64encode(b"pcm-one").decode("ascii"), body)
+            self.assertIn('"status": "done"', body)
+            self.assertTrue(stream.call_args.args[4])
 
 
 if __name__ == "__main__":

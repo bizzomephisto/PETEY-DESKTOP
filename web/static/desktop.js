@@ -11,6 +11,31 @@ let savedPersonas = [];
 let personalityLoaded = false;
 let aiProviderLoaded = false;
 let aiProviderConfiguration = null;
+let speechSettingsLoaded = false;
+let speechConfiguration = null;
+let voiceInputSettingsLoaded = false;
+let voiceInputConfiguration = {mode: 'disabled', provider: 'gemini', model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal'};
+let microphoneStream = null;
+let microphoneContext = null;
+let microphoneProcessor = null;
+let microphoneCapture = [];
+let microphonePreRoll = [];
+let microphoneCapturing = false;
+let microphoneLastVoiceAt = 0;
+let microphoneCaptureStartedAt = 0;
+let voiceInputRunning = false;
+let voiceInputBusy = false;
+let voiceInputPlaybackBlocked = false;
+let microphoneTestActive = false;
+let pushToTalkHeld = false;
+let wakeWordArmedUntil = 0;
+let keyboardPushToTalkActive = false;
+let visualAudioEnergy = 0;
+let lastPeteyCaption = '';
+let visualCaptionTimer = null;
+let nativeVisualFullscreen = false;
+let geminiSpeechModels = [];
+let geminiSpeechVoices = [];
 let memoryProviderLoaded = false;
 let memoryProviderConfiguration = null;
 let mediaCatalogLoaded = false;
@@ -20,12 +45,15 @@ const displayedMediaJobs = new Set();
 let conversations = [];
 let activeConversationId = '';
 let temporaryHistory = [];
-let preferences = {always_on_top: false, sidebar_collapsed: false, ui_scale: 1};
+let preferences = {always_on_top: false, sidebar_collapsed: false, ui_scale: 1, visual_mode: false, visual_style: 'neural_core'};
 let workspaces = [];
 let activeWorkspaceId = '';
 let workspaceDirectory = '';
 let editorSha256 = null;
 let workspaceLoaded = false;
+let activeChatAudio = null;
+let activeSpeechButton = null;
+let activeSpeechCancel = null;
 
 function showEmptyState(title = 'Petey is ready.', copy = 'Start a conversation or attach an image for him to inspect.') {
     messages.innerHTML = `<div class="empty-state" id="empty-state"><img src="/static/petey_avatar.png" alt=""><h2>${title}</h2><p>${copy}</p></div>`;
@@ -89,6 +117,15 @@ function addMessage(role, text, options = {}) {
         copyButton.title = 'Copy message';
         copyButton.addEventListener('click', () => copyChatText(text, copyButton));
         meta.append(copyButton);
+        if (role === 'assistant' && speechConfiguration?.provider !== 'disabled') {
+            const speakButton = document.createElement('button');
+            speakButton.type = 'button';
+            speakButton.className = 'speak-message';
+            speakButton.textContent = 'Speak';
+            speakButton.title = 'Read this reply aloud';
+            speakButton.addEventListener('click', () => speakChatText(text, speakButton));
+            meta.append(speakButton);
+        }
     }
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -118,6 +155,7 @@ function addMessage(role, text, options = {}) {
     item.append(avatar, content);
     messages.append(item);
     messages.scrollTop = messages.scrollHeight;
+    if (role === 'assistant' && !options.typing && text) setLastPeteyCaption(text);
     return item;
 }
 
@@ -129,11 +167,17 @@ async function loadDesktop() {
         activeConversationId = bootstrap.conversation_id;
         conversations = bootstrap.conversations || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
+        speechConfiguration = bootstrap.speech || {provider: 'deapi', auto_speak: false};
+        voiceInputConfiguration = {...voiceInputConfiguration, ...(bootstrap.voice_input || {})};
         workspaces = bootstrap.workspaces || [];
         activeWorkspaceId = bootstrap.active_workspace_id || '';
         applyPreferences();
         renderConversations();
         await loadConversationMessages();
+        configureVoiceInputUI();
+        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            window.setTimeout(() => startContinuousVoiceInput(), 250);
+        }
     } catch (error) {
         statusText.textContent = 'Could not load local state';
     }
@@ -299,6 +343,9 @@ composer.addEventListener('submit', async event => {
             gifUrl: payload.gif_url,
             toolEvents: payload.tool_events || [],
         });
+        if (speechConfiguration?.provider !== 'disabled' && speechConfiguration?.auto_speak && payload.text) {
+            speakChatText(payload.text);
+        }
         if (temporary) temporaryHistory.push({role: 'assistant', content: payload.text || ''});
         statusText.textContent = temporary ? 'Temporary · nothing saved' : `Ready for ${personName}`;
     } catch (error) {
@@ -334,6 +381,16 @@ function applyPreferences() {
     document.getElementById('sidebar-collapsed-setting').checked = Boolean(preferences.sidebar_collapsed);
     document.getElementById('ui-scale-value').textContent = `${Math.round(scale * 100)}%`;
     document.getElementById('collapse-sidebar').title = preferences.sidebar_collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    const visualMode = Boolean(preferences.visual_mode);
+    document.getElementById('view-chat').classList.toggle('visual-mode', visualMode);
+    messages.hidden = visualMode;
+    document.getElementById('visual-chat').hidden = !visualMode;
+    document.getElementById('visual-mode-toggle').classList.toggle('active', visualMode);
+    document.getElementById('visual-mode-toggle').textContent = visualMode ? 'Show chat' : 'Visual mode';
+    const styleSelect = document.getElementById('visual-style-select');
+    styleSelect.hidden = !visualMode;
+    styleSelect.value = preferences.visual_style || 'neural_core';
+    document.getElementById('visual-fullscreen').hidden = !visualMode;
 }
 
 async function savePreferences(changes, nativeTop = false) {
@@ -368,6 +425,87 @@ document.getElementById('sidebar-collapsed-setting').addEventListener('change', 
 });
 document.getElementById('always-on-top').addEventListener('change', event => {
     savePreferences({always_on_top: event.target.checked}, true);
+});
+document.getElementById('visual-mode-toggle').addEventListener('click', () => {
+    savePreferences({visual_mode: !preferences.visual_mode});
+});
+document.getElementById('visual-style-select').addEventListener('change', event => {
+    savePreferences({visual_style: event.target.value});
+});
+
+function captionExcerpt(text, wordLimit = 28) {
+    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+    return words.slice(Math.max(0, words.length - wordLimit)).join(' ');
+}
+
+function setLastPeteyCaption(text) {
+    lastPeteyCaption = String(text || '').trim();
+    if (!visualCaptionTimer) {
+        document.getElementById('visual-caption').textContent = captionExcerpt(lastPeteyCaption);
+    }
+}
+
+function startVisualCaption(text) {
+    window.clearInterval(visualCaptionTimer);
+    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+    const caption = document.getElementById('visual-caption');
+    lastPeteyCaption = String(text || '').trim();
+    let cursor = 1;
+    const render = () => {
+        const start = Math.max(0, cursor - 16);
+        caption.textContent = words.slice(start, cursor).join(' ');
+        cursor = Math.min(words.length, cursor + 1);
+    };
+    render();
+    visualCaptionTimer = window.setInterval(render, 330);
+}
+
+function finishVisualCaption() {
+    window.clearInterval(visualCaptionTimer);
+    visualCaptionTimer = null;
+    document.getElementById('visual-caption').textContent = captionExcerpt(lastPeteyCaption);
+}
+
+async function toggleVisualFullscreen() {
+    if (!preferences.visual_mode) return;
+    const visual = document.getElementById('visual-chat');
+    if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+    }
+    if (nativeVisualFullscreen && window.pywebview?.api?.toggle_fullscreen) {
+        const result = await window.pywebview.api.toggle_fullscreen();
+        nativeVisualFullscreen = Boolean(result?.fullscreen);
+        document.body.classList.toggle('native-visual-fullscreen', nativeVisualFullscreen);
+        return;
+    }
+    try {
+        if (!visual.requestFullscreen) throw new Error('Fullscreen API unavailable');
+        await visual.requestFullscreen();
+    } catch (_error) {
+        if (!window.pywebview?.api?.toggle_fullscreen) {
+            setVoiceInputStatus('Full screen is unavailable in this browser.');
+            return;
+        }
+        const result = await window.pywebview.api.toggle_fullscreen();
+        nativeVisualFullscreen = Boolean(result?.fullscreen);
+        document.body.classList.toggle('native-visual-fullscreen', nativeVisualFullscreen);
+    }
+}
+
+document.getElementById('visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
+document.addEventListener('fullscreenchange', () => {
+    document.getElementById('visual-fullscreen').textContent = document.fullscreenElement
+        ? 'Exit full screen' : '⛶ Full screen';
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'F11' && preferences.visual_mode) {
+        event.preventDefault();
+        toggleVisualFullscreen();
+    } else if (event.key === 'Escape' && nativeVisualFullscreen) {
+        event.preventDefault();
+        toggleVisualFullscreen();
+    }
 });
 document.getElementById('scale-down').addEventListener('click', () => changeScale(-.1));
 document.getElementById('scale-up').addEventListener('click', () => changeScale(.1));
@@ -419,7 +557,9 @@ function showView(view) {
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
     window.location.hash = view === 'settings' ? 'settings' : view;
     if (view === 'personality' && !personalityLoaded) loadPersonality();
+    if (view === 'personality' && !speechSettingsLoaded) loadSpeechSettings();
     if (view === 'settings' && !aiProviderLoaded) loadAIProvider();
+    if (view === 'settings' && !voiceInputSettingsLoaded) loadVoiceInputSettings();
     if (view === 'media' && !mediaCatalogLoaded) loadMediaCatalog();
     if (view === 'media') loadMediaJobs();
     if (view === 'gallery') loadGallery();
@@ -587,6 +727,738 @@ document.getElementById('clear-ai-key').addEventListener('click', async () => {
     }
 });
 
+const voiceInputButton = document.getElementById('voice-input-button');
+const voiceInputModeSelect = document.getElementById('voice-input-mode');
+
+function setVoiceInputStatus(message) {
+    document.getElementById('voice-input-status').textContent = message;
+}
+
+function configureVoiceInputUI() {
+    const mode = voiceInputConfiguration?.mode || 'disabled';
+    voiceInputButton.hidden = mode === 'disabled';
+    voiceInputButton.classList.toggle('listening', voiceInputRunning && !microphoneCapturing);
+    voiceInputButton.classList.toggle('recording', microphoneCapturing);
+    voiceInputButton.classList.toggle('processing', voiceInputBusy);
+    voiceInputButton.title = {
+        push_to_talk: 'Hold to talk to Petey',
+        always_on: voiceInputRunning ? 'Microphone is listening; click to stop' : 'Click to start microphone',
+        wake_word: voiceInputRunning ? `Listening for ${voiceInputConfiguration.wake_word || 'Petey'}; click to stop` : 'Click to start wake-name listening',
+    }[mode] || 'Microphone input';
+    if (mode === 'disabled') {
+        setVoiceInputStatus('Enter to send · Shift+Enter for a new line');
+    } else if (voiceInputBusy) {
+        setVoiceInputStatus('Transcribing…');
+    } else if (microphoneCapturing) {
+        setVoiceInputStatus(mode === 'push_to_talk' ? 'Recording · release to send' : 'Listening to you…');
+    } else if (mode === 'push_to_talk') {
+        setVoiceInputStatus('Hold the mic or Space to talk · Enter to send');
+    } else if (voiceInputRunning && mode === 'wake_word') {
+        setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
+    } else if (voiceInputRunning) {
+        setVoiceInputStatus('Mic always on · listening for speech');
+    } else {
+        setVoiceInputStatus('Click the mic to begin listening');
+    }
+}
+
+function configureVoiceInputSettings() {
+    const mode = voiceInputModeSelect.value;
+    const enabled = mode !== 'disabled';
+    document.getElementById('voice-input-model').disabled = !enabled;
+    document.getElementById('voice-input-device').disabled = !enabled;
+    document.getElementById('voice-input-sensitivity').disabled = !enabled;
+    document.getElementById('voice-wake-word-field').hidden = mode !== 'wake_word';
+    document.getElementById('voice-input-badge').textContent = {
+        disabled: 'Off', push_to_talk: 'Push to talk', always_on: 'Always on', wake_word: 'Wake name',
+    }[mode];
+    document.getElementById('voice-input-note').textContent = {
+        disabled: 'Audio stays off until microphone input is enabled.',
+        push_to_talk: 'Hold the mic button or Space outside the message box, speak, then release to transcribe and send.',
+        always_on: 'Petey detects speech and sends each utterance after a short silence.',
+        wake_word: `Petey sends an utterance only when it contains “${document.getElementById('voice-wake-word').value.trim() || 'Petey'}”.`,
+    }[mode];
+}
+
+async function loadVoiceInputSettings() {
+    const feedback = document.getElementById('voice-input-settings-status');
+    try {
+        const payload = await apiJson('/api/desktop/voice-input');
+        voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
+        voiceInputModeSelect.value = voiceInputConfiguration.mode;
+        const models = payload.models?.length ? payload.models : ['gemini-3.5-transcribe'];
+        fillSelect(document.getElementById('voice-input-model'), models, voiceInputConfiguration.model);
+        document.getElementById('voice-wake-word').value = voiceInputConfiguration.wake_word || 'Petey';
+        document.getElementById('voice-input-sensitivity').value = voiceInputConfiguration.sensitivity || 'normal';
+        await refreshMicrophoneDevices();
+        configureVoiceInputSettings();
+        configureVoiceInputUI();
+        voiceInputSettingsLoaded = true;
+        if (voiceInputConfiguration.mode !== 'disabled' && !payload.gemini_has_api_key) {
+            setFeedback(feedback, 'Add a Gemini API key in AI provider settings before using the microphone.', 'error');
+        }
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    }
+}
+
+voiceInputModeSelect.addEventListener('change', configureVoiceInputSettings);
+document.getElementById('voice-wake-word').addEventListener('input', configureVoiceInputSettings);
+document.getElementById('save-voice-input').addEventListener('click', async () => {
+    const feedback = document.getElementById('voice-input-settings-status');
+    const button = document.getElementById('save-voice-input');
+    button.disabled = true;
+    try {
+        const payload = await apiJson('/api/desktop/voice-input', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                mode: voiceInputModeSelect.value,
+                provider: 'gemini',
+                model: document.getElementById('voice-input-model').value,
+                wake_word: document.getElementById('voice-wake-word').value,
+                device_id: document.getElementById('voice-input-device').value,
+                sensitivity: document.getElementById('voice-input-sensitivity').value,
+            }),
+        });
+        await stopVoiceInput();
+        voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
+        configureVoiceInputSettings();
+        configureVoiceInputUI();
+        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            await startContinuousVoiceInput();
+        }
+        setFeedback(feedback, voiceInputConfiguration.mode === 'disabled' ? 'Microphone input disabled.' : 'Microphone settings saved.', 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
+});
+
+async function refreshMicrophoneDevices() {
+    const select = document.getElementById('voice-input-device');
+    const selected = select.value || voiceInputConfiguration.device_id || '';
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+        const devices = (await navigator.mediaDevices.enumerateDevices())
+            .filter(device => device.kind === 'audioinput');
+        select.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'System default microphone';
+        select.append(defaultOption);
+        devices.forEach((device, index) => {
+            if (device.deviceId === 'default') return;
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.textContent = device.label || `Microphone ${index + 1}`;
+            select.append(option);
+        });
+        select.value = Array.from(select.options).some(option => option.value === selected) ? selected : '';
+    } catch (_error) {
+        // System default remains usable when the backend restricts enumeration.
+    }
+}
+
+async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || '') {
+    if (microphoneStream?.active && microphoneContext) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This desktop backend does not provide microphone capture.');
+    }
+    const audio = {echoCancellation: true, noiseSuppression: true, autoGainControl: true};
+    if (deviceId) audio.deviceId = {exact: deviceId};
+    try {
+        microphoneStream = await navigator.mediaDevices.getUserMedia({audio, video: false});
+    } catch (error) {
+        if (!deviceId || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
+        microphoneStream = await navigator.mediaDevices.getUserMedia({
+            audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+            video: false,
+        });
+        setVoiceInputStatus('Saved microphone unavailable; using the system default.');
+    }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('This desktop backend does not provide audio capture.');
+    microphoneContext = new AudioContextClass();
+    await microphoneContext.resume();
+    const source = microphoneContext.createMediaStreamSource(microphoneStream);
+    microphoneProcessor = microphoneContext.createScriptProcessor(2048, 1, 1);
+    const silentOutput = microphoneContext.createGain();
+    silentOutput.gain.value = 0;
+    microphoneProcessor.onaudioprocess = handleMicrophoneAudio;
+    source.connect(microphoneProcessor);
+    microphoneProcessor.connect(silentOutput);
+    silentOutput.connect(microphoneContext.destination);
+    await refreshMicrophoneDevices();
+}
+
+function handleMicrophoneAudio(event) {
+    const samples = new Float32Array(event.inputBuffer.getChannelData(0));
+    let energy = 0;
+    for (let index = 0; index < samples.length; index += 1) energy += samples[index] * samples[index];
+    const rms = Math.sqrt(energy / samples.length);
+    visualAudioEnergy = Math.max(visualAudioEnergy, Math.min(1, rms * 35));
+    document.getElementById('voice-input-meter').style.width = `${Math.min(100, Math.max(1, rms * 900))}%`;
+    if (microphoneTestActive) {
+        document.getElementById('voice-input-test-status').textContent = rms > .006
+            ? 'Input detected — microphone is working.' : 'Listening… speak into the microphone.';
+    }
+    if (!voiceInputRunning || voiceInputBusy || voiceInputPlaybackBlocked) return;
+    const mode = voiceInputConfiguration.mode;
+    if (mode === 'push_to_talk') {
+        if (microphoneCapturing) microphoneCapture.push(samples);
+        return;
+    }
+    const now = performance.now();
+    const threshold = {high: .006, normal: .012, low: .025}[
+        voiceInputConfiguration.sensitivity || 'normal'
+    ];
+    if (!microphoneCapturing) {
+        microphonePreRoll.push(samples);
+        const preRollLimit = Math.max(2, Math.ceil((microphoneContext.sampleRate * .35) / samples.length));
+        if (microphonePreRoll.length > preRollLimit) microphonePreRoll.shift();
+        if (rms >= threshold) {
+            microphoneCapture = microphonePreRoll.splice(0);
+            microphoneCapturing = true;
+            microphoneCaptureStartedAt = now;
+            microphoneLastVoiceAt = now;
+            configureVoiceInputUI();
+        }
+        return;
+    }
+    microphoneCapture.push(samples);
+    if (rms >= threshold) microphoneLastVoiceAt = now;
+    if ((now - microphoneLastVoiceAt > 950 && now - microphoneCaptureStartedAt > 450)
+        || now - microphoneCaptureStartedAt > 30000) {
+        finishVoiceCapture();
+    }
+}
+
+function wavBlob(chunks, sampleRate) {
+    const frameCount = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const buffer = new ArrayBuffer(44 + frameCount * 2);
+    const view = new DataView(buffer);
+    const writeText = (offset, value) => Array.from(value).forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
+    writeText(0, 'RIFF');
+    view.setUint32(4, 36 + frameCount * 2, true);
+    writeText(8, 'WAVE');
+    writeText(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeText(36, 'data');
+    view.setUint32(40, frameCount * 2, true);
+    let offset = 44;
+    chunks.forEach(chunk => chunk.forEach(sample => {
+        const clipped = Math.max(-1, Math.min(1, sample));
+        view.setInt16(offset, clipped < 0 ? clipped * 32768 : clipped * 32767, true);
+        offset += 2;
+    }));
+    return new Blob([buffer], {type: 'audio/wav'});
+}
+
+function beginVoiceCapture() {
+    microphoneCapture = [];
+    microphonePreRoll = [];
+    microphoneCapturing = true;
+    microphoneCaptureStartedAt = performance.now();
+    microphoneLastVoiceAt = microphoneCaptureStartedAt;
+    configureVoiceInputUI();
+}
+
+async function finishVoiceCapture(discard = false) {
+    if (!microphoneCapturing) return;
+    microphoneCapturing = false;
+    const chunks = microphoneCapture;
+    microphoneCapture = [];
+    microphonePreRoll = [];
+    configureVoiceInputUI();
+    if (discard || !microphoneContext) return;
+    const frames = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    if (frames < microphoneContext.sampleRate * .18) {
+        setVoiceInputStatus('No speech detected.');
+        return;
+    }
+    await transcribeVoiceInput(wavBlob(chunks, microphoneContext.sampleRate));
+}
+
+async function transcribeVoiceInput(audio) {
+    voiceInputBusy = true;
+    let failure = '';
+    configureVoiceInputUI();
+    try {
+        const form = new FormData();
+        form.append('audio', audio, 'petey-microphone.wav');
+        const response = await fetch('/api/desktop/voice-input/transcribe', {method: 'POST', body: form});
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `Transcription failed (${response.status}).`);
+        handleVoiceTranscript(String(payload.transcript || '').trim());
+    } catch (error) {
+        failure = `Microphone: ${error.message}`;
+    } finally {
+        voiceInputBusy = false;
+        configureVoiceInputUI();
+        if (failure) setVoiceInputStatus(failure);
+    }
+}
+
+function handleVoiceTranscript(transcript) {
+    if (!transcript) return;
+    let command = transcript;
+    if (voiceInputConfiguration.mode === 'wake_word') {
+        const wakeWord = voiceInputConfiguration.wake_word || 'Petey';
+        const escaped = wakeWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const match = transcript.match(new RegExp(`\\b${escaped}\\b[\\s,.:;!?—-]*(.*)$`, 'i'));
+        if (match) {
+            command = match[1].trim();
+            wakeWordArmedUntil = Date.now() + 8000;
+            if (!command) {
+                setVoiceInputStatus(`Heard “${wakeWord}” · listening for your request…`);
+                return;
+            }
+        } else if (Date.now() < wakeWordArmedUntil) {
+            wakeWordArmedUntil = 0;
+        } else {
+            setVoiceInputStatus(`Ignored speech without “${wakeWord}”.`);
+            return;
+        }
+    }
+    const existing = messageInput.value.trim();
+    messageInput.value = existing ? `${existing} ${command}` : command;
+    messageInput.dispatchEvent(new Event('input'));
+    if (!sendButton.disabled) composer.requestSubmit();
+    else setVoiceInputStatus('Transcript added to the message box; Petey is still replying.');
+}
+
+async function startContinuousVoiceInput() {
+    if (!['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) return;
+    try {
+        await ensureMicrophone();
+        voiceInputRunning = true;
+        configureVoiceInputUI();
+    } catch (error) {
+        voiceInputRunning = false;
+        configureVoiceInputUI();
+        setVoiceInputStatus(`Microphone unavailable: ${error.message}`);
+    }
+}
+
+async function stopVoiceInput() {
+    voiceInputRunning = false;
+    pushToTalkHeld = false;
+    microphoneTestActive = false;
+    if (microphoneCapturing) await finishVoiceCapture(true);
+    if (microphoneProcessor) microphoneProcessor.disconnect();
+    microphoneProcessor = null;
+    microphoneStream?.getTracks().forEach(track => track.stop());
+    microphoneStream = null;
+    if (microphoneContext) await microphoneContext.close().catch(() => {});
+    microphoneContext = null;
+    document.getElementById('voice-input-meter').style.width = '0';
+    document.getElementById('test-voice-input').textContent = 'Test microphone';
+    configureVoiceInputUI();
+}
+
+document.getElementById('test-voice-input').addEventListener('click', async () => {
+    const button = document.getElementById('test-voice-input');
+    const status = document.getElementById('voice-input-test-status');
+    if (microphoneTestActive) {
+        await stopVoiceInput();
+        status.textContent = 'Microphone test stopped.';
+        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            await startContinuousVoiceInput();
+        }
+        return;
+    }
+    button.disabled = true;
+    try {
+        await stopVoiceInput();
+        await ensureMicrophone(document.getElementById('voice-input-device').value);
+        microphoneTestActive = true;
+        button.textContent = 'Stop test';
+        status.textContent = 'Listening… speak into the microphone.';
+    } catch (error) {
+        status.textContent = `Microphone unavailable: ${error.message}`;
+    } finally {
+        button.disabled = false;
+    }
+});
+
+navigator.mediaDevices?.addEventListener?.('devicechange', refreshMicrophoneDevices);
+
+function setVoicePlaybackActive(active) {
+    voiceInputPlaybackBlocked = Boolean(active);
+    if (!active) finishVisualCaption();
+    if (active && microphoneCapturing && voiceInputConfiguration.mode !== 'push_to_talk') {
+        finishVoiceCapture(true);
+    }
+}
+
+voiceInputButton.addEventListener('click', async () => {
+    if (voiceInputConfiguration.mode === 'push_to_talk') return;
+    if (voiceInputRunning) await stopVoiceInput();
+    else await startContinuousVoiceInput();
+});
+
+async function beginPushToTalk(event) {
+    if (voiceInputConfiguration.mode !== 'push_to_talk' || voiceInputBusy) return;
+    event.preventDefault();
+    pushToTalkHeld = true;
+    try {
+        await ensureMicrophone();
+        if (!pushToTalkHeld) return;
+        voiceInputRunning = true;
+        beginVoiceCapture();
+        if (Number.isInteger(event.pointerId)) voiceInputButton.setPointerCapture?.(event.pointerId);
+    } catch (error) {
+        setVoiceInputStatus(`Microphone unavailable: ${error.message}`);
+    }
+}
+
+async function endPushToTalk(event) {
+    if (voiceInputConfiguration.mode !== 'push_to_talk' || !pushToTalkHeld) return;
+    event.preventDefault();
+    pushToTalkHeld = false;
+    voiceInputRunning = false;
+    microphoneStream?.getTracks().forEach(track => track.stop());
+    await finishVoiceCapture();
+    await stopVoiceInput();
+}
+
+voiceInputButton.addEventListener('pointerdown', beginPushToTalk);
+voiceInputButton.addEventListener('pointerup', endPushToTalk);
+voiceInputButton.addEventListener('pointercancel', endPushToTalk);
+voiceInputButton.addEventListener('keydown', event => {
+    if (event.repeat || ![' ', 'Enter'].includes(event.key)) return;
+    beginPushToTalk(event);
+});
+voiceInputButton.addEventListener('keyup', event => {
+    if (![' ', 'Enter'].includes(event.key)) return;
+    endPushToTalk(event);
+});
+
+document.addEventListener('keydown', event => {
+    if (event.code !== 'Space' || event.repeat || voiceInputConfiguration.mode !== 'push_to_talk') return;
+    if (!document.getElementById('view-chat').classList.contains('active-view')) return;
+    if (event.target === voiceInputButton) return;
+    if (event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+    if (document.querySelector('dialog[open]')) return;
+    keyboardPushToTalkActive = true;
+    beginPushToTalk(event);
+});
+
+document.addEventListener('keyup', event => {
+    if (event.code !== 'Space' || !keyboardPushToTalkActive) return;
+    keyboardPushToTalkActive = false;
+    endPushToTalk(event);
+});
+
+const speechProviderSelect = document.getElementById('speech-provider');
+const builtInGeminiSpeechModels = Array.from(
+    document.getElementById('speech-gemini-model').options,
+    option => option.value,
+);
+const builtInGeminiSpeechVoices = Array.from(
+    document.getElementById('speech-gemini-voice').options,
+    option => ({
+        name: option.value,
+        description: option.textContent.split('—').slice(1).join('—').trim(),
+    }),
+);
+
+function fillSelect(select, items, selectedValue, labelFor) {
+    select.innerHTML = '';
+    items.forEach(item => {
+        const option = document.createElement('option');
+        option.value = typeof item === 'string' ? item : item.name;
+        option.textContent = labelFor ? labelFor(item) : option.value;
+        select.append(option);
+    });
+    select.value = selectedValue;
+}
+
+function fillSpeechForm(configuration) {
+    if (!configuration) return;
+    speechProviderSelect.value = configuration.provider || 'deapi';
+    document.getElementById('speech-gemini-model').value = configuration.gemini_model || 'gemini-3.1-flash-tts-preview';
+    document.getElementById('speech-gemini-voice').value = configuration.gemini_voice || 'Kore';
+    document.getElementById('speech-deapi-voice').value = configuration.deapi_voice || 'af_sky';
+    document.getElementById('speech-style').value = configuration.style || '';
+    document.getElementById('speech-consistent-voice').checked = configuration.consistent_voice !== false;
+    document.getElementById('speech-auto-speak').checked = Boolean(configuration.auto_speak);
+    configureSpeechSettings();
+}
+
+function readSpeechForm() {
+    return {
+        provider: speechProviderSelect.value,
+        gemini_model: document.getElementById('speech-gemini-model').value,
+        gemini_voice: document.getElementById('speech-gemini-voice').value,
+        deapi_voice: document.getElementById('speech-deapi-voice').value,
+        style: document.getElementById('speech-style').value,
+        consistent_voice: document.getElementById('speech-consistent-voice').checked,
+        auto_speak: document.getElementById('speech-auto-speak').checked,
+    };
+}
+
+function configureSpeechSettings() {
+    const provider = speechProviderSelect.value;
+    const gemini = provider === 'gemini';
+    document.getElementById('speech-gemini-model-field').hidden = !gemini;
+    document.getElementById('speech-gemini-voice-field').hidden = !gemini;
+    document.getElementById('speech-style-field').hidden = !gemini;
+    document.getElementById('speech-consistent-voice-row').hidden = !gemini;
+    document.getElementById('speech-deapi-voice-field').hidden = provider !== 'deapi';
+    document.getElementById('speech-auto-speak').disabled = provider === 'disabled';
+    if (provider === 'disabled') document.getElementById('speech-auto-speak').checked = false;
+    document.getElementById('speech-provider-badge').textContent = {
+        deapi: 'Media provider', gemini: 'Gemini', disabled: 'Disabled',
+    }[provider];
+    document.getElementById('speech-provider-note').textContent = provider === 'gemini'
+        ? 'Gemini generates 24 kHz speech and follows natural-language directions for style, accent, pace, and tone.'
+        : provider === 'disabled'
+            ? 'Text to speech is unavailable on the Media page while disabled.'
+            : 'Speech uses the existing media service and its available speech models.';
+}
+
+async function loadSpeechSettings() {
+    const feedback = document.getElementById('speech-settings-status');
+    try {
+        const payload = await apiJson('/api/desktop/speech');
+        speechConfiguration = payload.configuration;
+        geminiSpeechModels = payload.gemini_models?.length
+            ? payload.gemini_models : builtInGeminiSpeechModels;
+        geminiSpeechVoices = payload.gemini_voices?.length
+            ? payload.gemini_voices : builtInGeminiSpeechVoices;
+        fillSelect(document.getElementById('speech-gemini-model'), geminiSpeechModels, speechConfiguration.gemini_model);
+        fillSelect(
+            document.getElementById('speech-gemini-voice'), geminiSpeechVoices,
+            speechConfiguration.gemini_voice,
+            voice => `${voice.name} — ${voice.description}`,
+        );
+        fillSpeechForm(speechConfiguration);
+        speechSettingsLoaded = true;
+        if (speechConfiguration.provider === 'gemini' && !payload.gemini_has_api_key) {
+            setFeedback(feedback, 'Add a Gemini API key in AI provider settings before generating speech.', 'error');
+        }
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    }
+}
+
+speechProviderSelect.addEventListener('change', configureSpeechSettings);
+document.getElementById('save-speech-settings').addEventListener('click', async () => {
+    const feedback = document.getElementById('speech-settings-status');
+    const button = document.getElementById('save-speech-settings');
+    button.disabled = true;
+    try {
+        const payload = await apiJson('/api/desktop/speech', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(readSpeechForm()),
+        });
+        speechConfiguration = payload.configuration;
+        speechSettingsLoaded = true;
+        mediaCatalogLoaded = false;
+        configureSpeechSettings();
+        setFeedback(feedback, speechConfiguration.provider === 'disabled' ? 'Speech generation disabled.' : 'Speech settings saved.', 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
+});
+
+function resetSpeechButton(button) {
+    if (!button) return;
+    button.disabled = false;
+    button.textContent = 'Speak';
+    button.classList.remove('speaking');
+}
+
+async function speakChatText(text, button = null) {
+    if (button?.classList.contains('speaking') && activeSpeechCancel) {
+        activeSpeechCancel();
+        activeSpeechCancel = null;
+        resetSpeechButton(button);
+        return;
+    }
+    if (activeSpeechCancel) activeSpeechCancel();
+    activeSpeechCancel = null;
+    resetSpeechButton(activeSpeechButton);
+    activeSpeechButton = button;
+    if (button) {
+        button.disabled = false;
+        button.textContent = 'Preparing…';
+        button.classList.add('speaking');
+    }
+    try {
+        if (
+            speechConfiguration?.provider === 'gemini'
+            && String(speechConfiguration.gemini_model || '').startsWith('gemini-3.1-')
+        ) {
+            startVisualCaption(text);
+            setVoicePlaybackActive(true);
+            try {
+                await playGeminiSpeechStream(text, button);
+            } finally {
+                setVoicePlaybackActive(false);
+            }
+            return;
+        }
+        const queued = await apiJson('/api/desktop/chat/speech', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text}),
+        });
+        let job = queued.job;
+        for (let attempt = 0; attempt < 300; attempt += 1) {
+            if (job.status === 'completed' || job.status === 'failed') break;
+            await new Promise(resolve => window.setTimeout(resolve, 1000));
+            job = (await apiJson(`/api/desktop/media/jobs/${encodeURIComponent(job.id)}`)).job;
+        }
+        if (job.status === 'failed') throw new Error(job.error || 'Speech generation failed.');
+        if (job.status !== 'completed') throw new Error('Speech generation timed out.');
+        const source = job.result?.result_url
+            || `/api/desktop/media/jobs/${encodeURIComponent(job.id)}/file`;
+        const audio = new Audio(source);
+        activeChatAudio = audio;
+        activeSpeechCancel = () => {
+            audio.pause();
+            activeChatAudio = null;
+            setVoicePlaybackActive(false);
+        };
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Stop';
+            button.classList.add('speaking');
+        }
+        audio.addEventListener('ended', () => {
+            if (activeChatAudio === audio) activeChatAudio = null;
+            activeSpeechCancel = null;
+            setVoicePlaybackActive(false);
+            if (activeSpeechButton === button) activeSpeechButton = null;
+            resetSpeechButton(button);
+        }, {once: true});
+        startVisualCaption(text);
+        setVoicePlaybackActive(true);
+        await audio.play();
+    } catch (error) {
+        if (activeSpeechCancel) activeSpeechCancel();
+        setVoicePlaybackActive(false);
+        resetSpeechButton(button);
+        if (activeSpeechButton === button) activeSpeechButton = null;
+        activeSpeechCancel = null;
+        if (error.name !== 'AbortError') statusText.textContent = `Speech: ${error.message}`;
+    }
+}
+
+async function playGeminiSpeechStream(text, button) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('Streaming audio is not supported by this desktop backend.');
+    const context = new AudioContextClass({sampleRate: 24000});
+    const controller = new AbortController();
+    const scheduled = new Set();
+    let nextStart = 0;
+    let receivedAudio = false;
+    let streamFinished = false;
+    let resolvePlayback;
+    const playbackFinished = new Promise(resolve => { resolvePlayback = resolve; });
+    const finishIfReady = () => {
+        if (streamFinished && scheduled.size === 0) resolvePlayback();
+    };
+    activeSpeechCancel = () => {
+        controller.abort();
+        scheduled.forEach(source => {
+            try { source.stop(); } catch (_error) { /* already stopped */ }
+        });
+        scheduled.clear();
+        streamFinished = true;
+        context.close().catch(() => {});
+        setVoicePlaybackActive(false);
+        resolvePlayback();
+    };
+    if (button) {
+        button.textContent = 'Stop';
+        button.classList.add('speaking');
+    }
+    await context.resume();
+    const response = await fetch('/api/desktop/chat/speech/stream', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text}),
+        signal: controller.signal,
+    });
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Speech request failed (${response.status}).`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+
+    const schedulePCM = encoded => {
+        const binary = window.atob(encoded);
+        const byteCount = binary.length - (binary.length % 2);
+        if (!byteCount) return;
+        const pcm = new Float32Array(byteCount / 2);
+        for (let index = 0; index < byteCount; index += 2) {
+            let sample = binary.charCodeAt(index) | (binary.charCodeAt(index + 1) << 8);
+            if (sample >= 0x8000) sample -= 0x10000;
+            pcm[index / 2] = sample / 32768;
+        }
+        let energy = 0;
+        for (let index = 0; index < pcm.length; index += 1) energy += pcm[index] * pcm[index];
+        visualAudioEnergy = Math.max(
+            visualAudioEnergy,
+            Math.min(1, Math.sqrt(energy / Math.max(1, pcm.length)) * 5),
+        );
+        const buffer = context.createBuffer(1, pcm.length, 24000);
+        buffer.copyToChannel(pcm, 0);
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        const startAt = Math.max(context.currentTime + 0.035, nextStart);
+        nextStart = startAt + buffer.duration;
+        scheduled.add(source);
+        source.onended = () => {
+            scheduled.delete(source);
+            finishIfReady();
+        };
+        source.start(startAt);
+        receivedAudio = true;
+    };
+
+    while (true) {
+        const {value, done} = await reader.read();
+        pending += decoder.decode(value || new Uint8Array(), {stream: !done});
+        const lines = pending.split('\n');
+        pending = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line);
+            if (event.error) throw new Error(event.error);
+            if (event.audio) schedulePCM(event.audio);
+        }
+        if (done) break;
+    }
+    if (pending.trim()) {
+        const event = JSON.parse(pending);
+        if (event.error) throw new Error(event.error);
+        if (event.audio) schedulePCM(event.audio);
+    }
+    streamFinished = true;
+    if (!receivedAudio) throw new Error('Gemini finished without returning audio.');
+    finishIfReady();
+    await playbackFinished;
+    await context.close().catch(() => {});
+    activeSpeechCancel = null;
+    if (activeSpeechButton === button) activeSpeechButton = null;
+    resetSpeechButton(button);
+}
+
 document.querySelectorAll('.nav-button').forEach(button => {
     button.addEventListener('click', () => showView(button.dataset.view));
 });
@@ -649,6 +1521,7 @@ function fillPersona(persona) {
         document.getElementById(`persona-${key}`).value = value;
         document.getElementById(`${key}-value`).textContent = value;
     });
+    if (persona.speech) fillSpeechForm(persona.speech);
 }
 
 function readPersonaForm() {
@@ -662,6 +1535,7 @@ function readPersonaForm() {
         sliders: Object.fromEntries(sliderKeys.map(key =>
             [key, document.getElementById(`persona-${key}`).value]
         )),
+        speech: readSpeechForm(),
     };
 }
 
@@ -689,7 +1563,7 @@ function renderSavedPersonaSlots() {
             fillPersona({...persona, preset_key: ''});
             setFeedback(
                 document.getElementById('personality-status'),
-                `Loaded slot ${index + 1} into the editor — save personality to activate it.`,
+                `Loaded personality and voice from slot ${index + 1} — save personality to activate them.`,
                 'success',
             );
         });
@@ -723,7 +1597,7 @@ async function savePersonaSlot(slot, replacing) {
         });
         savedPersonas = result.saved_personas || [];
         renderSavedPersonaSlots();
-        setFeedback(feedback, `Saved the current editor values to slot ${slot}.`, 'success');
+        setFeedback(feedback, `Saved the current personality and voice to slot ${slot}.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
     }
@@ -758,6 +1632,7 @@ async function loadPersonality() {
             select.append(option);
         });
         fillPersona(payload.persona);
+        if (payload.speech) fillSpeechForm(payload.speech);
         renderSavedPersonaSlots();
         personalityLoaded = true;
         setFeedback(feedback, '');
@@ -791,7 +1666,10 @@ document.getElementById('save-personality').addEventListener('click', async () =
             method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
         });
         fillPersona(result.persona);
-        setFeedback(feedback, 'Saved — new chats use this personality immediately.', 'success');
+        speechConfiguration = result.speech || speechConfiguration;
+        if (result.speech) fillSpeechForm(result.speech);
+        mediaCatalogLoaded = false;
+        setFeedback(feedback, 'Saved — new chats and Petey’s voice use this persona immediately.', 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
     } finally {
@@ -1114,8 +1992,19 @@ async function loadMediaCatalog() {
     const connection = document.getElementById('media-connection');
     setFeedback(connection, 'Connecting…');
     try {
-        const payload = await apiJson('/api/desktop/media');
+        const [payload, speechPayload] = await Promise.all([
+            apiJson('/api/desktop/media'), apiJson('/api/desktop/speech'),
+        ]);
+        speechConfiguration = speechPayload.configuration;
+        geminiSpeechModels = speechPayload.gemini_models?.length
+            ? speechPayload.gemini_models : builtInGeminiSpeechModels;
+        geminiSpeechVoices = speechPayload.gemini_voices?.length
+            ? speechPayload.gemini_voices : builtInGeminiSpeechVoices;
+        speechSettingsLoaded = true;
         mediaSelectedModels = payload.selected_models || {};
+        const speechOption = mediaOperation.querySelector('option[value="txt2audio"]');
+        speechOption.disabled = speechConfiguration.provider === 'disabled';
+        if (speechOption.disabled && mediaOperation.value === 'txt2audio') mediaOperation.value = 'txt2img';
         mediaCatalogLoaded = true;
         configureMediaOperation();
         startMediaPolling();
@@ -1155,9 +2044,32 @@ function configureMediaOperation() {
     document.getElementById('media-video-fields').hidden = !config.video;
     document.getElementById('media-music-fields').hidden = !config.music;
     document.getElementById('media-speech-fields').hidden = !config.speech;
+    if (config.speech) configureMediaSpeechFields();
     document.getElementById('media-upscale-fields').hidden = !config.upscale;
     setFeedback(mediaStatus, '');
     loadMediaModels(operation);
+}
+
+function configureMediaSpeechFields() {
+    const gemini = speechConfiguration?.provider === 'gemini';
+    const voiceSelect = document.getElementById('media-voice');
+    if (gemini) {
+        fillSelect(
+            voiceSelect, geminiSpeechVoices, speechConfiguration.gemini_voice,
+            voice => `${voice.name} — ${voice.description}`,
+        );
+    } else {
+        const voices = [
+            ['af_sky', 'Sky — Female US'], ['af_bella', 'Bella — Female US'],
+            ['af_nicole', 'Nicole — Female US'], ['af_sarah', 'Sarah — Female US'],
+            ['am_adam', 'Adam — Male US'], ['am_michael', 'Michael — Male US'],
+            ['bf_emma', 'Emma — Female UK'], ['bm_george', 'George — Male UK'],
+        ];
+        fillSelect(voiceSelect, voices.map(([name, description]) => ({name, description})), speechConfiguration?.deapi_voice || 'af_sky', voice => voice.description);
+    }
+    document.getElementById('media-speed-field').hidden = gemini;
+    document.getElementById('media-speech-style-field').hidden = !gemini;
+    document.getElementById('media-speech-style').value = gemini ? (speechConfiguration.style || '') : '';
 }
 
 async function loadMediaModels(operation) {
@@ -1394,6 +2306,7 @@ function mediaParameters() {
         duration: document.getElementById('media-duration').value,
         voice: document.getElementById('media-voice').value,
         speed: document.getElementById('media-speed').value,
+        style: document.getElementById('media-speech-style').value,
         scale: document.getElementById('media-scale').value,
     };
 }
@@ -1417,13 +2330,16 @@ function renderMediaResult(payload) {
         media.controls = true;
     }
     const localItem = payload.gallery_item;
-    const previewUrl = localItem?.local_filename
+    const localUrl = localItem?.local_filename
+        ? `/api/desktop/gallery/file/${encodeURIComponent(localItem.id)}`
+        : '';
+    const previewUrl = localItem?.local_filename && payload.kind === 'video'
         ? `/api/desktop/gallery/preview/${encodeURIComponent(localItem.id)}`
-        : payload.result_url;
+        : localUrl || payload.result_url;
     media.src = previewUrl;
     container.append(media);
-    openLink.href = payload.result_url;
-    openLink.hidden = false;
+    openLink.href = localUrl || payload.result_url || '#';
+    openLink.hidden = !localUrl && !payload.result_url;
 }
 
 document.getElementById('generate-media').addEventListener('click', async () => {
@@ -1980,6 +2896,321 @@ document.getElementById('ask-workspace-agent').addEventListener('click', async (
 document.getElementById('clear-workspace-console').addEventListener('click', () => {
     document.getElementById('workspace-console').textContent = '';
 });
+
+function startNeuralVisualization() {
+    const canvas = document.getElementById('neural-canvas');
+    const context = canvas.getContext('2d');
+    const stateLabel = document.getElementById('visual-chat-state');
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const nodes = Array.from({length: reducedMotion ? 48 : 82}, (_, index) => {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.pow(Math.random(), .62) * .92;
+        return {
+            x: Math.cos(angle) * radius,
+            y: Math.sin(angle) * radius,
+            z: (Math.random() * 2 - 1) * Math.sqrt(Math.max(0, 1 - radius * radius)),
+            vx: (Math.random() - .5) * .00006,
+            vy: (Math.random() - .5) * .00006,
+            phase: Math.random() * Math.PI * 2,
+            colorIndex: index % 4,
+            orbitRadius: .12 + Math.random() * .85,
+            orbitSpeed: (.000035 + Math.random() * .000085) * (index % 2 ? 1 : -1),
+            size: 1.1 + Math.random() * 2.2,
+            hot: index % 11 === 0,
+        };
+    });
+    let width = 1;
+    let height = 1;
+    let pixelRatio = 1;
+    let previousTime = performance.now();
+
+    const resize = () => {
+        const bounds = canvas.getBoundingClientRect();
+        width = Math.max(1, bounds.width);
+        height = Math.max(1, bounds.height);
+        pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = Math.round(width * pixelRatio);
+        canvas.height = Math.round(height * pixelRatio);
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    };
+    if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+    else window.addEventListener('resize', resize);
+    resize();
+
+    const draw = time => {
+        const delta = Math.min(34, time - previousTime);
+        previousTime = time;
+        visualAudioEnergy *= .91;
+        const syntheticSpeech = voiceInputPlaybackBlocked
+            ? .22 + Math.max(0, Math.sin(time * .021)) * .34 + Math.random() * .16
+            : 0;
+        const activity = Math.min(1, Math.max(visualAudioEnergy, syntheticSpeech));
+        const visible = !document.getElementById('visual-chat').hidden;
+        if (visible) {
+            context.clearRect(0, 0, width, height);
+            context.fillStyle = '#010204';
+            context.fillRect(0, 0, width, height);
+            const centerX = width * .5;
+            const centerY = height * .47;
+            const style = preferences.visual_style || 'neural_core';
+            const clusterRadius = Math.min(width, height) * (.29 + activity * .035);
+                       const points = nodes.map(node => {
+                if (style === 'orbital_mind') {
+                    const angle = node.phase + time * node.orbitSpeed * (1 + activity * 2.2);
+                    const radius = node.orbitRadius * Math.min(width, height) * (.34 + activity * .035);
+                    return {
+                        node,
+                        x: centerX + Math.cos(angle) * radius,
+                        y: centerY + Math.sin(angle) * radius * .48,
+                    };
+                }
+                if (style === 'signal_bloom') {
+                    const angle = node.phase + Math.sin(time * .00024 + node.orbitRadius * 8) * .16;
+                    const wave = Math.sin(time * .0022 - node.orbitRadius * 15 + node.phase) * (8 + activity * 24);
+                    const radius = node.orbitRadius * Math.min(width, height) * .38 + wave;
+                    return {
+                        node,
+                        x: centerX + Math.cos(angle) * radius,
+                        y: centerY + Math.sin(angle) * radius * .78,
+                    };
+                }
+                if (style === 'synapse_drift') {
+                    const movement = reducedMotion ? .18 : 1;
+                    node.vx += Math.sin(time * .00042 + node.phase) * .0000007 * delta * movement;
+                    node.vy += Math.cos(time * .00037 + node.phase) * .0000007 * delta * movement;
+                    node.vx *= .998;
+                    node.vy *= .998;
+                    node.x += node.vx * delta * (1 + activity * 1.8);
+                    node.y += node.vy * delta * (1 + activity * 1.8);
+                    if (node.x > 1.08) node.x = -1.08;
+                    if (node.x < -1.08) node.x = 1.08;
+                    if (node.y > 1.08) node.y = -1.08;
+                    if (node.y < -1.08) node.y = 1.08;
+                    return {
+                        node,
+                        x: centerX + node.x * width * .46,
+                        y: centerY + node.y * height * .43,
+                    };
+                }
+                const movement = reducedMotion ? .18 : 1;
+                node.vx += (-node.x * .0000017 + Math.sin(time * .0007 + node.phase) * .0000018 * (1 + activity * 2.8)) * delta * movement;
+                node.vy += (-node.y * .0000017 + Math.cos(time * .00061 + node.phase) * .0000018 * (1 + activity * 2.8)) * delta * movement;
+                node.vx *= .992;
+                node.vy *= .992;
+                node.x += node.vx * delta;
+                node.y += node.vy * delta;
+                const distance = Math.hypot(node.x, node.y);
+                if (distance > 1.04) {
+                    node.x *= .985;
+                    node.y *= .985;
+                    node.vx *= -.35;
+                    node.vy *= -.35;
+                }
+                const breathing = 1 + Math.sin(time * .0015 + node.phase) * (.025 + activity * .055);
+                const rotation = time * .000085;
+                const rotatedX = node.x * Math.cos(rotation) - node.z * Math.sin(rotation);
+                const depth = node.x * Math.sin(rotation) + node.z * Math.cos(rotation);
+                const brainWidth = 1 - Math.max(0, node.y) * .27;
+                const perspective = .88 + (depth + 1) * .09;
+                return {
+                    node,
+                    depth,
+                    x: centerX + rotatedX * brainWidth * clusterRadius * 1.22 * breathing * perspective,
+                    y: centerY + (node.y + Math.abs(rotatedX) * .045) * clusterRadius * .88 * breathing * perspective,
+                };
+            });
+
+            if (style === 'neural_core') {
+                const outlineAlpha = .055 + activity * .06;
+                context.strokeStyle = `rgba(115,200,255,${outlineAlpha})`;
+                context.lineWidth = .8;
+                context.beginPath();
+                context.moveTo(centerX, centerY + clusterRadius * .92);
+                context.bezierCurveTo(
+                    centerX - clusterRadius * .98, centerY + clusterRadius * .76,
+                    centerX - clusterRadius * 1.24, centerY - clusterRadius * .15,
+                    centerX - clusterRadius * .5, centerY - clusterRadius * .82,
+                );
+                context.bezierCurveTo(
+                    centerX - clusterRadius * .2, centerY - clusterRadius * 1.03,
+                    centerX - clusterRadius * .05, centerY - clusterRadius * .94,
+                    centerX, centerY - clusterRadius * .82,
+                );
+                context.bezierCurveTo(
+                    centerX + clusterRadius * .05, centerY - clusterRadius * .94,
+                    centerX + clusterRadius * .2, centerY - clusterRadius * 1.03,
+                    centerX + clusterRadius * .5, centerY - clusterRadius * .82,
+                );
+                context.bezierCurveTo(
+                    centerX + clusterRadius * 1.24, centerY - clusterRadius * .15,
+                    centerX + clusterRadius * .98, centerY + clusterRadius * .76,
+                    centerX, centerY + clusterRadius * .92,
+                );
+                context.stroke();
+
+                for (let particle = 0; particle < 76; particle += 1) {
+                    const seed = Math.abs(Math.sin(particle * 91.733));
+                    const angle = particle * 2.39996 + Math.sin(time * .00018 + particle) * .045;
+                    const radius = clusterRadius * (.22 + seed * 1.18);
+                    const flicker = .16 + Math.max(0, Math.sin(time * .004 + particle * 1.7)) * (.22 + activity * .42);
+                    context.fillStyle = `rgba(${particle % 5 ? '150,213,255' : '255,190,119'},${flicker})`;
+                    context.beginPath();
+                    context.arc(
+                        centerX + Math.cos(angle) * radius * 1.13,
+                        centerY + Math.sin(angle) * radius * .72,
+                        .35 + seed * .8 + activity * .45,
+                        0, Math.PI * 2,
+                    );
+                    context.fill();
+                }
+
+                const hotPoints = points.filter(({node}) => node.hot);
+                hotPoints.forEach(({node, x, y}, tendrilIndex) => {
+                    const direction = Math.atan2(y - centerY, x - centerX) + Math.sin(node.phase + time * .0003) * .22;
+                    const reach = Math.max(width, height) * (.38 + (tendrilIndex % 3) * .08);
+                    const endX = x + Math.cos(direction) * reach;
+                    const endY = y + Math.sin(direction) * reach * .65;
+                    const bend = (tendrilIndex % 2 ? 1 : -1) * (32 + tendrilIndex * 3);
+                    const control1X = x + Math.cos(direction) * reach * .3 - Math.sin(direction) * bend;
+                    const control1Y = y + Math.sin(direction) * reach * .18 + Math.cos(direction) * bend;
+                    const control2X = x + Math.cos(direction) * reach * .7 + Math.sin(direction) * bend * .7;
+                    const control2Y = y + Math.sin(direction) * reach * .48 - Math.cos(direction) * bend * .7;
+                    context.strokeStyle = `rgba(${tendrilIndex % 2 ? '34,225,230' : '136,91,246'},${.09 + activity * .2})`;
+                    context.lineWidth = .55 + activity * .85;
+                    context.beginPath();
+                    context.moveTo(x, y);
+                    context.bezierCurveTo(control1X, control1Y, control2X, control2Y, endX, endY);
+                    context.stroke();
+                    for (let particle = 0; particle < 7; particle += 1) {
+                        const progress = (particle / 7 + time * (.00008 + tendrilIndex * .000002)) % 1;
+                        const inverse = 1 - progress;
+                        const particleX = inverse ** 3 * x
+                            + 3 * inverse ** 2 * progress * control1X
+                            + 3 * inverse * progress ** 2 * control2X
+                            + progress ** 3 * endX;
+                        const particleY = inverse ** 3 * y
+                            + 3 * inverse ** 2 * progress * control1Y
+                            + 3 * inverse * progress ** 2 * control2Y
+                            + progress ** 3 * endY;
+                        context.fillStyle = `rgba(190,230,255,${(.18 + activity * .65) * (1 - progress * .55)})`;
+                        context.beginPath();
+                        context.arc(particleX, particleY, .7 + activity * 1.5, 0, Math.PI * 2);
+                        context.fill();
+                    }
+                });
+            }
+
+            if (style === 'orbital_mind') {
+                context.strokeStyle = `rgba(186,143,255,${.08 + activity * .13})`;
+                context.lineWidth = .65;
+                for (let ring = 1; ring <= 4; ring += 1) {
+                    context.beginPath();
+                    context.ellipse(
+                        centerX, centerY,
+                        clusterRadius * ring * .75,
+                        clusterRadius * ring * .36,
+                        time * .000025 * (ring % 2 ? 1 : -1), 0, Math.PI * 2,
+                    );
+                    context.stroke();
+                }
+            } else if (style === 'signal_bloom') {
+                context.lineWidth = .6 + activity;
+                points.forEach(({x, y}, index) => {
+                    if (index % 3) return;
+                    context.strokeStyle = `rgba(211,77,216,${.06 + activity * .18})`;
+                    context.beginPath();
+                    context.moveTo(centerX, centerY);
+                    context.lineTo(x, y);
+                    context.stroke();
+                });
+            }
+
+            const connectionDistance = style === 'synapse_drift'
+                ? Math.min(width, height) * (.17 + activity * .025)
+                : style === 'orbital_mind'
+                    ? clusterRadius * .33
+                    : clusterRadius * (style === 'neural_core' ? .49 + activity * .07 : .38 + activity * .06);
+            context.lineWidth = .7 + activity * .45;
+            for (let left = 0; left < points.length; left += 1) {
+                for (let right = left + 1; right < points.length; right += 1) {
+                    const dx = points[left].x - points[right].x;
+                    const dy = points[left].y - points[right].y;
+                    const distance = Math.hypot(dx, dy);
+                    if (distance >= connectionDistance) continue;
+                    const alpha = (1 - distance / connectionDistance) * (.12 + activity * .28);
+                    const neuralColors = ['32,218,255', '137,91,246', '255,172,74', '239,91,221'];
+                    const connectionColor = {
+                        neural_core: neuralColors[points[left].node.colorIndex],
+                        synapse_drift: activity > .5 ? '63,225,207' : '42,132,154',
+                        orbital_mind: activity > .5 ? '247,189,104' : '136,91,206',
+                        signal_bloom: activity > .5 ? '248,106,226' : '135,66,190',
+                    }[style];
+                    context.strokeStyle = `rgba(${connectionColor},${alpha})`;
+                    context.beginPath();
+                    context.moveTo(points[left].x, points[left].y);
+                    context.lineTo(points[right].x, points[right].y);
+                    context.stroke();
+                }
+            }
+
+            const palette = {
+                neural_core: {bright: '224,211,255', glow: '137,91,246', fade: '84,42,160', solid: '#a986f4'},
+                synapse_drift: {bright: '193,255,247', glow: '48,210,194', fade: '15,105,120', solid: '#68e1d2'},
+                orbital_mind: {bright: '255,235,199', glow: '242,168,76', fade: '111,55,167', solid: '#efbd78'},
+                signal_bloom: {bright: '255,215,251', glow: '225,75,207', fade: '101,32,150', solid: '#e77cdb'},
+            }[style];
+            points.forEach(({node, x, y, depth}) => {
+                const neuralNodePalettes = [
+                    {bright: '210,250,255', glow: '20,210,255', fade: '10,100,160', solid: '#35dfff'},
+                    {bright: '235,220,255', glow: '137,91,246', fade: '72,30,150', solid: '#a986f4'},
+                    {bright: '255,240,205', glow: '255,164,55', fade: '145,72,20', solid: '#ffb55b'},
+                    {bright: '255,218,250', glow: '231,83,214', fade: '121,28,129', solid: '#ec72dc'},
+                ];
+                const nodePalette = style === 'neural_core'
+                    ? neuralNodePalettes[node.colorIndex]
+                    : palette;
+                const pulse = Math.max(0, Math.sin(time * (.002 + activity * .006) + node.phase));
+                const depthScale = style === 'neural_core' ? .82 + ((depth || 0) + 1) * .19 : 1;
+                const radius = (node.size + pulse * (1.2 + activity * 3.2) + (node.hot ? activity * 1.8 : 0)) * depthScale;
+                const glow = context.createRadialGradient(x, y, 0, x, y, radius * 4.2);
+                glow.addColorStop(0, `rgba(${nodePalette.bright},${.72 + activity * .25})`);
+                glow.addColorStop(.24, `rgba(${nodePalette.glow},${.46 + activity * .34})`);
+                glow.addColorStop(1, `rgba(${nodePalette.fade},0)`);
+                context.fillStyle = glow;
+                context.beginPath();
+                context.arc(x, y, radius * 4.2, 0, Math.PI * 2);
+                context.fill();
+                context.fillStyle = node.hot && activity > .32 ? `rgb(${nodePalette.bright})` : nodePalette.solid;
+                context.beginPath();
+                context.arc(x, y, Math.max(1, radius * .52), 0, Math.PI * 2);
+                context.fill();
+            });
+
+            const coreRadius = (style === 'synapse_drift' ? 7 : 18) + activity * (style === 'signal_bloom' ? 31 : 23);
+            const core = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreRadius * 3.2);
+            core.addColorStop(0, `rgba(${palette.bright},${.25 + activity * .4})`);
+            core.addColorStop(.28, `rgba(${palette.glow},${.16 + activity * .34})`);
+            core.addColorStop(1, `rgba(${palette.fade},0)`);
+            context.fillStyle = core;
+            context.beginPath();
+            context.arc(centerX, centerY, coreRadius * 3.2, 0, Math.PI * 2);
+            context.fill();
+        }
+        stateLabel.textContent = voiceInputPlaybackBlocked
+            ? 'Speaking'
+            : microphoneCapturing
+                ? 'Listening'
+                : voiceInputBusy
+                    ? 'Understanding'
+                    : voiceInputRunning
+                        ? 'Ready · microphone active'
+                        : 'Present';
+        window.requestAnimationFrame(draw);
+    };
+    window.requestAnimationFrame(draw);
+}
+
+startNeuralVisualization();
 
 const requestedView = window.location.hash.replace('#', '');
 const knownViews = ['chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'knowledge', 'memory'];
