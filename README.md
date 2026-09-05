@@ -14,6 +14,28 @@ and an approval-gated project workspace.
 | --- | --- |
 | ![PETEY media generation studio](docs/screenshots/media.png) | ![PETEY audio-reactive neural visualization](docs/screenshots/visual-mode.png) |
 
+## Character creation and roleplay
+
+PETEY can be shaped into an original character, narrator, companion, game master,
+or collaborative writing partner—not just a general-purpose assistant. Customize
+the character's name, role, tagline, behavior, speaking style, and voice, then save
+the complete character-and-voice setup in one of five persona slots.
+
+- Keep separate chats for different characters, campaigns, worlds, or storylines.
+- Add lore, character sheets, setting notes, and campaign documents to the local
+  RAG library so a character can retrieve relevant details while you play.
+- Use saved memory to maintain continuity across sessions, or enable Temporary
+  mode for scenes that should not affect the character's ongoing history.
+- Talk naturally with push-to-talk, an always-on microphone, or wake-name mode,
+  and let the selected voice read the character's responses aloud.
+- Use Visual Mode for a voice-reactive, distraction-free performance view.
+- Pair roleplay with media tools to create character art, locations, music, voices,
+  and animated scenes from the same desktop application.
+
+Because the chat provider is selectable, a character can run through Gemini,
+OpenAI, or a compatible local model depending on the desired quality, privacy,
+speed, and hardware setup.
+
 ## Highlights
 
 - Gemini, OpenAI, LM Studio, Ollama, and other OpenAI-compatible chat providers
