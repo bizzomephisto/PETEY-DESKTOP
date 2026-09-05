@@ -6,6 +6,14 @@ PETEY is a standalone desktop AI assistant with local conversations, configurabl
 personality, universal SQLite memory, RAG document management, deAPI media tools,
 and an approval-gated project workspace.
 
+## Preview
+
+![PETEY Desktop conversation view](docs/screenshots/chat.png)
+
+| Media studio | Audio-reactive visual mode |
+| --- | --- |
+| ![PETEY media generation studio](docs/screenshots/media.png) | ![PETEY audio-reactive neural visualization](docs/screenshots/visual-mode.png) |
+
 ## Highlights
 
 - Gemini, OpenAI, LM Studio, Ollama, and other OpenAI-compatible chat providers
