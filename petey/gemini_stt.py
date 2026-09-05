@@ -7,6 +7,8 @@ import os
 
 import requests
 
+from petey.http_client import SESSION as HTTP_SESSION
+
 
 GEMINI_STT_MODELS = ("gemini-3.5-transcribe",)
 SUPPORTED_AUDIO_TYPES = {
@@ -42,7 +44,7 @@ class GeminiSTT:
             raise GeminiSTTError("This microphone audio format is not supported.")
         words = [str(word).strip()[:100] for word in (vocabulary or []) if str(word).strip()]
         try:
-            response = requests.post(
+            response = HTTP_SESSION.post(
                 "https://generativelanguage.googleapis.com/v1beta/interactions",
                 headers={
                     "Content-Type": "application/json",

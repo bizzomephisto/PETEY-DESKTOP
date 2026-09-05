@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -37,6 +38,24 @@ class ImageBrowserTests(unittest.TestCase):
             for path in ("../outside.png", "escape.png"):
                 with self.subTest(path=path), self.assertRaises(ImageBrowserError):
                     browser.image_file(token, path)
+
+    def test_repeated_listing_and_thumbnail_reuse_cached_image_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "images"
+            root.mkdir()
+            Image.new("RGB", (640, 480), "purple").save(root / "sample.png")
+            browser = ImageBrowser()
+            token = browser.open(str(root))["token"]
+
+            with patch("petey.image_browser.Image.open", wraps=Image.open) as image_open:
+                browser.list_directory(token)
+                browser.thumbnail(token, "sample.png")
+                first_count = image_open.call_count
+                browser.list_directory(token)
+                browser.thumbnail(token, "sample.png")
+
+            self.assertEqual(first_count, 2)
+            self.assertEqual(image_open.call_count, first_count)
 
     def test_desktop_routes_serve_thumbnail_and_original(self):
         with tempfile.TemporaryDirectory() as directory:

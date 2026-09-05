@@ -17,8 +17,10 @@ from petey.ai_provider import AIProvider, AIProviderError
 from petey.config import PERSONA_PRESETS
 from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
+from petey.deapi_stt import DeapiSTT, DeapiSTTError, DEAPI_STT_MODELS
 from petey.gemini_tts import GeminiTTS, GeminiTTSError, GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
 from petey.gemini_stt import GeminiSTT, GeminiSTTError, GEMINI_STT_MODELS
+from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.workspace import WorkspaceError, WorkspaceService
@@ -392,7 +394,11 @@ def create_desktop_app(
         gemini = current.ai_provider.get("gemini", {})
         return jsonify({
             "configuration": current.voice_input,
-            "models": list(GEMINI_STT_MODELS),
+            "models": {
+                "deapi": list(DEAPI_STT_MODELS),
+                "gemini": list(GEMINI_STT_MODELS),
+            },
+            "deapi_has_api_key": bool(str(os.getenv("DEAPI_KEY", "")).strip()),
             "gemini_has_api_key": bool(
                 str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
             ),
@@ -413,18 +419,31 @@ def create_desktop_app(
         if len(audio) > 20 * 1024 * 1024:
             return jsonify({"error": "The microphone recording exceeds 20 MB."}), 413
         wake_word = str(configuration.get("wake_word") or "Petey")
+        mime = uploaded.mimetype or "audio/wav"
+        provider = str(configuration.get("provider") or "deapi")
+        failures = []
+        if provider == "deapi":
+            try:
+                transcript = DeapiSTT().transcribe(
+                    audio, mime,
+                    str(configuration.get("model") or DEAPI_STT_MODELS[0]),
+                    vocabulary=[wake_word],
+                )
+                return jsonify({"transcript": transcript, "provider": "deapi"})
+            except DeapiSTTError as exc:
+                failures.append(str(exc))
         try:
             transcript = GeminiSTT({
                 "gemini": current.ai_provider.get("gemini", {})
             }).transcribe(
-                audio,
-                uploaded.mimetype or "audio/wav",
-                str(configuration.get("model") or GEMINI_STT_MODELS[0]),
+                audio, mime,
+                str(configuration.get("gemini_model") or GEMINI_STT_MODELS[0]),
                 vocabulary=[wake_word],
             )
-            return jsonify({"transcript": transcript})
+            return jsonify({"transcript": transcript, "provider": "gemini"})
         except GeminiSTTError as exc:
-            return jsonify({"error": str(exc)}), 502
+            failures.append(str(exc))
+            return jsonify({"error": "Transcription failed — " + " | ".join(failures)}), 502
 
     @app.route("/api/desktop/conversations", methods=["GET", "POST"])
     def desktop_conversations():
@@ -531,6 +550,7 @@ def create_desktop_app(
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
         gemini = current.ai_provider.get("gemini", {})
+        openai = current.ai_provider.get("openai", {})
         return jsonify({
             "configuration": current.speech,
             "gemini_has_api_key": bool(
@@ -541,6 +561,11 @@ def create_desktop_app(
                 {"name": name, "description": description}
                 for name, description in GEMINI_TTS_VOICES.items()
             ],
+            "openai_has_api_key": bool(
+                openai.get("api_key") or os.getenv("OPENAI_API_KEY")
+            ),
+            "openai_models": list(OPENAI_TTS_MODELS),
+            "openai_voices": list(OPENAI_TTS_VOICES),
             "billing_url": "https://aistudio.google.com/billing",
             "balance_available_via_api": False,
         })
@@ -557,11 +582,14 @@ def create_desktop_app(
         speech = current.speech
         if speech.get("provider") == "disabled":
             return jsonify({"error": "Text to speech is disabled in Settings."}), 400
-        model_slug = (
-            speech.get("gemini_model", "")
-            if speech.get("provider") == "gemini"
-            else current.selected_model("txt2audio")
-        )
+        provider = speech.get("provider")
+        if provider == "automatic" and bool(payload.get("skip_gemini")):
+            speech = {**speech, "provider": "openai"}
+            provider = "openai"
+        if provider in {"automatic", "gemini"}:
+            model_slug = speech.get("gemini_model", "")
+        elif provider == "openai":
+            model_slug = speech.get("openai_model", "")
         try:
             job = get_media_jobs().submit(
                 operation="txt2audio",
@@ -570,13 +598,16 @@ def create_desktop_app(
                 model_slug=model_slug,
                 source=None,
                 parameters={
-                    "voice": speech.get(
-                        "gemini_voice" if speech.get("provider") == "gemini" else "deapi_voice"
-                    ),
+                    "voice": speech.get({
+                        "gemini": "gemini_voice", "openai": "openai_voice",
+                    }.get(provider, "gemini_voice")),
                     "style": speech.get("style", ""),
                 },
                 speech_settings=speech,
-                ai_config={"gemini": current.ai_provider.get("gemini", {})},
+                ai_config={
+                    "gemini": current.ai_provider.get("gemini", {}),
+                    "openai": current.ai_provider.get("openai", {}),
+                },
                 save_to_gallery=False,
             )
             return jsonify({"status": "queued", "job": job}), 202
@@ -596,7 +627,7 @@ def create_desktop_app(
             return jsonify({"error": "There is no reply to speak."}), 400
         if len(text) > 32000:
             return jsonify({"error": "This reply is too long to speak."}), 400
-        if speech.get("provider") != "gemini" or not model.startswith("gemini-3.1-"):
+        if speech.get("provider") not in {"automatic", "gemini"} or not model.startswith("gemini-3.1-"):
             return jsonify({"error": "Streaming requires Gemini 3.1 Flash TTS."}), 400
         client = GeminiTTS({"gemini": current.ai_provider.get("gemini", {})})
         voice = str(speech.get("gemini_voice") or "Kore")
@@ -954,7 +985,10 @@ def create_desktop_app(
                 source=source,
                 parameters=parameters,
                 speech_settings=current.speech,
-                ai_config={"gemini": current.ai_provider.get("gemini", {})},
+                ai_config={
+                    "gemini": current.ai_provider.get("gemini", {}),
+                    "openai": current.ai_provider.get("openai", {}),
+                },
             )
             current.update_selected_model(operation, model_slug)
             if job["kind"] == "image":

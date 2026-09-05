@@ -101,8 +101,9 @@ class MediaService:
         elif operation == "txt2audio":
             result = await self.client.generate_speech(
                 prompt[:5000],
-                voice=str(parameters.get("voice") or "af_sky"),
+                voice=str(parameters.get("voice") or "Vivian"),
                 speed=self._number(parameters, "speed", 1.0, 0.5, 2.0),
+                style=str(parameters.get("style") or "").strip()[:2000],
                 **common,
             )
         else:  # pragma: no cover - guarded by _require_operation

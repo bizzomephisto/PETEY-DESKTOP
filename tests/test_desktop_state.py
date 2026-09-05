@@ -113,6 +113,10 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(reloaded.selected_model("txt2img"), "flux-desktop")
             self.assertEqual(reloaded.selected_model("txt2video"), "video-desktop")
 
+            with patch.object(reloaded, "_write_json") as write_json:
+                reloaded.update_selected_model("txt2video", "video-desktop")
+            write_json.assert_not_called()
+
             reloaded.update_selected_model("txt2img", "")
             self.assertEqual(reloaded.selected_model("txt2img"), "")
 
@@ -194,7 +198,7 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(memory["models"]["local"], "nomic-embed-text")
             self.assertEqual(memory["local_base_url"], "http://localhost:11434/v1")
 
-    def test_speech_provider_can_use_gemini_or_be_disabled(self):
+    def test_speech_provider_can_use_gemini_openai_or_be_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             speech = state.update_speech({
@@ -214,13 +218,38 @@ class DesktopStateTests(unittest.TestCase):
             self.assertFalse(disabled["auto_speak"])
             with self.assertRaises(ValueError):
                 state.update_speech({"provider": "gemini", "gemini_voice": "Unknown"})
+            openai = state.update_speech({
+                "provider": "openai", "openai_model": "gpt-4o-mini-tts",
+                "openai_voice": "cedar", "auto_speak": True,
+            })
+            self.assertEqual(openai["openai_voice"], "cedar")
+            self.assertEqual(DesktopState(directory).speech["provider"], "openai")
+
+    def test_legacy_deapi_speech_provider_is_migrated_to_automatic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            settings = json.loads(state.settings_path.read_text(encoding="utf-8"))
+            settings["speech"]["deapi_voice"] = "af_sky"
+            settings["saved_personas"][0] = {
+                "name": "Legacy", "system_prompt": "You are Legacy.",
+                "speech": {"provider": "deapi", "deapi_voice": "af_bella"},
+            }
+            state.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+            migrated = DesktopState(directory)
+
+            self.assertEqual(migrated.speech["provider"], "automatic")
+            self.assertEqual(migrated.saved_personas[0]["speech"]["provider"], "automatic")
 
     def test_microphone_modes_are_persisted_and_validated(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertEqual(state.voice_input["mode"], "disabled")
+            self.assertEqual(state.voice_input["provider"], "deapi")
+            self.assertEqual(state.voice_input["model"], "WhisperLargeV3")
             saved = state.update_voice_input({
-                "mode": "wake_word", "model": "gemini-3.5-transcribe",
+                "mode": "wake_word", "provider": "gemini",
+                "model": "gemini-3.5-transcribe", "gemini_model": "gemini-3.5-transcribe",
                 "wake_word": "Petey", "device_id": "usb-mic-1", "sensitivity": "high",
             })
             self.assertEqual(saved["mode"], "wake_word")

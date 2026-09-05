@@ -23,7 +23,7 @@ class _EmptyMemory:
         return []
 
     @staticmethod
-    def search_memories(*_args):
+    def search_memories(*_args, **_kwargs):
         return ""
 
     @staticmethod
@@ -89,7 +89,10 @@ class AssistantService:
             identity.installation_id, identity.conversation_id, 8
         )
         semantic_memory = "" if temporary else self.memory.search_memories(
-            cleaned or attachment.filename, identity.installation_id, 5
+            cleaned or attachment.filename,
+            identity.installation_id,
+            5,
+            exclude_conversation_id=identity.conversation_id,
         )
         image_description = await self._describe_image(attachment, cleaned)
 
@@ -112,13 +115,28 @@ class AssistantService:
         stored_user_text = cleaned
         if attachment:
             stored_user_text = stored_user_text or f"[Attached {attachment.filename}]"
+        deferred_user_embedding = None
         if not temporary:
-            self.memory.store_memory(
-                identity.installation_id,
-                identity.conversation_id,
-                identity.person_id,
-                stored_user_text,
+            supports_deferred_embedding = all(
+                callable(getattr(type(self.memory), method, None))
+                for method in ("store_memory_deferred", "queue_embedding")
             )
+            if supports_deferred_embedding:
+                item_id = self.memory.store_memory_deferred(
+                    identity.installation_id,
+                    identity.conversation_id,
+                    identity.person_id,
+                    stored_user_text,
+                )
+                if item_id is not None:
+                    deferred_user_embedding = (item_id, stored_user_text)
+            else:
+                self.memory.store_memory(
+                    identity.installation_id,
+                    identity.conversation_id,
+                    identity.person_id,
+                    stored_user_text,
+                )
 
         if image_description:
             user_prompt = (
@@ -154,20 +172,24 @@ class AssistantService:
         final_system = "\n".join(part for part in system_parts if part)
         tool_events = []
         tool_schemas = self.tool_registry.schemas_for(cleaned) if self.tool_registry else []
-        if tool_schemas:
-            response, tool_events = self.ai.complete_with_tools(
-                user_prompt + "\nRespond as Petey:",
-                final_system,
-                history,
-                tool_schemas,
-                lambda name, arguments: self.tool_registry.execute(name, arguments, cleaned),
-            )
-        else:
-            response = self.ai.complete(
-                user_prompt + "\nRespond as Petey:",
-                final_system,
-                history,
-            )
+        try:
+            if tool_schemas:
+                response, tool_events = self.ai.complete_with_tools(
+                    user_prompt + "\nRespond as Petey:",
+                    final_system,
+                    history,
+                    tool_schemas,
+                    lambda name, arguments: self.tool_registry.execute(name, arguments, cleaned),
+                )
+            else:
+                response = self.ai.complete(
+                    user_prompt + "\nRespond as Petey:",
+                    final_system,
+                    history,
+                )
+        finally:
+            if deferred_user_embedding is not None:
+                self.memory.queue_embedding(*deferred_user_embedding)
         response = self._clean_model_response(response)
         gif_query, response = self._extract_gif(response)
         gif_url = await self._fetch_gif(gif_query) if gif_query else None

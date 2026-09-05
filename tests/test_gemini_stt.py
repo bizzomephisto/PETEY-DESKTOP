@@ -15,7 +15,7 @@ class GeminiSTTTests(unittest.TestCase):
         }]}
         client = GeminiSTT({"gemini": {"api_key": "gemini-secret"}})
 
-        with patch("petey.gemini_stt.requests.post", return_value=response) as post:
+        with patch("petey.gemini_stt.HTTP_SESSION.post", return_value=response) as post:
             transcript = client.transcribe(
                 b"RIFF-audio", "audio/wav", vocabulary=["Petey"]
             )

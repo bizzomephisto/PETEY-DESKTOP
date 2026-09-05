@@ -5,6 +5,8 @@ import time
 import io
 import random
 
+from petey.deapi_tts import DEAPI_TTS_MODEL
+
 class DeapiError(Exception):
     pass
 
@@ -133,7 +135,7 @@ class DeapiClient:
 
     async def _execute_with_fallback(
         self, endpoint, payload_builder, inference_type, is_multipart=False,
-        guild_id=None, selected_model_slug=None
+        guild_id=None, selected_model_slug=None, strict_model=False,
     ):
         """Try available models until one succeeds."""
         models = await self.get_models(inference_type)
@@ -144,6 +146,8 @@ class DeapiClient:
             filtered = [m for m in models if m["slug"] == selected_model_slug]
             if filtered:
                 models = filtered
+            elif strict_model:
+                raise DeapiError(f"Selected model {selected_model_slug} is unavailable.")
             else:
                 print(f"[WARNING] Selected model {selected_model_slug} not found. Falling back to defaults.")
 
@@ -261,6 +265,27 @@ class DeapiClient:
                     await asyncio.sleep(interval)
                 else:
                     await asyncio.sleep(interval * 2)
+
+        raise TimeoutError(f"Job {request_id} timed out after {timeout}s")
+
+    async def wait_for_v2_job(self, request_id, interval=1.25, timeout=300):
+        """Poll a v2 job without exceeding the documented 50 RPM status limit."""
+        url = f"{self.base_url}/api/v2/jobs/{request_id}"
+        session = await self.get_session()
+        start = time.time()
+
+        while time.time() - start < timeout:
+            async with session.get(url, headers=self._get_headers()) as resp:
+                resp.raise_for_status()
+                json_resp = await resp.json()
+                data = json_resp.get("data", {})
+                status = str(data.get("status") or "").lower()
+                self._report_progress(request_id, data)
+                if status in {"done", "completed", "success"}:
+                    return data
+                if status in {"error", "failed", "cancelled"}:
+                    raise DeapiError(f"Job {request_id} failed: {data}")
+            await asyncio.sleep(interval)
 
         raise TimeoutError(f"Job {request_id} timed out after {timeout}s")
 
@@ -398,21 +423,27 @@ class DeapiClient:
 
     async def generate_speech(self, text, **kwargs):
         guild_id = kwargs.pop("guild_id", None)
-        model_slug = kwargs.pop("model_slug", None)
+        model_slug = kwargs.pop("model_slug", None) or DEAPI_TTS_MODEL
         def build_payload(model, defaults, info):
             data = aiohttp.FormData()
             data.add_field("text", text)
             data.add_field("model", model)
-            data.add_field("lang", kwargs.get("lang", "en-us"))
+            data.add_field("lang", kwargs.get("lang", "English"))
             data.add_field("speed", str(kwargs.get("speed", 1)))
             data.add_field("format", "mp3")
             data.add_field("sample_rate", "24000")
             data.add_field("mode", kwargs.get("mode", "custom_voice"))
-            data.add_field("voice", kwargs.get("voice", "af_sky"))
+            data.add_field("voice", kwargs.get("voice", "Vivian"))
+            if kwargs.get("style"):
+                data.add_field("instruct", kwargs["style"])
             return data
 
-        req_id = await self._execute_with_fallback("/api/v1/client/txt2audio", build_payload, "txt2audio", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug)
-        return await self.wait_for_job(req_id, interval=2)
+        req_id = await self._execute_with_fallback(
+            "/api/v2/audio/speech", build_payload, "txt2audio",
+            is_multipart=True, guild_id=guild_id,
+            selected_model_slug=model_slug, strict_model=True,
+        )
+        return await self.wait_for_v2_job(req_id)
 
     async def image_to_text(self, image_bytes, **kwargs):
         guild_id = kwargs.pop("guild_id", None)

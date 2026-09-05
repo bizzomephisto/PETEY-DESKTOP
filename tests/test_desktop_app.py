@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from petey.assistant import AssistantReply
 from petey.desktop_state import DesktopState
+from petey.deapi_stt import DeapiSTTError
 from petey.media_jobs import MediaGallery
 from web.desktop_app import AsyncRuntime, create_desktop_app
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
@@ -386,6 +387,9 @@ class DesktopAppTests(unittest.TestCase):
             payload = response.get_json()
             self.assertEqual(response.status_code, 200)
             self.assertTrue(payload["gemini_has_api_key"])
+            self.assertFalse(payload["openai_has_api_key"])
+            self.assertIn("gpt-4o-mini-tts", payload["openai_models"])
+            self.assertIn("marin", payload["openai_voices"])
             self.assertTrue(payload["configuration"]["consistent_voice"])
             self.assertFalse(payload["balance_available_via_api"])
             self.assertIn("Kore", [voice["name"] for voice in payload["gemini_voices"]])
@@ -418,6 +422,38 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(response.get_json()["transcript"], "Petey hello")
             self.assertEqual(transcribe.call_args.args[1], "audio/x-wav")
             self.assertEqual(transcribe.call_args.kwargs["vocabulary"], ["Petey"])
+
+    def test_microphone_uses_deapi_then_falls_back_to_gemini(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_voice_input({
+                "mode": "push_to_talk", "provider": "deapi",
+                "model": "WhisperLargeV3",
+            })
+            app = create_desktop_app(state=state, runtime=object())
+            client = app.test_client()
+
+            with patch("web.desktop_app.DeapiSTT.transcribe", return_value="cheap transcript") as deapi:
+                response = client.post(
+                    "/api/desktop/voice-input/transcribe",
+                    data={"audio": (BytesIO(b"RIFF-audio"), "microphone.wav")},
+                    content_type="multipart/form-data",
+                )
+            self.assertEqual(response.get_json()["provider"], "deapi")
+            self.assertEqual(response.get_json()["transcript"], "cheap transcript")
+            deapi.assert_called_once()
+
+            with patch(
+                "web.desktop_app.DeapiSTT.transcribe",
+                side_effect=DeapiSTTError("media transcription unavailable"),
+            ), patch("web.desktop_app.GeminiSTT.transcribe", return_value="fallback transcript"):
+                response = client.post(
+                    "/api/desktop/voice-input/transcribe",
+                    data={"audio": (BytesIO(b"RIFF-audio"), "microphone.wav")},
+                    content_type="multipart/form-data",
+                )
+            self.assertEqual(response.get_json()["provider"], "gemini")
+            self.assertEqual(response.get_json()["transcript"], "fallback transcript")
 
     def test_chat_speech_queues_temporary_audio_outside_gallery(self):
         queued = {"id": "speech-job", "status": "queued", "kind": "audio"}

@@ -111,6 +111,65 @@ class MediaGalleryTests(unittest.TestCase):
 
 
 class MediaJobManagerTests(unittest.TestCase):
+    def test_automatic_speech_uses_gemini_before_openai(self):
+        generated = {
+            "result_url": "", "data": b"RIFF-gemini", "content_type": "audio/wav",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "petey.media_jobs.GeminiTTS.generate", return_value=generated,
+            ) as gemini, patch("petey.media_jobs.OpenAITTS.generate") as openai:
+                manager = MediaJobManager(MediaGallery(directory), max_workers=2)
+                queued = manager.submit(
+                    "txt2audio", "Hello", "desktop-test", "", None, {},
+                    speech_settings={
+                        "provider": "automatic", "gemini_model": "gemini-3.1-flash-tts-preview",
+                        "gemini_voice": "Kore", "openai_voice": "marin",
+                    },
+                    save_to_gallery=False,
+                )
+                deadline = time.time() + 3
+                while time.time() < deadline and manager.get(queued["id"])["status"] != "completed":
+                    time.sleep(0.02)
+                job = manager.get(queued["id"])
+                manager.close()
+
+            self.assertEqual(job["status"], "completed")
+            self.assertEqual(job["result"]["tts_provider"], "gemini")
+            gemini.assert_called_once()
+            openai.assert_not_called()
+
+    def test_automatic_speech_uses_openai_when_gemini_fails(self):
+        generated = {
+            "result_url": "", "data": b"openai-mp3", "content_type": "audio/mpeg",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "petey.media_jobs.GeminiTTS.generate",
+                side_effect=RuntimeError("Gemini quota exceeded"),
+            ), patch(
+                "petey.media_jobs.OpenAITTS.generate", return_value=generated,
+            ) as openai:
+                manager = MediaJobManager(MediaGallery(directory), max_workers=2)
+                queued = manager.submit(
+                    "txt2audio", "Hello", "desktop-test", "", None, {},
+                    speech_settings={
+                        "provider": "automatic", "gemini_model": "gemini-3.1-flash-tts-preview",
+                        "gemini_voice": "Kore", "openai_model": "gpt-4o-mini-tts",
+                        "openai_voice": "marin",
+                    },
+                    ai_config={"openai": {"api_key": "secret"}}, save_to_gallery=False,
+                )
+                deadline = time.time() + 3
+                while time.time() < deadline and manager.get(queued["id"])["status"] != "completed":
+                    time.sleep(0.02)
+                job = manager.get(queued["id"])
+                manager.close()
+
+            self.assertEqual(job["status"], "completed")
+            self.assertEqual(job["result"]["tts_provider"], "openai")
+            openai.assert_called_once()
+
     def test_gemini_speech_runs_through_queue_and_gallery(self):
         generated = {
             "result_url": "", "data": b"RIFF-gemini", "content_type": "audio/wav",

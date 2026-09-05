@@ -48,7 +48,7 @@ class AIProviderTests(unittest.TestCase):
         }]
 
         with patch(
-            "petey.ai_provider.requests.post",
+            "petey.ai_provider.HTTP_SESSION.post",
             side_effect=[tool_response, final_response],
         ) as post:
             text, events = provider.complete_with_tools(
@@ -83,7 +83,7 @@ class AIProviderTests(unittest.TestCase):
             "provider": "local",
             "local": {"model": "qwen", "base_url": "http://localhost:11434/v1", "api_key": ""},
         }
-        with patch("petey.ai_provider.requests.post", return_value=response) as post:
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
             result = AIProvider(config).complete(
                 "Now", "Be helpful", [{"role": "user", "content": "Earlier"}]
             )
@@ -105,7 +105,7 @@ class AIProviderTests(unittest.TestCase):
             "gemini": {"model": "gemini-test", "api_key": "private-key"},
         }
         provider = AIProvider(config)
-        with patch("petey.ai_provider.requests.post", return_value=response) as post:
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
             self.assertEqual(provider.complete("Hi", "System", []), "Gemini reply")
 
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "private-key")
@@ -126,7 +126,7 @@ class AIProviderTests(unittest.TestCase):
             "local": {"model": "qwen", "base_url": "http://localhost:1234/v1"},
         })
 
-        with patch("petey.ai_provider.requests.post", return_value=response) as post:
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
             result = provider.describe_image(b"image-bytes", "image/png", "What is this?")
 
         self.assertEqual(result, "A green robot.")
@@ -151,7 +151,7 @@ class AIProviderTests(unittest.TestCase):
                 "local": {"model": "llama3.2", "base_url": "http://localhost:11434/v1"},
             }
         )
-        with patch("petey.ai_provider.requests.get", side_effect=requests.ConnectionError("refused")):
+        with patch("petey.ai_provider.HTTP_SESSION.get", side_effect=requests.ConnectionError("refused")):
             with self.assertRaisesRegex(AIProviderError, "ollama serve"):
                 provider.list_models()
 
@@ -171,7 +171,7 @@ class AIProviderTests(unittest.TestCase):
                 },
             }
         )
-        with patch("petey.ai_provider.requests.post", return_value=response) as post:
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
             result = provider.complete("Hi", "System", [])
 
         self.assertEqual(result, "Final answer")

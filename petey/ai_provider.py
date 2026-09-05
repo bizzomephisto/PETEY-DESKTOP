@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from petey.http_client import SESSION as HTTP_SESSION
+
 
 class AIProviderError(RuntimeError):
     pass
@@ -122,7 +124,7 @@ class AIProvider:
                 if self.provider == "local" or model.startswith(("gpt-5", "o1", "o3", "o4")):
                     request_payload["reasoning_effort"] = "none"
             try:
-                response = requests.post(
+                response = HTTP_SESSION.post(
                     f"{base_url}/chat/completions",
                     headers=headers,
                     json=request_payload,
@@ -245,7 +247,7 @@ class AIProvider:
             elif model.startswith("gemini-3"):
                 generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
         try:
-            response = requests.post(
+            response = HTTP_SESSION.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 json={
@@ -291,7 +293,7 @@ class AIProvider:
         if request_context:
             instruction += f"\nThe user's request is: {request_context}"
         try:
-            response = requests.post(
+            response = HTTP_SESSION.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 json={
@@ -342,7 +344,7 @@ class AIProvider:
             if self.provider == "local" or model.startswith(("gpt-5", "o1", "o3", "o4")):
                 request_payload["reasoning_effort"] = "none"
         try:
-            response = requests.post(
+            response = HTTP_SESSION.post(
                 f"{base_url}/chat/completions",
                 headers=headers,
                 json=request_payload,
@@ -367,7 +369,7 @@ class AIProvider:
         if self._api_key():
             headers["Authorization"] = f"Bearer {self._api_key()}"
         try:
-            response = requests.get(f"{base_url}/models", headers=headers, timeout=15)
+            response = HTTP_SESSION.get(f"{base_url}/models", headers=headers, timeout=15)
             response.raise_for_status()
             return sorted(str(item["id"]) for item in response.json().get("data", []) if item.get("id"))
         except requests.HTTPError as exc:
@@ -403,7 +405,7 @@ class AIProvider:
             if provider_name == "gemini":
                 if not api_key:
                     raise AIProviderError("Gemini embeddings need a Gemini API key.")
-                response = requests.post(
+                response = HTTP_SESSION.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent",
                     headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                     json={
@@ -429,7 +431,7 @@ class AIProvider:
                 headers = {"Content-Type": "application/json"}
                 if api_key:
                     headers["Authorization"] = f"Bearer {api_key}"
-                response = requests.post(
+                response = HTTP_SESSION.post(
                     f"{base_url}/embeddings",
                     headers=headers,
                     json={"model": model, "input": text},

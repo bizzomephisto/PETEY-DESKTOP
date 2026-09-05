@@ -14,7 +14,8 @@ let aiProviderConfiguration = null;
 let speechSettingsLoaded = false;
 let speechConfiguration = null;
 let voiceInputSettingsLoaded = false;
-let voiceInputConfiguration = {mode: 'disabled', provider: 'gemini', model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal'};
+let voiceInputConfiguration = {mode: 'disabled', provider: 'deapi', model: 'WhisperLargeV3', gemini_model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal'};
+let voiceInputModels = {deapi: ['WhisperLargeV3'], gemini: ['gemini-3.5-transcribe']};
 let microphoneStream = null;
 let microphoneContext = null;
 let microphoneProcessor = null;
@@ -36,11 +37,16 @@ let visualCaptionTimer = null;
 let nativeVisualFullscreen = false;
 let geminiSpeechModels = [];
 let geminiSpeechVoices = [];
+let openaiSpeechModels = [];
+let openaiSpeechVoices = [];
 let memoryProviderLoaded = false;
 let memoryProviderConfiguration = null;
 let mediaCatalogLoaded = false;
 let mediaSelectedModels = {};
+const mediaModelsCache = new Map();
 let mediaPollTimer = null;
+let mediaJobsLoading = false;
+let lastMediaJobsSignature = '';
 const displayedMediaJobs = new Set();
 let conversations = [];
 let activeConversationId = '';
@@ -54,6 +60,15 @@ let workspaceLoaded = false;
 let activeChatAudio = null;
 let activeSpeechButton = null;
 let activeSpeechCancel = null;
+let neuralAnimationFrame = null;
+let neuralDraw = null;
+
+function ensureNeuralVisualizationRunning() {
+    const visual = document.getElementById('visual-chat');
+    const chatVisible = document.getElementById('view-chat').classList.contains('active-view');
+    if (neuralAnimationFrame || !neuralDraw || document.hidden || visual.hidden || !chatVisible) return;
+    neuralAnimationFrame = window.requestAnimationFrame(neuralDraw);
+}
 
 function showEmptyState(title = 'Petey is ready.', copy = 'Start a conversation or attach an image for him to inspect.') {
     messages.innerHTML = `<div class="empty-state" id="empty-state"><img src="/static/petey_avatar.png" alt=""><h2>${title}</h2><p>${copy}</p></div>`;
@@ -167,7 +182,7 @@ async function loadDesktop() {
         activeConversationId = bootstrap.conversation_id;
         conversations = bootstrap.conversations || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
-        speechConfiguration = bootstrap.speech || {provider: 'deapi', auto_speak: false};
+        speechConfiguration = bootstrap.speech || {provider: 'automatic', auto_speak: false};
         voiceInputConfiguration = {...voiceInputConfiguration, ...(bootstrap.voice_input || {})};
         workspaces = bootstrap.workspaces || [];
         activeWorkspaceId = bootstrap.active_workspace_id || '';
@@ -391,6 +406,7 @@ function applyPreferences() {
     styleSelect.hidden = !visualMode;
     styleSelect.value = preferences.visual_style || 'neural_core';
     document.getElementById('visual-fullscreen').hidden = !visualMode;
+    if (visualMode) ensureNeuralVisualizationRunning();
 }
 
 async function savePreferences(changes, nativeTop = false) {
@@ -552,6 +568,7 @@ function showView(view) {
     document.querySelectorAll('.nav-button').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
+    if (view === 'chat') ensureNeuralVisualizationRunning();
     const settingsViews = ['settings', 'personality', 'knowledge', 'memory'];
     const navView = settingsViews.includes(view) ? 'settings' : view;
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
@@ -729,6 +746,7 @@ document.getElementById('clear-ai-key').addEventListener('click', async () => {
 
 const voiceInputButton = document.getElementById('voice-input-button');
 const voiceInputModeSelect = document.getElementById('voice-input-mode');
+const voiceInputProviderSelect = document.getElementById('voice-input-provider');
 
 function setVoiceInputStatus(message) {
     document.getElementById('voice-input-status').textContent = message;
@@ -765,7 +783,19 @@ function configureVoiceInputUI() {
 function configureVoiceInputSettings() {
     const mode = voiceInputModeSelect.value;
     const enabled = mode !== 'disabled';
-    document.getElementById('voice-input-model').disabled = !enabled;
+    const provider = voiceInputProviderSelect.value || 'deapi';
+    const modelSelect = document.getElementById('voice-input-model');
+    const availableModels = voiceInputModels[provider] || [];
+    const selectedModel = provider === voiceInputConfiguration.provider
+        ? voiceInputConfiguration.model
+        : provider === 'gemini'
+            ? voiceInputConfiguration.gemini_model
+            : 'WhisperLargeV3';
+    if (Array.from(modelSelect.options, option => option.value).join('|') !== availableModels.join('|')) {
+        fillSelect(modelSelect, availableModels, selectedModel);
+    }
+    voiceInputProviderSelect.disabled = !enabled;
+    modelSelect.disabled = !enabled;
     document.getElementById('voice-input-device').disabled = !enabled;
     document.getElementById('voice-input-sensitivity').disabled = !enabled;
     document.getElementById('voice-wake-word-field').hidden = mode !== 'wake_word';
@@ -785,16 +815,18 @@ async function loadVoiceInputSettings() {
     try {
         const payload = await apiJson('/api/desktop/voice-input');
         voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
+        voiceInputModels = payload.models || voiceInputModels;
         voiceInputModeSelect.value = voiceInputConfiguration.mode;
-        const models = payload.models?.length ? payload.models : ['gemini-3.5-transcribe'];
-        fillSelect(document.getElementById('voice-input-model'), models, voiceInputConfiguration.model);
+        voiceInputProviderSelect.value = voiceInputConfiguration.provider || 'deapi';
         document.getElementById('voice-wake-word').value = voiceInputConfiguration.wake_word || 'Petey';
         document.getElementById('voice-input-sensitivity').value = voiceInputConfiguration.sensitivity || 'normal';
         await refreshMicrophoneDevices();
         configureVoiceInputSettings();
         configureVoiceInputUI();
         voiceInputSettingsLoaded = true;
-        if (voiceInputConfiguration.mode !== 'disabled' && !payload.gemini_has_api_key) {
+        if (voiceInputConfiguration.mode !== 'disabled' && voiceInputConfiguration.provider === 'deapi' && !payload.deapi_has_api_key) {
+            setFeedback(feedback, 'Add DEAPI_KEY to the project .env file before using media transcription.', 'error');
+        } else if (voiceInputConfiguration.mode !== 'disabled' && voiceInputConfiguration.provider === 'gemini' && !payload.gemini_has_api_key) {
             setFeedback(feedback, 'Add a Gemini API key in AI provider settings before using the microphone.', 'error');
         }
     } catch (error) {
@@ -803,6 +835,7 @@ async function loadVoiceInputSettings() {
 }
 
 voiceInputModeSelect.addEventListener('change', configureVoiceInputSettings);
+voiceInputProviderSelect.addEventListener('change', configureVoiceInputSettings);
 document.getElementById('voice-wake-word').addEventListener('input', configureVoiceInputSettings);
 document.getElementById('save-voice-input').addEventListener('click', async () => {
     const feedback = document.getElementById('voice-input-settings-status');
@@ -813,8 +846,11 @@ document.getElementById('save-voice-input').addEventListener('click', async () =
             method: 'PUT', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 mode: voiceInputModeSelect.value,
-                provider: 'gemini',
+                provider: voiceInputProviderSelect.value,
                 model: document.getElementById('voice-input-model').value,
+                gemini_model: voiceInputProviderSelect.value === 'gemini'
+                    ? document.getElementById('voice-input-model').value
+                    : voiceInputConfiguration.gemini_model,
                 wake_word: document.getElementById('voice-wake-word').value,
                 device_id: document.getElementById('voice-input-device').value,
                 sensitivity: document.getElementById('voice-input-sensitivity').value,
@@ -879,7 +915,11 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
     }
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) throw new Error('This desktop backend does not provide audio capture.');
-    microphoneContext = new AudioContextClass();
+    try {
+        microphoneContext = new AudioContextClass({sampleRate: 16000, latencyHint: 'interactive'});
+    } catch (_error) {
+        microphoneContext = new AudioContextClass({latencyHint: 'interactive'});
+    }
     await microphoneContext.resume();
     const source = microphoneContext.createMediaStreamSource(microphoneStream);
     microphoneProcessor = microphoneContext.createScriptProcessor(2048, 1, 1);
@@ -893,7 +933,7 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
 }
 
 function handleMicrophoneAudio(event) {
-    const samples = new Float32Array(event.inputBuffer.getChannelData(0));
+    const samples = event.inputBuffer.getChannelData(0);
     let energy = 0;
     for (let index = 0; index < samples.length; index += 1) energy += samples[index] * samples[index];
     const rms = Math.sqrt(energy / samples.length);
@@ -906,7 +946,7 @@ function handleMicrophoneAudio(event) {
     if (!voiceInputRunning || voiceInputBusy || voiceInputPlaybackBlocked) return;
     const mode = voiceInputConfiguration.mode;
     if (mode === 'push_to_talk') {
-        if (microphoneCapturing) microphoneCapture.push(samples);
+        if (microphoneCapturing) microphoneCapture.push(new Float32Array(samples));
         return;
     }
     const now = performance.now();
@@ -914,7 +954,7 @@ function handleMicrophoneAudio(event) {
         voiceInputConfiguration.sensitivity || 'normal'
     ];
     if (!microphoneCapturing) {
-        microphonePreRoll.push(samples);
+        microphonePreRoll.push(new Float32Array(samples));
         const preRollLimit = Math.max(2, Math.ceil((microphoneContext.sampleRate * .35) / samples.length));
         if (microphonePreRoll.length > preRollLimit) microphonePreRoll.shift();
         if (rms >= threshold) {
@@ -926,7 +966,7 @@ function handleMicrophoneAudio(event) {
         }
         return;
     }
-    microphoneCapture.push(samples);
+    microphoneCapture.push(new Float32Array(samples));
     if (rms >= threshold) microphoneLastVoiceAt = now;
     if ((now - microphoneLastVoiceAt > 950 && now - microphoneCaptureStartedAt > 450)
         || now - microphoneCaptureStartedAt > 30000) {
@@ -953,11 +993,13 @@ function wavBlob(chunks, sampleRate) {
     writeText(36, 'data');
     view.setUint32(40, frameCount * 2, true);
     let offset = 44;
-    chunks.forEach(chunk => chunk.forEach(sample => {
-        const clipped = Math.max(-1, Math.min(1, sample));
-        view.setInt16(offset, clipped < 0 ? clipped * 32768 : clipped * 32767, true);
-        offset += 2;
-    }));
+    for (const chunk of chunks) {
+        for (let index = 0; index < chunk.length; index += 1) {
+            const clipped = Math.max(-1, Math.min(1, chunk[index]));
+            view.setInt16(offset, clipped < 0 ? clipped * 32768 : clipped * 32767, true);
+            offset += 2;
+        }
+    }
     return new Blob([buffer], {type: 'audio/wav'});
 }
 
@@ -1169,6 +1211,14 @@ const builtInGeminiSpeechVoices = Array.from(
         description: option.textContent.split('—').slice(1).join('—').trim(),
     }),
 );
+const builtInOpenAISpeechModels = Array.from(
+    document.getElementById('speech-openai-model').options,
+    option => option.value,
+);
+const builtInOpenAISpeechVoices = Array.from(
+    document.getElementById('speech-openai-voice').options,
+    option => option.value,
+);
 
 function fillSelect(select, items, selectedValue, labelFor) {
     select.innerHTML = '';
@@ -1183,10 +1233,11 @@ function fillSelect(select, items, selectedValue, labelFor) {
 
 function fillSpeechForm(configuration) {
     if (!configuration) return;
-    speechProviderSelect.value = configuration.provider || 'deapi';
+    speechProviderSelect.value = configuration.provider || 'automatic';
     document.getElementById('speech-gemini-model').value = configuration.gemini_model || 'gemini-3.1-flash-tts-preview';
     document.getElementById('speech-gemini-voice').value = configuration.gemini_voice || 'Kore';
-    document.getElementById('speech-deapi-voice').value = configuration.deapi_voice || 'af_sky';
+    document.getElementById('speech-openai-model').value = configuration.openai_model || 'gpt-4o-mini-tts';
+    document.getElementById('speech-openai-voice').value = configuration.openai_voice || 'marin';
     document.getElementById('speech-style').value = configuration.style || '';
     document.getElementById('speech-consistent-voice').checked = configuration.consistent_voice !== false;
     document.getElementById('speech-auto-speak').checked = Boolean(configuration.auto_speak);
@@ -1198,7 +1249,8 @@ function readSpeechForm() {
         provider: speechProviderSelect.value,
         gemini_model: document.getElementById('speech-gemini-model').value,
         gemini_voice: document.getElementById('speech-gemini-voice').value,
-        deapi_voice: document.getElementById('speech-deapi-voice').value,
+        openai_model: document.getElementById('speech-openai-model').value,
+        openai_voice: document.getElementById('speech-openai-voice').value,
         style: document.getElementById('speech-style').value,
         consistent_voice: document.getElementById('speech-consistent-voice').checked,
         auto_speak: document.getElementById('speech-auto-speak').checked,
@@ -1207,22 +1259,27 @@ function readSpeechForm() {
 
 function configureSpeechSettings() {
     const provider = speechProviderSelect.value;
-    const gemini = provider === 'gemini';
+    const automatic = provider === 'automatic';
+    const gemini = provider === 'gemini' || automatic;
+    const openai = provider === 'openai' || automatic;
     document.getElementById('speech-gemini-model-field').hidden = !gemini;
     document.getElementById('speech-gemini-voice-field').hidden = !gemini;
-    document.getElementById('speech-style-field').hidden = !gemini;
+    document.getElementById('speech-openai-model-field').hidden = !openai;
+    document.getElementById('speech-openai-voice-field').hidden = !openai;
+    document.getElementById('speech-style-field').hidden = provider === 'disabled';
     document.getElementById('speech-consistent-voice-row').hidden = !gemini;
-    document.getElementById('speech-deapi-voice-field').hidden = provider !== 'deapi';
     document.getElementById('speech-auto-speak').disabled = provider === 'disabled';
     if (provider === 'disabled') document.getElementById('speech-auto-speak').checked = false;
     document.getElementById('speech-provider-badge').textContent = {
-        deapi: 'Media provider', gemini: 'Gemini', disabled: 'Disabled',
+        automatic: 'Automatic', gemini: 'Gemini', openai: 'OpenAI', disabled: 'Disabled',
     }[provider];
     document.getElementById('speech-provider-note').textContent = provider === 'gemini'
         ? 'Gemini generates 24 kHz speech and follows natural-language directions for style, accent, pace, and tone.'
+        : provider === 'openai'
+            ? 'OpenAI uses GPT-4o Mini TTS and follows the delivery directions above.'
         : provider === 'disabled'
             ? 'Text to speech is unavailable on the Media page while disabled.'
-            : 'Speech uses the existing media service and its available speech models.';
+            : 'Petey streams Gemini speech first and uses OpenAI only if Gemini fails.';
 }
 
 async function loadSpeechSettings() {
@@ -1234,16 +1291,24 @@ async function loadSpeechSettings() {
             ? payload.gemini_models : builtInGeminiSpeechModels;
         geminiSpeechVoices = payload.gemini_voices?.length
             ? payload.gemini_voices : builtInGeminiSpeechVoices;
+        openaiSpeechModels = payload.openai_models?.length
+            ? payload.openai_models : builtInOpenAISpeechModels;
+        openaiSpeechVoices = payload.openai_voices?.length
+            ? payload.openai_voices : builtInOpenAISpeechVoices;
         fillSelect(document.getElementById('speech-gemini-model'), geminiSpeechModels, speechConfiguration.gemini_model);
         fillSelect(
             document.getElementById('speech-gemini-voice'), geminiSpeechVoices,
             speechConfiguration.gemini_voice,
             voice => `${voice.name} — ${voice.description}`,
         );
+        fillSelect(document.getElementById('speech-openai-model'), openaiSpeechModels, speechConfiguration.openai_model);
+        fillSelect(document.getElementById('speech-openai-voice'), openaiSpeechVoices, speechConfiguration.openai_voice, voice => voice[0].toUpperCase() + voice.slice(1));
         fillSpeechForm(speechConfiguration);
         speechSettingsLoaded = true;
         if (speechConfiguration.provider === 'gemini' && !payload.gemini_has_api_key) {
             setFeedback(feedback, 'Add a Gemini API key in AI provider settings before generating speech.', 'error');
+        } else if (speechConfiguration.provider === 'openai' && !payload.openai_has_api_key) {
+            setFeedback(feedback, 'Add an OpenAI API key in AI provider settings before generating speech.', 'error');
         }
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -1263,6 +1328,7 @@ document.getElementById('save-speech-settings').addEventListener('click', async 
         speechConfiguration = payload.configuration;
         speechSettingsLoaded = true;
         mediaCatalogLoaded = false;
+        mediaModelsCache.delete('txt2audio');
         configureSpeechSettings();
         setFeedback(feedback, speechConfiguration.provider === 'disabled' ? 'Speech generation disabled.' : 'Speech settings saved.', 'success');
     } catch (error) {
@@ -1296,22 +1362,33 @@ async function speakChatText(text, button = null) {
         button.classList.add('speaking');
     }
     try {
+        let skipGemini = false;
         if (
-            speechConfiguration?.provider === 'gemini'
+            ['automatic', 'gemini'].includes(speechConfiguration?.provider)
             && String(speechConfiguration.gemini_model || '').startsWith('gemini-3.1-')
         ) {
             startVisualCaption(text);
             setVoicePlaybackActive(true);
             try {
                 await playGeminiSpeechStream(text, button);
+                return;
+            } catch (error) {
+                const automatic = speechConfiguration?.provider === 'automatic';
+                if (!automatic && !/without returning audio/i.test(String(error?.message || error))) throw error;
+                skipGemini = automatic;
+                if (activeSpeechCancel) activeSpeechCancel();
+                activeSpeechCancel = null;
+                if (button) button.textContent = 'Preparing…';
+                statusText.textContent = automatic
+                    ? 'Gemini speech unavailable · trying OpenAI…'
+                    : 'Speech stream was empty · retrying once…';
             } finally {
                 setVoicePlaybackActive(false);
             }
-            return;
         }
         const queued = await apiJson('/api/desktop/chat/speech', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({text}),
+            body: JSON.stringify({text, skip_gemini: skipGemini}),
         });
         let job = queued.job;
         for (let attempt = 0; attempt < 300; attempt += 1) {
@@ -1669,6 +1746,7 @@ document.getElementById('save-personality').addEventListener('click', async () =
         speechConfiguration = result.speech || speechConfiguration;
         if (result.speech) fillSpeechForm(result.speech);
         mediaCatalogLoaded = false;
+        mediaModelsCache.delete('txt2audio');
         setFeedback(feedback, 'Saved — new chats and Petey’s voice use this persona immediately.', 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -2000,6 +2078,10 @@ async function loadMediaCatalog() {
             ? speechPayload.gemini_models : builtInGeminiSpeechModels;
         geminiSpeechVoices = speechPayload.gemini_voices?.length
             ? speechPayload.gemini_voices : builtInGeminiSpeechVoices;
+        openaiSpeechModels = speechPayload.openai_models?.length
+            ? speechPayload.openai_models : builtInOpenAISpeechModels;
+        openaiSpeechVoices = speechPayload.openai_voices?.length
+            ? speechPayload.openai_voices : builtInOpenAISpeechVoices;
         speechSettingsLoaded = true;
         mediaSelectedModels = payload.selected_models || {};
         const speechOption = mediaOperation.querySelector('option[value="txt2audio"]');
@@ -2051,44 +2133,63 @@ function configureMediaOperation() {
 }
 
 function configureMediaSpeechFields() {
-    const gemini = speechConfiguration?.provider === 'gemini';
+    const gemini = ['automatic', 'gemini'].includes(speechConfiguration?.provider);
+    const openai = speechConfiguration?.provider === 'openai';
     const voiceSelect = document.getElementById('media-voice');
     if (gemini) {
         fillSelect(
             voiceSelect, geminiSpeechVoices, speechConfiguration.gemini_voice,
             voice => `${voice.name} — ${voice.description}`,
         );
-    } else {
-        const voices = [
-            ['af_sky', 'Sky — Female US'], ['af_bella', 'Bella — Female US'],
-            ['af_nicole', 'Nicole — Female US'], ['af_sarah', 'Sarah — Female US'],
-            ['am_adam', 'Adam — Male US'], ['am_michael', 'Michael — Male US'],
-            ['bf_emma', 'Emma — Female UK'], ['bm_george', 'George — Male UK'],
-        ];
-        fillSelect(voiceSelect, voices.map(([name, description]) => ({name, description})), speechConfiguration?.deapi_voice || 'af_sky', voice => voice.description);
+    } else if (openai) {
+        fillSelect(
+            voiceSelect, openaiSpeechVoices,
+            speechConfiguration.openai_voice || 'marin',
+            voice => voice[0].toUpperCase() + voice.slice(1),
+        );
     }
-    document.getElementById('media-speed-field').hidden = gemini;
-    document.getElementById('media-speech-style-field').hidden = !gemini;
-    document.getElementById('media-speech-style').value = gemini ? (speechConfiguration.style || '') : '';
+    document.getElementById('media-speed-field').hidden = gemini || openai;
+    document.getElementById('media-speech-style-field').hidden = false;
+    document.getElementById('media-speech-style').value = speechConfiguration.style || '';
 }
 
 async function loadMediaModels(operation) {
     const requestNumber = ++mediaModelRequest;
-    mediaModel.disabled = true;
-    mediaModel.innerHTML = '<option value="">Loading compatible models…</option>';
-    try {
-        const payload = await apiJson(`/api/desktop/media/models/${encodeURIComponent(operation)}`);
-        if (requestNumber !== mediaModelRequest) return;
+    const renderModels = models => {
         mediaModel.innerHTML = '<option value="">Auto — first available</option>';
-        (payload.models || []).forEach(model => {
+        models.forEach(model => {
             const option = document.createElement('option');
             option.value = model.slug;
             option.textContent = model.name || model.slug;
             mediaModel.append(option);
         });
-        mediaModel.value = mediaSelectedModels[operation] || '';
+        const preferredModel = operation === 'txt2audio'
+            ? speechConfiguration?.provider === 'openai'
+                ? speechConfiguration.openai_model
+                : speechConfiguration.gemini_model
+            : mediaSelectedModels[operation];
+        mediaModel.value = preferredModel || '';
         mediaModel.disabled = false;
-        if (!payload.models?.length) setFeedback(mediaStatus, 'No compatible models were returned. Check the media service configuration.', 'error');
+        if (!models.length) setFeedback(mediaStatus, 'No compatible models were returned. Check the media service configuration.', 'error');
+    };
+    if (operation === 'txt2audio') {
+        const speechModels = speechConfiguration?.provider === 'openai'
+            ? openaiSpeechModels : geminiSpeechModels;
+        renderModels(speechModels.map(model => ({slug: model, name: model})));
+        return;
+    }
+    if (mediaModelsCache.has(operation)) {
+        renderModels(mediaModelsCache.get(operation));
+        return;
+    }
+    mediaModel.disabled = true;
+    mediaModel.innerHTML = '<option value="">Loading compatible models…</option>';
+    try {
+        const payload = await apiJson(`/api/desktop/media/models/${encodeURIComponent(operation)}`);
+        if (requestNumber !== mediaModelRequest) return;
+        const models = payload.models || [];
+        mediaModelsCache.set(operation, models);
+        renderModels(models);
     } catch (error) {
         if (requestNumber !== mediaModelRequest) return;
         mediaModel.innerHTML = '<option value="">Models unavailable</option>';
@@ -2389,11 +2490,26 @@ function startMediaPolling() {
     mediaPollTimer = window.setInterval(loadMediaJobs, 2000);
 }
 
+function stopMediaPolling() {
+    if (!mediaPollTimer) return;
+    window.clearInterval(mediaPollTimer);
+    mediaPollTimer = null;
+}
+
 async function loadMediaJobs() {
+    if (mediaJobsLoading) return;
+    mediaJobsLoading = true;
     const container = document.getElementById('media-jobs');
     try {
         const payload = await apiJson('/api/desktop/media/jobs');
         const jobs = payload.jobs || [];
+        const hasActiveJobs = jobs.some(job => ['queued', 'running'].includes(job.status));
+        if (!hasActiveJobs) stopMediaPolling();
+        const signature = JSON.stringify(jobs.slice(0, 12).map(job => [
+            job.id, job.status, job.provider_status, job.progress, job.preview_url, job.error,
+        ]));
+        if (signature === lastMediaJobsSignature) return;
+        lastMediaJobsSignature = signature;
         container.innerHTML = '';
         if (!jobs.length) {
             container.innerHTML = '<p class="muted">No generations submitted this session.</p>';
@@ -2471,6 +2587,8 @@ async function loadMediaJobs() {
         message.className = 'wide-status error';
         message.textContent = error.message;
         container.append(message);
+    } finally {
+        mediaJobsLoading = false;
     }
 }
 
@@ -2923,6 +3041,7 @@ function startNeuralVisualization() {
     let height = 1;
     let pixelRatio = 1;
     let previousTime = performance.now();
+    const frameInterval = 1000 / (reducedMotion ? 20 : 40);
 
     const resize = () => {
         const bounds = canvas.getBoundingClientRect();
@@ -2938,6 +3057,13 @@ function startNeuralVisualization() {
     resize();
 
     const draw = time => {
+        neuralAnimationFrame = null;
+        const chatVisible = document.getElementById('view-chat').classList.contains('active-view');
+        if (document.hidden || document.getElementById('visual-chat').hidden || !chatVisible) return;
+        if (time - previousTime < frameInterval) {
+            neuralAnimationFrame = window.requestAnimationFrame(draw);
+            return;
+        }
         const delta = Math.min(34, time - previousTime);
         previousTime = time;
         visualAudioEnergy *= .91;
@@ -3205,12 +3331,14 @@ function startNeuralVisualization() {
                     : voiceInputRunning
                         ? 'Ready · microphone active'
                         : 'Present';
-        window.requestAnimationFrame(draw);
+        neuralAnimationFrame = window.requestAnimationFrame(draw);
     };
-    window.requestAnimationFrame(draw);
+    neuralDraw = draw;
+    ensureNeuralVisualizationRunning();
 }
 
 startNeuralVisualization();
+document.addEventListener('visibilitychange', ensureNeuralVisualizationRunning);
 
 const requestedView = window.location.hash.replace('#', '');
 const knownViews = ['chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'knowledge', 'memory'];

@@ -222,6 +222,29 @@ class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updates[1]["preview_url"], "https://media.example/preview.jpg")
         self.assertTrue(all(item["request_id"] == "request-42" for item in updates))
 
+    async def test_qwen_speech_uses_v2_endpoint_voice_and_emotion_instructions(self):
+        client = DeapiClient()
+        client._execute_with_fallback = AsyncMock(return_value="speech-42")
+        client.wait_for_v2_job = AsyncMock(
+            return_value={"status": "done", "result_url": "https://media.example/speech.mp3"}
+        )
+
+        result = await client.generate_speech(
+            "That is fantastic!", voice="Dylan", style="Excited and celebratory"
+        )
+
+        request = client._execute_with_fallback.await_args
+        self.assertEqual(request.args[0], "/api/v2/audio/speech")
+        self.assertEqual(request.kwargs["selected_model_slug"], "Qwen3_TTS_12Hz_1_7B_CustomVoice")
+        self.assertTrue(request.kwargs["strict_model"])
+        form = request.args[1]("Qwen3_TTS_12Hz_1_7B_CustomVoice", {}, {})
+        fields = {headers["name"]: value for headers, _headers, value in form._fields}
+        self.assertEqual(fields["voice"], "Dylan")
+        self.assertEqual(fields["lang"], "English")
+        self.assertEqual(fields["instruct"], "Excited and celebratory")
+        self.assertEqual(result["status"], "done")
+        client.wait_for_v2_job.assert_awaited_once_with("speech-42")
+
 
 if __name__ == "__main__":
     unittest.main()

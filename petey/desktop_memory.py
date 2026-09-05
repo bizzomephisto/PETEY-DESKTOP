@@ -3,15 +3,61 @@
 from __future__ import annotations
 
 import datetime as dt
+import heapq
 import json
 import math
+import queue
 import sqlite3
 import threading
+from array import array
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
 
 EmbeddingFactory = Callable[[str], dict | None]
+
+class _DaemonTaskPool:
+    """Small lazy worker pool that never delays process shutdown."""
+
+    def __init__(self, workers=2, capacity=512):
+        self._worker_count = workers
+        self._queue: queue.Queue = queue.Queue(maxsize=capacity)
+        self._start_lock = threading.Lock()
+        self._started = False
+
+    def submit(self, function) -> bool:
+        with self._start_lock:
+            if not self._started:
+                for index in range(self._worker_count):
+                    threading.Thread(
+                        target=self._work,
+                        name=f"petey-embed-{index + 1}",
+                        daemon=True,
+                    ).start()
+                self._started = True
+        try:
+            self._queue.put_nowait(function)
+            return True
+        except queue.Full:
+            print("[MEMORY] Embedding queue is full; leaving this item available for rebuild.")
+            return False
+
+    def _work(self) -> None:
+        while True:
+            function = self._queue.get()
+            try:
+                function()
+            except Exception as exc:
+                print(f"[MEMORY] Background indexing failed: {exc}")
+            finally:
+                self._queue.task_done()
+
+
+# An unbounded thread-per-message model can overwhelm local model servers during
+# a fast conversation. This pool preserves background indexing with backpressure.
+_EMBEDDING_EXECUTOR = _DaemonTaskPool()
+MAX_CACHED_VECTORS = 3000
 
 
 class DesktopMemory:
@@ -22,16 +68,20 @@ class DesktopMemory:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.embedding_factory = embedding_factory
         self._write_lock = threading.RLock()
+        self._vector_cache_lock = threading.Lock()
+        self._vector_cache: OrderedDict[int, tuple[int, array, float]] = OrderedDict()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
     def init_db(self) -> None:
         with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=NORMAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memory_items (
@@ -125,14 +175,25 @@ class DesktopMemory:
             except Exception as exc:
                 print(f"[MEMORY] Local embedding failed for item {item_id}: {exc}")
 
-        threading.Thread(target=work, name=f"petey-embed-{item_id}", daemon=True).start()
+        _EMBEDDING_EXECUTOR.submit(work)
 
     def store_memory(self, installation_id, conversation_id, user_id, content: str) -> None:
+        item_id = self.store_memory_deferred(
+            installation_id, conversation_id, user_id, content
+        )
+        if item_id is not None:
+            self.queue_embedding(item_id, content)
+
+    def store_memory_deferred(
+        self, installation_id, conversation_id, user_id, content: str
+    ) -> int | None:
         if not content or not content.strip():
-            return
-        item_id = self._insert_item(
+            return None
+        return self._insert_item(
             str(installation_id), str(conversation_id), str(user_id), "message", content
         )
+
+    def queue_embedding(self, item_id: int, content: str) -> None:
         self._embed_in_background(item_id, content)
 
     @staticmethod
@@ -162,7 +223,7 @@ class DesktopMemory:
                     print(f"[MEMORY] Document embedding failed for {filename} part {index}: {exc}")
             print(f"[MEMORY] Stored {len(chunks)} local chunks for {filename}")
 
-        threading.Thread(target=work, name="petey-document-index", daemon=True).start()
+        _EMBEDDING_EXECUTOR.submit(work)
 
     def get_documents(self, installation_id: str) -> list[str]:
         with self._connect() as connection:
@@ -182,6 +243,7 @@ class DesktopMemory:
                 "DELETE FROM memory_items WHERE installation_id=? AND kind='document' AND source_name=?",
                 (str(installation_id), filename),
             )
+        self._discard_cached_vectors()
         return True
 
     def clear_conversation(self, installation_id: str, conversation_id: str) -> int:
@@ -190,7 +252,10 @@ class DesktopMemory:
                 "DELETE FROM memory_items WHERE installation_id=? AND kind='message' AND conversation_id=?",
                 (str(installation_id), str(conversation_id)),
             )
-            return max(0, int(cursor.rowcount or 0))
+            deleted = max(0, int(cursor.rowcount or 0))
+        if deleted:
+            self._discard_cached_vectors()
+        return deleted
 
     def get_conversation_messages(self, installation_id, conversation_id, limit=50) -> list[dict]:
         with self._connect() as connection:
@@ -221,8 +286,61 @@ class DesktopMemory:
         right_norm = math.sqrt(sum(value * value for value in right))
         return dot / (left_norm * right_norm) if left_norm and right_norm else -1.0
 
-    def search_memories(self, query: str, installation_id: str, limit=5) -> str:
+    def _cached_vector(self, row: sqlite3.Row) -> tuple[array, float]:
+        item_id = int(row["id"])
+        encoded = str(row["embedding_json"])
+        signature = hash(encoded)
+        with self._vector_cache_lock:
+            cached = self._vector_cache.get(item_id)
+            if cached is not None and cached[0] == signature:
+                self._vector_cache.move_to_end(item_id)
+                return cached[1], cached[2]
+        vector = array("d", (float(value) for value in json.loads(encoded)))
+        norm = math.sqrt(sum(value * value for value in vector))
+        with self._vector_cache_lock:
+            self._vector_cache[item_id] = (signature, vector, norm)
+            self._vector_cache.move_to_end(item_id)
+            while len(self._vector_cache) > MAX_CACHED_VECTORS:
+                self._vector_cache.popitem(last=False)
+        return vector, norm
+
+    def _semantic_score(self, query: tuple[float, ...], query_norm: float, row: sqlite3.Row) -> float:
+        vector, vector_norm = self._cached_vector(row)
+        if len(query) != len(vector) or not query_norm or not vector_norm:
+            return -1.0
+        return sum(left * right for left, right in zip(query, vector)) / (query_norm * vector_norm)
+
+    def _discard_cached_vectors(self, item_ids=None) -> None:
+        with self._vector_cache_lock:
+            if item_ids is None:
+                self._vector_cache.clear()
+            else:
+                for item_id in item_ids:
+                    self._vector_cache.pop(int(item_id), None)
+
+    def search_memories(
+        self, query: str, installation_id: str, limit=5,
+        exclude_conversation_id: str | None = None,
+    ) -> str:
         if not query or not query.strip():
+            return ""
+        with self._connect() as connection:
+            if exclude_conversation_id is None:
+                available = connection.execute(
+                    "SELECT 1 FROM memory_items WHERE installation_id=? LIMIT 1",
+                    (str(installation_id),),
+                ).fetchone()
+            else:
+                available = connection.execute(
+                    """
+                    SELECT 1 FROM memory_items
+                    WHERE installation_id=?
+                      AND (conversation_id IS NULL OR conversation_id<>?)
+                    LIMIT 1
+                    """,
+                    (str(installation_id), str(exclude_conversation_id)),
+                ).fetchone()
+        if available is None:
             return ""
         try:
             query_result = self.embedding_factory(query)
@@ -232,41 +350,53 @@ class DesktopMemory:
 
         with self._connect() as connection:
             if query_result:
+                conversation_clause = ""
+                parameters = [
+                    str(installation_id),
+                    query_result["provider"],
+                    query_result["model"],
+                    query_result["dimensions"],
+                ]
+                if exclude_conversation_id is not None:
+                    conversation_clause = "AND (conversation_id IS NULL OR conversation_id<>?)"
+                    parameters.append(str(exclude_conversation_id))
                 rows = connection.execute(
-                    """
-                    SELECT content, created_at, kind, source_name, embedding_json
+                    f"""
+                    SELECT id, content, created_at, kind, source_name, embedding_json
                     FROM memory_items
                     WHERE installation_id=? AND embedding_provider=? AND embedding_model=?
                       AND embedding_dimensions=? AND embedding_json IS NOT NULL
+                      {conversation_clause}
                     ORDER BY id DESC LIMIT 3000
                     """,
-                    (
-                        str(installation_id),
-                        query_result["provider"],
-                        query_result["model"],
-                        query_result["dimensions"],
-                    ),
+                    parameters,
                 ).fetchall()
-                scored = sorted(
-                    (
-                        (self._cosine(query_result["values"], json.loads(row["embedding_json"])), row)
-                        for row in rows
-                    ),
+                query_vector = tuple(float(value) for value in query_result["values"])
+                query_norm = math.sqrt(sum(value * value for value in query_vector))
+                scored = heapq.nlargest(
+                    int(limit),
+                    ((self._semantic_score(query_vector, query_norm, row), row) for row in rows),
                     key=lambda pair: pair[0],
-                    reverse=True,
-                )[: int(limit)]
+                )
                 selected = [row for score, row in scored if score > 0.15]
             else:
                 words = [word for word in query.strip().split() if len(word) > 2][:5]
                 if not words:
                     return ""
                 clauses = " OR ".join("content LIKE ?" for _ in words)
+                conversation_clause = ""
+                parameters = [str(installation_id), *(f"%{word}%" for word in words)]
+                if exclude_conversation_id is not None:
+                    conversation_clause = "AND (conversation_id IS NULL OR conversation_id<>?)"
+                    parameters.append(str(exclude_conversation_id))
+                parameters.append(int(limit))
                 selected = connection.execute(
                     f"""
                     SELECT content, created_at, kind, source_name FROM memory_items
-                    WHERE installation_id=? AND ({clauses}) ORDER BY id DESC LIMIT ?
+                    WHERE installation_id=? AND ({clauses}) {conversation_clause}
+                    ORDER BY id DESC LIMIT ?
                     """,
-                    (str(installation_id), *(f"%{word}%" for word in words), int(limit)),
+                    parameters,
                 ).fetchall()
 
         lines = []
@@ -318,6 +448,7 @@ class DesktopMemory:
                 "SELECT id, content FROM memory_items WHERE installation_id=? ORDER BY id",
                 (str(installation_id),),
             ).fetchall()
+        self._discard_cached_vectors()
 
         def work():
             for row in rows:
@@ -327,7 +458,7 @@ class DesktopMemory:
                     print(f"[MEMORY] Rebuild stopped at item {row['id']}: {exc}")
                     break
 
-        threading.Thread(target=work, name="petey-memory-rebuild", daemon=True).start()
+        _EMBEDDING_EXECUTOR.submit(work)
         return len(rows)
 
     def reset(self, installation_id: str) -> int:
@@ -338,4 +469,7 @@ class DesktopMemory:
             connection.execute(
                 "DELETE FROM image_generations WHERE installation_id=?", (str(installation_id),)
             )
-            return max(0, int(cursor.rowcount or 0))
+            deleted = max(0, int(cursor.rowcount or 0))
+        if deleted:
+            self._discard_cached_vectors()
+        return deleted

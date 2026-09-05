@@ -19,7 +19,7 @@ class GeminiTTSTests(unittest.TestCase):
         response.__enter__.return_value = response
         client = GeminiTTS({"gemini": {"api_key": "gemini-secret"}})
 
-        with patch("petey.gemini_tts.requests.post", return_value=response) as post:
+        with patch("petey.gemini_tts.HTTP_SESSION.post", return_value=response) as post:
             chunks = list(client.stream_pcm(
                 "Hello", "gemini-3.1-flash-tts-preview", "Kore"
             ))
@@ -27,6 +27,43 @@ class GeminiTTSTests(unittest.TestCase):
         self.assertEqual(chunks, [b"\x01\x00\x02\x00"])
         self.assertTrue(post.call_args.kwargs["json"]["stream"])
         self.assertIn("/interactions", post.call_args.args[0])
+
+    def test_stream_accepts_completed_output_audio_shape(self):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.iter_lines.return_value = [
+            b'data: {"event_type":"interaction.completed","interaction":{"output_audio":{"data":"AQACAA=="}}}',
+            b"data: [DONE]",
+        ]
+        response.__enter__.return_value = response
+        client = GeminiTTS({"gemini": {"api_key": "gemini-secret"}})
+
+        with patch("petey.gemini_tts.HTTP_SESSION.post", return_value=response):
+            chunks = list(client.stream_pcm(
+                "Hello", "gemini-3.1-flash-tts-preview", "Kore"
+            ))
+
+        self.assertEqual(chunks, [b"\x01\x00\x02\x00"])
+
+    def test_stream_surfaces_interaction_failure_and_empty_audio(self):
+        client = GeminiTTS({"gemini": {"api_key": "gemini-secret"}})
+        failed = MagicMock()
+        failed.raise_for_status.return_value = None
+        failed.iter_lines.return_value = [
+            b'data: {"event_type":"interaction.failed","error":{"message":"Audio unavailable"}}',
+        ]
+        failed.__enter__.return_value = failed
+        with patch("petey.gemini_tts.HTTP_SESSION.post", return_value=failed):
+            with self.assertRaisesRegex(Exception, "Audio unavailable"):
+                list(client.stream_pcm("Hello", "gemini-3.1-flash-tts-preview", "Kore"))
+
+        empty = MagicMock()
+        empty.raise_for_status.return_value = None
+        empty.iter_lines.return_value = [b"data: [DONE]"]
+        empty.__enter__.return_value = empty
+        with patch("petey.gemini_tts.HTTP_SESSION.post", return_value=empty):
+            with self.assertRaisesRegex(Exception, "without returning audio"):
+                list(client.stream_pcm("Hello", "gemini-3.1-flash-tts-preview", "Kore"))
 
     def test_generates_wave_audio_with_selected_model_voice_and_style(self):
         response = MagicMock()
@@ -41,7 +78,7 @@ class GeminiTTSTests(unittest.TestCase):
         }
         client = GeminiTTS({"gemini": {"api_key": "gemini-secret"}})
 
-        with patch("petey.gemini_tts.requests.post", return_value=response) as post:
+        with patch("petey.gemini_tts.HTTP_SESSION.post", return_value=response) as post:
             result = client.generate(
                 "Hello there", "gemini-3.1-flash-tts-preview", "Sulafat", "Warm and calm"
             )

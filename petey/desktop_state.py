@@ -176,10 +176,11 @@ class DesktopState:
                     settings["ai_provider"][provider][key] = value
                     changed = True
         speech_defaults = {
-            "provider": "deapi",
+            "provider": "automatic",
             "gemini_model": "gemini-3.1-flash-tts-preview",
             "gemini_voice": "Kore",
-            "deapi_voice": "af_sky",
+            "openai_model": "gpt-4o-mini-tts",
+            "openai_voice": "marin",
             "style": "",
             "consistent_voice": True,
             "auto_speak": False,
@@ -191,10 +192,28 @@ class DesktopState:
             if key not in settings["speech"]:
                 settings["speech"][key] = value
                 changed = True
+        if settings["speech"].get("provider") == "deapi":
+            settings["speech"]["provider"] = "automatic"
+            changed = True
+        for saved_persona in settings["saved_personas"]:
+            if not isinstance(saved_persona, dict):
+                continue
+            saved_speech = saved_persona.get("speech")
+            if not isinstance(saved_speech, dict):
+                continue
+            if saved_speech.get("provider") == "deapi":
+                saved_speech["provider"] = "automatic"
+                changed = True
+        legacy_gemini_voice_input = (
+            isinstance(settings.get("voice_input"), dict)
+            and settings["voice_input"].get("provider") == "gemini"
+            and "gemini_model" not in settings["voice_input"]
+        )
         voice_input_defaults = {
             "mode": "disabled",
-            "provider": "gemini",
-            "model": "gemini-3.5-transcribe",
+            "provider": "deapi",
+            "model": "WhisperLargeV3",
+            "gemini_model": "gemini-3.5-transcribe",
             "wake_word": "Petey",
             "device_id": "",
             "sensitivity": "normal",
@@ -206,6 +225,13 @@ class DesktopState:
             if key not in settings["voice_input"]:
                 settings["voice_input"][key] = value
                 changed = True
+        if legacy_gemini_voice_input:
+            settings["voice_input"]["gemini_model"] = settings["voice_input"].get(
+                "model", "gemini-3.5-transcribe"
+            )
+            settings["voice_input"]["provider"] = "deapi"
+            settings["voice_input"]["model"] = "WhisperLargeV3"
+            changed = True
         if not isinstance(settings.get("memory_provider"), dict):
             settings["memory_provider"] = {
                 "semantic_enabled": True,
@@ -469,10 +495,11 @@ class DesktopState:
     @staticmethod
     def _validated_speech(base: dict, changes: dict) -> dict:
         from petey.gemini_tts import GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
+        from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
 
         current = copy.deepcopy(base)
-        provider = str(changes.get("provider") or current.get("provider") or "deapi")
-        if provider not in {"disabled", "deapi", "gemini"}:
+        provider = str(changes.get("provider") or current.get("provider") or "automatic")
+        if provider not in {"disabled", "automatic", "gemini", "openai"}:
             raise ValueError("Unsupported speech provider.")
         current["provider"] = provider
         if "gemini_model" in changes:
@@ -485,8 +512,16 @@ class DesktopState:
             if voice not in GEMINI_TTS_VOICES:
                 raise ValueError("Choose a supported Gemini voice.")
             current["gemini_voice"] = voice
-        if "deapi_voice" in changes:
-            current["deapi_voice"] = str(changes.get("deapi_voice") or "af_sky").strip()[:100]
+        if "openai_model" in changes:
+            model = str(changes.get("openai_model") or "").strip()
+            if model not in OPENAI_TTS_MODELS:
+                raise ValueError("Choose a supported OpenAI TTS model.")
+            current["openai_model"] = model
+        if "openai_voice" in changes:
+            voice = str(changes.get("openai_voice") or "").strip().lower()
+            if voice not in OPENAI_TTS_VOICES:
+                raise ValueError("Choose a supported OpenAI voice.")
+            current["openai_voice"] = voice
         if "style" in changes:
             current["style"] = str(changes.get("style") or "").strip()[:2000]
         if "consistent_voice" in changes:
@@ -509,15 +544,21 @@ class DesktopState:
         if mode not in {"disabled", "push_to_talk", "always_on", "wake_word"}:
             raise ValueError("Unsupported microphone mode.")
         current["mode"] = mode
-        provider = str(changes.get("provider") or current.get("provider") or "gemini")
-        if provider != "gemini":
+        provider = str(changes.get("provider") or current.get("provider") or "deapi")
+        if provider not in {"deapi", "gemini"}:
             raise ValueError("Unsupported transcription provider.")
         current["provider"] = provider
         if "model" in changes:
             model = str(changes.get("model") or "").strip()
+            supported = {"WhisperLargeV3"} if provider == "deapi" else set(GEMINI_STT_MODELS)
+            if model not in supported:
+                raise ValueError("Choose a supported transcription model.")
+            current["model"] = model
+        if "gemini_model" in changes:
+            model = str(changes.get("gemini_model") or "").strip()
             if model not in GEMINI_STT_MODELS:
                 raise ValueError("Choose a supported Gemini transcription model.")
-            current["model"] = model
+            current["gemini_model"] = model
         if "wake_word" in changes:
             wake_word = str(changes.get("wake_word") or "Petey").strip()[:40]
             if not wake_word:
@@ -668,10 +709,15 @@ class DesktopState:
         return str(self.settings.get("selected_models", {}).get(inference_type, ""))
 
     def update_selected_model(self, inference_type: str, model_slug: str) -> None:
-        models = dict(self.settings.get("selected_models", {}))
-        if model_slug:
-            models[str(inference_type)] = str(model_slug)
-        else:
-            models.pop(str(inference_type), None)
-        self.settings["selected_models"] = models
-        self._write_json(self.settings_path, self.settings)
+        inference_type = str(inference_type)
+        model_slug = str(model_slug or "")
+        with self._lock:
+            models = dict(self.settings.get("selected_models", {}))
+            if models.get(inference_type, "") == model_slug:
+                return
+            if model_slug:
+                models[inference_type] = model_slug
+            else:
+                models.pop(inference_type, None)
+            self.settings["selected_models"] = models
+            self._write_json(self.settings_path, self.settings)

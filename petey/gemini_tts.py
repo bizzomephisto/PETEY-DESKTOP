@@ -10,6 +10,8 @@ import wave
 
 import requests
 
+from petey.http_client import SESSION as HTTP_SESSION
+
 
 GEMINI_TTS_MODELS = (
     "gemini-3.1-flash-tts-preview",
@@ -48,7 +50,7 @@ class GeminiTTS:
             text, model, voice, style, consistent_voice
         )
         try:
-            response = requests.post(
+            response = HTTP_SESSION.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
                 json={
@@ -98,8 +100,9 @@ class GeminiTTS:
         )
         if not model.startswith("gemini-3.1-"):
             raise GeminiTTSError("Streaming speech requires a Gemini 3.1 TTS model.")
+        received_audio = False
         try:
-            with requests.post(
+            with HTTP_SESSION.post(
                 "https://generativelanguage.googleapis.com/v1beta/interactions",
                 headers={
                     "Content-Type": "application/json",
@@ -127,9 +130,18 @@ class GeminiTTS:
                     data = line[5:].strip()
                     if not data or data == "[DONE]":
                         continue
-                    encoded = self._audio_data(json.loads(data))
+                    event = json.loads(data)
+                    error = self._stream_error(event)
+                    if error:
+                        raise GeminiTTSError(f"Gemini streaming speech failed: {error}")
+                    encoded = self._audio_data(event)
                     if encoded:
+                        received_audio = True
                         yield base64.b64decode(encoded, validate=True)
+            if not received_audio:
+                raise GeminiTTSError("Gemini finished without returning audio.")
+        except GeminiTTSError:
+            raise
         except requests.HTTPError as exc:
             detail = exc.response.text[:500] if exc.response is not None else str(exc)
             raise GeminiTTSError(f"Gemini streaming speech returned an error: {detail}") from exc
@@ -176,8 +188,17 @@ class GeminiTTS:
     @classmethod
     def _audio_data(cls, value) -> str:
         if isinstance(value, dict):
-            if value.get("type") == "audio" and isinstance(value.get("data"), str):
+            value_type = str(value.get("type") or "").lower()
+            mime_type = str(value.get("mime_type") or value.get("mimeType") or "").lower()
+            if (
+                value_type in {"audio", "audio_delta", "output_audio"}
+                or mime_type.startswith("audio/")
+            ) and isinstance(value.get("data"), str):
                 return value["data"]
+            for key in ("output_audio", "outputAudio", "audio"):
+                nested = value.get(key)
+                if isinstance(nested, dict) and isinstance(nested.get("data"), str):
+                    return nested["data"]
             for nested in value.values():
                 found = cls._audio_data(nested)
                 if found:
@@ -187,4 +208,25 @@ class GeminiTTS:
                 found = cls._audio_data(nested)
                 if found:
                     return found
+        return ""
+
+    @classmethod
+    def _stream_error(cls, value) -> str:
+        if not isinstance(value, dict):
+            return ""
+        event_type = str(value.get("event_type") or value.get("type") or "").lower()
+        error = value.get("error")
+        if isinstance(error, dict):
+            return str(error.get("message") or error.get("code") or "unknown streaming error")[:500]
+        if isinstance(error, str):
+            return error[:500]
+        interaction = value.get("interaction")
+        if isinstance(interaction, dict) and (
+            event_type.endswith((".failed", ".error"))
+            or str(interaction.get("status") or "").lower() in {"failed", "error", "cancelled"}
+        ):
+            nested = interaction.get("error")
+            if isinstance(nested, dict):
+                return str(nested.get("message") or nested.get("code") or event_type)[:500]
+            return str(nested or event_type or "interaction failed")[:500]
         return ""

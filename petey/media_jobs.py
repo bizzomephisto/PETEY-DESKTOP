@@ -17,6 +17,7 @@ import aiohttp
 from petey.deapi_client import DeapiClient
 from petey.gemini_tts import GeminiTTS
 from petey.media_service import MediaInput, MediaService
+from petey.openai_tts import OpenAITTS
 
 
 def _now() -> str:
@@ -35,11 +36,14 @@ class MediaGallery:
         self._lock = threading.RLock()
         self._preview_lock = threading.Lock()
         self._items = self._load()
+        self._items_by_id = {item["id"]: item for item in self._items if item.get("id")}
 
     def _load(self) -> list[dict]:
         try:
             value = json.loads(self.index_path.read_text(encoding="utf-8"))
-            return value if isinstance(value, list) else []
+            if not isinstance(value, list):
+                return []
+            return sorted(value, key=lambda item: item.get("created_at", ""), reverse=True)
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return []
 
@@ -50,11 +54,15 @@ class MediaGallery:
 
     def list_items(self) -> list[dict]:
         with self._lock:
-            return [dict(item) for item in sorted(self._items, key=lambda item: item["created_at"], reverse=True)]
+            return [dict(item) for item in self._items]
 
     def get(self, item_id: str) -> dict | None:
         with self._lock:
-            item = next((item for item in self._items if item["id"] == item_id), None)
+            item = self._items_by_id.get(item_id)
+            if item is None:
+                item = next((entry for entry in self._items if entry.get("id") == item_id), None)
+                if item is not None:
+                    self._items_by_id[item_id] = item
             return dict(item) if item else None
 
     async def capture(
@@ -121,13 +129,14 @@ class MediaGallery:
         }
         with self._lock:
             self._items = [existing for existing in self._items if existing["id"] != item_id]
-            self._items.append(item)
+            self._items.insert(0, item)
+            self._items_by_id[item_id] = item
             self._write_locked()
         return dict(item)
 
     def delete(self, item_id: str) -> bool:
         with self._lock:
-            item = next((item for item in self._items if item["id"] == item_id), None)
+            item = self.get(item_id)
             if not item:
                 return False
             if item.get("local_filename"):
@@ -137,6 +146,7 @@ class MediaGallery:
                 except OSError as exc:
                     print(f"[GALLERY] Could not delete media file: {exc}")
             self._items = [existing for existing in self._items if existing["id"] != item_id]
+            self._items_by_id.pop(item_id, None)
             self._write_locked()
             return True
 
@@ -340,24 +350,8 @@ class MediaJobManager:
 
     async def _execute(self, job: dict) -> tuple[dict, dict]:
         speech = job.get("_speech_settings") or {}
-        if job["operation"] == "txt2audio" and speech.get("provider") == "gemini":
-            # MediaJobManager already executes this coroutine on a dedicated
-            # worker thread, so the blocking HTTP request does not touch Flask.
-            result = GeminiTTS(job.get("_ai_config") or {}).generate(
-                job["prompt"][:32000],
-                job.get("model_slug") or speech.get("gemini_model", ""),
-                job["_parameters"].get("voice") or speech.get("gemini_voice", "Kore"),
-                job["_parameters"].get("style") or speech.get("style", ""),
-                bool(speech.get("consistent_voice", True)),
-            )
-            result.update({"kind": "audio", "operation": "txt2audio"})
-            gallery_item = None
-            if job.get("_save_to_gallery", True):
-                gallery_item = await self.gallery.capture(
-                    job["id"], result, job["prompt"],
-                    job.get("model_slug") or speech.get("gemini_model", ""),
-                )
-            return result, gallery_item
+        if job["operation"] == "txt2audio":
+            return await self._execute_speech(job, speech)
 
         client = DeapiClient(
             progress_callback=lambda update: self._update_progress(job["id"], update)
@@ -379,6 +373,63 @@ class MediaJobManager:
             return result, gallery_item
         finally:
             await client.close()
+
+    async def _execute_speech(self, job: dict, speech: dict) -> tuple[dict, dict]:
+        """Generate speech, using Gemini -> OpenAI in automatic mode."""
+        selected = str(speech.get("provider") or "automatic")
+        providers = ["gemini", "openai"] if selected == "automatic" else [selected]
+        failures = []
+        result = None
+        used_provider = ""
+        used_model = ""
+
+        for provider in providers:
+            self._update_progress(job["id"], {
+                "status": f"trying_{provider}", "request_id": "", "progress": None,
+            })
+            try:
+                if provider == "gemini":
+                    used_model = speech.get("gemini_model", "")
+                    voice = (
+                        job["_parameters"].get("voice")
+                        if selected == "gemini" else speech.get("gemini_voice", "Kore")
+                    )
+                    result = GeminiTTS(job.get("_ai_config") or {}).generate(
+                        job["prompt"][:32000], used_model,
+                        voice,
+                        speech.get("style", ""),
+                        bool(speech.get("consistent_voice", True)),
+                    )
+                elif provider == "openai":
+                    used_model = speech.get("openai_model", "gpt-4o-mini-tts")
+                    voice = (
+                        job["_parameters"].get("voice")
+                        if selected == "openai" else speech.get("openai_voice", "marin")
+                    )
+                    result = OpenAITTS(job.get("_ai_config") or {}).generate(
+                        job["prompt"], used_model,
+                        voice,
+                        speech.get("style", ""),
+                    )
+                else:
+                    raise ValueError("Unsupported speech provider.")
+                used_provider = provider
+                break
+            except Exception as exc:
+                failures.append(f"{provider}: {exc}")
+                result = None
+
+        if result is None:
+            raise RuntimeError("Speech providers failed — " + " | ".join(failures))
+        result.update({
+            "kind": "audio", "operation": "txt2audio", "tts_provider": used_provider,
+        })
+        gallery_item = None
+        if job.get("_save_to_gallery", True):
+            gallery_item = await self.gallery.capture(
+                job["id"], result, job["prompt"], used_model,
+            )
+        return result, gallery_item
 
     def _update_progress(self, job_id: str, update: dict) -> None:
         progress = update.get("progress")
