@@ -131,6 +131,14 @@ sandbox for arbitrary code.
 
 ## Development
 
+For coding agents, start with [AGENTS.md](AGENTS.md), the compact architecture,
+task-to-file map, extension guide, and validation reference. Many agents load this
+root-level filename automatically. For any other tool, paste:
+
+> Read `AGENTS.md` in the project root first, then implement my request. Use its
+> task-to-file map to inspect only relevant code and tests; update it if your
+> changes alter the documented architecture or workflows.
+
 Run the test suite with:
 
 ```bash
