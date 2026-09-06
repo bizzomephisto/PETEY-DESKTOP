@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from petey.media_jobs import MediaGallery, MediaJobManager
 
@@ -111,6 +111,31 @@ class MediaGalleryTests(unittest.TestCase):
 
 
 class MediaJobManagerTests(unittest.TestCase):
+    def test_media_worker_uses_saved_key_and_closes_client(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = MediaJobManager(MediaGallery(directory))
+            job = {
+                "id": "test", "operation": "txt2img", "prompt": "Robot",
+                "_installation_id": "installation", "model_slug": "model",
+                "_source": None, "_parameters": {}, "_save_to_gallery": False,
+                "_ai_config": {"deapi": {"api_key": "saved-key"}},
+            }
+            client = MagicMock()
+            client.close = AsyncMock()
+            try:
+                with patch("petey.media_jobs.DeapiClient", return_value=client) as factory, patch(
+                    "petey.media_jobs.MediaService"
+                ) as service:
+                    service.return_value.generate = AsyncMock(return_value={"kind": "image"})
+                    result, gallery_item = asyncio.run(manager._execute(job))
+                    self.assertEqual(factory.call_args.kwargs["api_key"], "saved-key")
+                    service.assert_called_once_with(client)
+                    client.close.assert_awaited_once()
+                    self.assertEqual(result["kind"], "image")
+                    self.assertIsNone(gallery_item)
+            finally:
+                manager.close()
+
     def test_automatic_speech_uses_gemini_before_openai(self):
         generated = {
             "result_url": "", "data": b"RIFF-gemini", "content_type": "audio/wav",

@@ -354,6 +354,7 @@ class MediaJobManager:
             return await self._execute_speech(job, speech)
 
         client = DeapiClient(
+            api_key=(job.get("_ai_config") or {}).get("deapi", {}).get("api_key"),
             progress_callback=lambda update: self._update_progress(job["id"], update)
         )
         try:

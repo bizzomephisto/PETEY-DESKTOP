@@ -32,15 +32,17 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_generate_image_queues_existing_deapi_job_manager(self):
         state = MagicMock()
+        state.ai_provider = {}
         state.installation_id = "desktop-test"
         state.person_id = "owner"
         state.selected_model.return_value = "flux-model"
+        state.ai_provider = {"deapi": {"api_key": "saved-media-key"}}
         jobs = MagicMock()
         jobs.submit.return_value = {"id": "job-12345678"}
         memory = MagicMock()
         registry = ToolRegistry(build_media_tools(state, lambda: jobs, memory))
 
-        with patch.dict("os.environ", {"DEAPI_KEY": "configured"}):
+        with patch.dict("os.environ", {}, clear=True):
             result = registry.execute(
                 "generate_image",
                 {"prompt": "A desktop robot", "width": 9000, "steps": 0},
@@ -48,6 +50,7 @@ class ToolRegistryTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "queued")
+        self.assertEqual(jobs.submit.call_args.kwargs["ai_config"]["deapi"]["api_key"], "saved-media-key")
         self.assertEqual(jobs.submit.call_args.kwargs["model_slug"], "flux-model")
         self.assertEqual(jobs.submit.call_args.kwargs["parameters"]["width"], 2048)
         self.assertEqual(jobs.submit.call_args.kwargs["parameters"]["steps"], 1)
@@ -57,6 +60,7 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_generate_image_requires_deapi_configuration(self):
         state = MagicMock()
+        state.ai_provider = {}
         registry = ToolRegistry(build_media_tools(state, MagicMock(), MagicMock()))
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaisesRegex(ToolError, "Media generation is not configured"):
@@ -68,6 +72,7 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_temporary_generation_does_not_write_memory_metric(self):
         state = MagicMock()
+        state.ai_provider = {}
         state.installation_id = "desktop-test"
         state.person_id = "owner"
         jobs = MagicMock()

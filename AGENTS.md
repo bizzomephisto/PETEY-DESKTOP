@@ -49,6 +49,8 @@ Paths below are repo-relative; backend modules live under `petey/` unless otherw
 
 JS navigation (search symbols, not fixed line numbers): `loadDesktop`, `addMessage`, `showView`, `applyPreferences`; `loadAIProvider`; `loadVoiceInputSettings`; `speakChatText`, `playGeminiSpeechStream`; `loadPersonality`, `renderSavedPersonaSlots`; `loadKnowledge`, `loadMemoryProvider`; `loadMediaCatalog`; `loadWorkspaces`, `openWorkspaceFile`, `renderWorkspaceProposals`; `startNeuralVisualization`. Composer submission and many controls use inline event listeners. Match HTML element IDs, JS selectors, CSS classes, and API fields when changing UI.
 
+Settings UI: `view-providers` (Providers & API keys) centralizes credentials, chat/vision, TTS, STT, and embedding provider/model controls; `view-settings` (App) holds profile/appearance. `view-personality` retains persona snapshots, voice identity/delivery, and microphone behavior. These use native `details.settings-section` disclosures. Microphone settings remain installation-wide; persona snapshots include speech provider/models. `/api/desktop/provider-keys` saves keys independently of active chat selection and returns status only; saved `ai_provider.deapi.api_key` feeds media jobs, catalog/balance, and STT with environment fallback.
+
 ## Preserve these contracts
 
 - Temporary chat bypasses memory reads/writes and image-generation memory recording; temporary history is supplied by frontend. It can still invoke providers/tools; it is not offline mode.

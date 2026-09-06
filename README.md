@@ -69,6 +69,11 @@ browser.
 - A Gemini API key if you want image inspection, Gemini speech, or transcription fallback
 - A deAPI key if you want media generation or low-cost microphone transcription
 
+Manage keys and service models in **Settings → Providers & API keys**. Gemini,
+OpenAI, local-server, and deAPI keys can be saved independently of the active chat
+provider. Existing environment keys remain supported. Voice identity and delivery
+settings stay under **Personality & voice**.
+
 ## Install and run
 
 ```bash

@@ -398,7 +398,7 @@ def create_desktop_app(
                 "deapi": list(DEAPI_STT_MODELS),
                 "gemini": list(GEMINI_STT_MODELS),
             },
-            "deapi_has_api_key": bool(str(os.getenv("DEAPI_KEY", "")).strip()),
+            "deapi_has_api_key": provider_key_status()["deapi"]["has_api_key"],
             "gemini_has_api_key": bool(
                 str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
             ),
@@ -424,7 +424,7 @@ def create_desktop_app(
         failures = []
         if provider == "deapi":
             try:
-                transcript = DeapiSTT().transcribe(
+                transcript = DeapiSTT(api_key=current.ai_provider.get("deapi", {}).get("api_key")).transcribe(
                     audio, mime,
                     str(configuration.get("model") or DEAPI_STT_MODELS[0]),
                     vocabulary=[wake_word],
@@ -524,6 +524,46 @@ def create_desktop_app(
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
+    def provider_key_status():
+        current = app.config["PETEY_STATE"]
+        result = {}
+        for provider, env_name in {
+            "gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY",
+            "local": "LOCAL_AI_API_KEY", "deapi": "DEAPI_KEY",
+        }.items():
+            saved = bool(current.ai_provider.get(provider, {}).get("api_key"))
+            environment = bool(str(os.getenv(env_name, "")).strip())
+            result[provider] = {"has_api_key": saved or environment,
+                                "has_saved_key": saved,
+                                "source": "saved" if saved else "environment" if environment else "none"}
+        return result
+
+    @app.route("/api/desktop/provider-keys", methods=["GET", "PUT"])
+    def desktop_provider_keys():
+        if request.method == "PUT":
+            payload = request.get_json(silent=True)
+            if not isinstance(payload, dict):
+                return jsonify({"error": "Credentials must be an object."}), 400
+            try:
+                app.config["PETEY_STATE"].update_provider_key(
+                    str(payload.get("provider") or ""), payload.get("api_key", ""),
+                    clear=payload.get("clear_api_key") is True,
+                )
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+        return jsonify({"providers": provider_key_status()})
+
+    async def media_provider_request(method, *args):
+        from petey.deapi_client import DeapiClient
+        key = app.config["PETEY_STATE"].ai_provider.get("deapi", {}).get("api_key")
+        client = DeapiClient(api_key=key) if key else None
+        service = MediaService(client) if client else MediaService()
+        try:
+            return await getattr(service, method)(*args)
+        finally:
+            if client:
+                await client.close()
+
     @app.route("/api/desktop/ai-provider", methods=["GET", "PUT"])
     def desktop_ai_provider():
         current: DesktopState = app.config["PETEY_STATE"]
@@ -607,6 +647,7 @@ def create_desktop_app(
                 ai_config={
                     "gemini": current.ai_provider.get("gemini", {}),
                     "openai": current.ai_provider.get("openai", {}),
+                    "deapi": current.ai_provider.get("deapi", {}),
                 },
                 save_to_gallery=False,
             )
@@ -886,7 +927,7 @@ def create_desktop_app(
         return jsonify(
             {
                 "operations": operations,
-                "configured": bool(service.client.api_key),
+                "configured": bool(current.ai_provider.get("deapi", {}).get("api_key") or service.client.api_key),
                 "selected_models": selected_models,
                 "speech": current.speech,
             }
@@ -904,7 +945,7 @@ def create_desktop_app(
                     "models": [{"slug": model, "name": model} for model in GEMINI_TTS_MODELS],
                 })
             models = app.config["PETEY_RUNTIME"].call(
-                MediaService().models(operation), timeout=90
+                media_provider_request("models", operation), timeout=90
             )
             return jsonify({"operation": operation, "models": models})
         except ValueError as exc:
@@ -916,7 +957,7 @@ def create_desktop_app(
     def desktop_media_balance():
         try:
             balance = app.config["PETEY_RUNTIME"].call(
-                MediaService().balance(), timeout=30
+                media_provider_request("balance"), timeout=30
             )
             return jsonify({"balance": balance, "currency": "USD"})
         except Exception as exc:
@@ -988,6 +1029,7 @@ def create_desktop_app(
                 ai_config={
                     "gemini": current.ai_provider.get("gemini", {}),
                     "openai": current.ai_provider.get("openai", {}),
+                    "deapi": current.ai_provider.get("deapi", {}),
                 },
             )
             current.update_selected_model(operation, model_slug)

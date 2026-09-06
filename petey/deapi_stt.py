@@ -18,8 +18,8 @@ class DeapiSTTError(RuntimeError):
 
 
 class DeapiSTT:
-    def __init__(self):
-        raw_key = str(os.getenv("DEAPI_KEY", "")).strip()
+    def __init__(self, api_key=None):
+        raw_key = str(api_key or os.getenv("DEAPI_KEY", "")).strip()
         self.api_key = raw_key if raw_key.startswith("dpn-sk-") else f"dpn-sk-{raw_key}"
         if not raw_key:
             self.api_key = ""

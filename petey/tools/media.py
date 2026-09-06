@@ -41,7 +41,7 @@ def build_media_tools(
     state, media_jobs_getter, memory, record_memory: bool = True
 ) -> list[ToolSpec]:
     def generate_image(arguments: dict) -> dict:
-        if not os.getenv("DEAPI_KEY", "").strip():
+        if not (state.ai_provider.get("deapi", {}).get("api_key") or os.getenv("DEAPI_KEY", "").strip()):
             raise ToolError("Media generation is not configured. Add the media service key before generating images.")
         prompt = str(arguments.get("prompt") or "").strip()[:2000]
         if not prompt:
@@ -59,6 +59,7 @@ def build_media_tools(
             model_slug=state.selected_model("txt2img"),
             source=None,
             parameters=parameters,
+            ai_config=state.ai_provider,
         )
         if record_memory:
             memory.record_image_generation(state.installation_id, state.person_id, prompt)

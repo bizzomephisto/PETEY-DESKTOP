@@ -14,6 +14,45 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_provider_keys_are_redacted_and_do_not_switch_chat(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ", {"DEAPI_KEY": "environment-secret"}, clear=True
+        ):
+            state = DesktopState(directory)
+            state.update_ai_provider({"provider": "local", "model": "my-model"})
+            client = create_desktop_app(state=state, runtime=object()).test_client()
+            for provider in ("gemini", "openai", "local", "deapi"):
+                response = client.put("/api/desktop/provider-keys", json={
+                    "provider": provider, "api_key": "saved-secret",
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("saved-secret", response.get_data(as_text=True))
+                self.assertNotIn("environment-secret", response.get_data(as_text=True))
+                self.assertEqual(response.json["providers"][provider]["source"], "saved")
+            self.assertEqual(state.ai_provider["provider"], "local")
+            self.assertEqual(state.ai_provider["local"]["model"], "my-model")
+            client.put("/api/desktop/provider-keys", json={"provider": "deapi", "api_key": ""})
+            self.assertEqual(DesktopState(directory).ai_provider["deapi"]["api_key"], "saved-secret")
+            response = client.put("/api/desktop/provider-keys", json={"provider": "deapi", "clear_api_key": True})
+            self.assertEqual(response.json["providers"]["deapi"]["source"], "environment")
+            self.assertEqual(DesktopState(directory).ai_provider["deapi"]["api_key"], "")
+            for payload in ([1], {"provider": "unknown"}, {"provider": "gemini", "api_key": [1]}, {"provider": "gemini", "api_key": "x" * 4097}):
+                self.assertEqual(client.put("/api/desktop/provider-keys", json=payload).status_code, 400)
+
+    def test_saved_media_key_reaches_transcription_and_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_provider_key("deapi", "saved-media-key")
+            state.update_voice_input({"mode": "push_to_talk", "provider": "deapi"})
+            client = create_desktop_app(state=state, runtime=object()).test_client()
+            self.assertTrue(client.get("/api/desktop/voice-input").json["deapi_has_api_key"])
+            self.assertTrue(client.get("/api/desktop/media").json["configured"])
+            with patch("web.desktop_app.DeapiSTT") as stt:
+                stt.return_value.transcribe.return_value = "Hello"
+                response = client.post("/api/desktop/voice-input/transcribe", data={"audio": (BytesIO(b"RIFF-audio"), "test.wav")})
+                self.assertEqual(response.status_code, 200)
+                stt.assert_called_once_with(api_key="saved-media-key")
+
     def test_shell_and_bootstrap_are_local_app_routes(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -29,7 +68,7 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn(PROJECT_URL, shell.get_data(as_text=True))
             self.assertIn(MEDIA_PROVIDER_URL, shell.get_data(as_text=True))
             self.assertNotIn("deAPI Media", shell.get_data(as_text=True))
-            self.assertEqual(shell.get_data(as_text=True).count("deAPI"), 1)
+            self.assertIn('id="view-providers"', shell.get_data(as_text=True))
             self.assertEqual(bootstrap.status_code, 200)
             self.assertEqual(
                 bootstrap.get_json()["installation_id"], state.installation_id

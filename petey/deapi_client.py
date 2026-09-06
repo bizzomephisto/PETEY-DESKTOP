@@ -20,8 +20,8 @@ class DeapiClient:
         "MiniMaxH3_33B_Turbo_INT8": {"steps": 8},
     }
 
-    def __init__(self, progress_callback=None):
-        self.api_key = os.getenv("DEAPI_KEY")
+    def __init__(self, progress_callback=None, api_key=None):
+        self.api_key = api_key or os.getenv("DEAPI_KEY")
         if not self.api_key:
             print("[WARNING] DEAPI_KEY not found in environment variables. deAPI features will not work.")
 

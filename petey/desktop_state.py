@@ -153,6 +153,7 @@ class DesktopState:
             }
             changed = True
         ai_defaults = {
+            "deapi": {"api_key": ""},
             "gemini": {
                 "model": "gemini-2.5-flash",
                 "vision_model": "gemini-2.5-flash",
@@ -484,6 +485,22 @@ class DesktopState:
     @property
     def speech(self) -> dict:
         return copy.deepcopy(self.settings.get("speech", {}))
+
+    def update_provider_key(self, provider: str, api_key: str = "", clear: bool = False) -> None:
+        if provider not in {"gemini", "openai", "local", "deapi"}:
+            raise ValueError("Unsupported credential provider.")
+        if not isinstance(api_key, str) or len(api_key) > 4096:
+            raise ValueError("API key must be text of at most 4096 characters.")
+        with self._lock:
+            current = self.ai_provider
+            selected = dict(current.get(provider, {}))
+            if clear:
+                selected["api_key"] = ""
+            elif api_key.strip():
+                selected["api_key"] = api_key.strip()
+            current[provider] = selected
+            self.settings["ai_provider"] = current
+            self._write_json(self.settings_path, self.settings)
 
     def update_speech(self, changes: dict) -> dict:
         current = self._validated_speech(self.speech, changes)

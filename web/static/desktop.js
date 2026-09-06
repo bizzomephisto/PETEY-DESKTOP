@@ -569,14 +569,16 @@ function showView(view) {
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
     if (view === 'chat') ensureNeuralVisualizationRunning();
-    const settingsViews = ['settings', 'personality', 'knowledge', 'memory'];
+    const settingsViews = ['providers', 'settings', 'personality', 'knowledge', 'memory'];
     const navView = settingsViews.includes(view) ? 'settings' : view;
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
     window.location.hash = view === 'settings' ? 'settings' : view;
-    if (view === 'personality' && !personalityLoaded) loadPersonality();
-    if (view === 'personality' && !speechSettingsLoaded) loadSpeechSettings();
-    if (view === 'settings' && !aiProviderLoaded) loadAIProvider();
-    if (view === 'settings' && !voiceInputSettingsLoaded) loadVoiceInputSettings();
+    if (['providers', 'personality'].includes(view) && !personalityLoaded) loadPersonality();
+    if (['providers', 'personality'].includes(view) && !speechSettingsLoaded) loadSpeechSettings();
+    if (view === 'providers' && !aiProviderLoaded) loadAIProvider();
+    if (['providers', 'personality'].includes(view) && !voiceInputSettingsLoaded) loadVoiceInputSettings();
+    if (view === 'providers' && !memoryProviderLoaded) loadMemoryProvider();
+    if (view === 'providers' && !providerKeysLoaded) loadProviderKeys();
     if (view === 'media' && !mediaCatalogLoaded) loadMediaCatalog();
     if (view === 'media') loadMediaJobs();
     if (view === 'gallery') loadGallery();
@@ -592,7 +594,6 @@ const aiProviderSelect = document.getElementById('ai-provider');
 const aiModelInput = document.getElementById('ai-model');
 const aiVisionModelInput = document.getElementById('ai-vision-model');
 const aiBaseUrlInput = document.getElementById('ai-base-url');
-const aiApiKeyInput = document.getElementById('ai-api-key');
 
 const aiProviderDefaults = {
     gemini: {model: 'gemini-2.5-flash', base_url: ''},
@@ -608,12 +609,7 @@ function configureAIProvider(provider = aiProviderSelect.value) {
     document.getElementById('ai-base-url-field').hidden = provider !== 'local';
     document.getElementById('local-provider-presets').hidden = provider !== 'local';
     document.getElementById('load-ai-models').hidden = provider === 'gemini';
-    document.getElementById('clear-ai-key').hidden = !saved.has_api_key;
     document.getElementById('ai-thinking-enabled').checked = saved.thinking_enabled !== false;
-    const source = provider === 'local' && !saved.has_api_key
-        ? 'optional for most local servers'
-        : saved.api_key_source === 'environment' ? 'configured by environment' : saved.has_api_key ? 'saved securely in local settings' : 'not configured';
-    document.getElementById('ai-key-state').textContent = source;
     document.getElementById('vision-key-state').textContent = aiProviderConfiguration?.vision_has_api_key
         ? 'Gemini key configured'
         : 'Gemini key not configured';
@@ -622,11 +618,7 @@ function configureAIProvider(provider = aiProviderSelect.value) {
         ? 'Compatible with LM Studio, Ollama, and other servers exposing /v1/chat/completions.'
         : provider === 'openai'
             ? 'Requires an OpenAI API key; a ChatGPT subscription does not supply API credits.'
-            : 'The saved Gemini key also powers RAG embeddings. Other chat providers keep Gemini embeddings for compatibility with existing knowledge.';
-    aiApiKeyInput.value = '';
-    aiApiKeyInput.placeholder = provider === 'local'
-        ? 'Optional bearer token'
-        : 'Leave blank to keep the existing key';
+            : 'The shared Gemini key powers Gemini chat, vision, speech, and embeddings when selected.';
     const datalist = document.getElementById('ai-model-options');
     datalist.innerHTML = '';
     const suggestions = provider === 'gemini'
@@ -662,7 +654,6 @@ async function saveAIProvider(showFeedback = true, extra = {}) {
         model: aiModelInput.value.trim(),
         vision_model: aiVisionModelInput.value.trim(),
         base_url: aiBaseUrlInput.value.trim(),
-        api_key: aiApiKeyInput.value.trim(),
         thinking_enabled: document.getElementById('ai-thinking-enabled').checked,
         ...extra,
     };
@@ -734,16 +725,6 @@ document.getElementById('load-ai-models').addEventListener('click', async () => 
     }
 });
 
-document.getElementById('clear-ai-key').addEventListener('click', async () => {
-    if (!window.confirm('Clear the saved API key for this provider? Environment keys are unaffected.')) return;
-    try {
-        await saveAIProvider(false, {clear_api_key: true});
-        setFeedback(document.getElementById('ai-provider-status'), 'Saved API key cleared.', 'success');
-    } catch (error) {
-        setFeedback(document.getElementById('ai-provider-status'), error.message, 'error');
-    }
-});
-
 const voiceInputButton = document.getElementById('voice-input-button');
 const voiceInputModeSelect = document.getElementById('voice-input-mode');
 const voiceInputProviderSelect = document.getElementById('voice-input-provider');
@@ -794,8 +775,8 @@ function configureVoiceInputSettings() {
     if (Array.from(modelSelect.options, option => option.value).join('|') !== availableModels.join('|')) {
         fillSelect(modelSelect, availableModels, selectedModel);
     }
-    voiceInputProviderSelect.disabled = !enabled;
-    modelSelect.disabled = !enabled;
+    voiceInputProviderSelect.disabled = false;
+    modelSelect.disabled = false;
     document.getElementById('voice-input-device').disabled = !enabled;
     document.getElementById('voice-input-sensitivity').disabled = !enabled;
     document.getElementById('voice-wake-word-field').hidden = mode !== 'wake_word';
@@ -825,9 +806,9 @@ async function loadVoiceInputSettings() {
         configureVoiceInputUI();
         voiceInputSettingsLoaded = true;
         if (voiceInputConfiguration.mode !== 'disabled' && voiceInputConfiguration.provider === 'deapi' && !payload.deapi_has_api_key) {
-            setFeedback(feedback, 'Add DEAPI_KEY to the project .env file before using media transcription.', 'error');
+            setFeedback(feedback, 'Add a media service key in Providers & API keys before using media transcription.', 'error');
         } else if (voiceInputConfiguration.mode !== 'disabled' && voiceInputConfiguration.provider === 'gemini' && !payload.gemini_has_api_key) {
-            setFeedback(feedback, 'Add a Gemini API key in AI provider settings before using the microphone.', 'error');
+            setFeedback(feedback, 'Add a Gemini API key in Providers & API keys before using the microphone.', 'error');
         }
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -1540,7 +1521,7 @@ document.querySelectorAll('.nav-button').forEach(button => {
     button.addEventListener('click', () => showView(button.dataset.view));
 });
 
-document.querySelectorAll('.settings-tab').forEach(button => {
+document.querySelectorAll('[data-settings-view]').forEach(button => {
     button.addEventListener('click', () => showView(button.dataset.settingsView));
 });
 
@@ -1630,6 +1611,7 @@ function renderSavedPersonaSlots() {
         description.textContent = persona
             ? (persona.role_tag || `Saved in slot ${index + 1}`)
             : 'Empty';
+        description.title = description.textContent;
         const actions = document.createElement('div');
         actions.className = 'persona-slot-actions';
         const load = document.createElement('button');
@@ -1655,6 +1637,7 @@ function renderSavedPersonaSlots() {
             clear.className = 'clear-slot';
             clear.textContent = '×';
             clear.title = `Clear slot ${index + 1}`;
+            clear.setAttribute('aria-label', clear.title);
             clear.addEventListener('click', () => clearPersonaSlot(index + 1));
             actions.append(clear);
         }
@@ -2014,12 +1997,12 @@ document.getElementById('reset-all-memory').addEventListener('click', async () =
 const mediaOperation = document.getElementById('media-operation');
 const mediaModel = document.getElementById('media-model');
 const mediaSourceField = document.getElementById('media-source-field');
-const mediaSource = document.getElementById('media-source');
 const mediaNonimageSource = document.getElementById('media-nonimage-source');
 const mediaPrompt = document.getElementById('media-prompt');
 const mediaStatus = document.getElementById('media-status');
 let mediaModelRequest = 0;
 let selectedVisualImage = null;
+let selectedMediaImageFile = null;
 let mediaSelectionUrl = '';
 const mediaPromptDraftStorageKey = 'petey.media-prompt-drafts.v1';
 
@@ -2088,7 +2071,7 @@ async function loadMediaCatalog() {
         speechOption.disabled = speechConfiguration.provider === 'disabled';
         if (speechOption.disabled && mediaOperation.value === 'txt2audio') mediaOperation.value = 'txt2img';
         mediaCatalogLoaded = true;
-        configureMediaOperation();
+        configureMediaOperation(true);
         startMediaPolling();
         refreshDeapiBalance();
         setFeedback(connection, payload.configured ? 'Media service connected' : 'Media service not configured', payload.configured ? 'success' : 'error');
@@ -2097,7 +2080,7 @@ async function loadMediaCatalog() {
     }
 }
 
-function configureMediaOperation() {
+function configureMediaOperation(preserveSource = false) {
     const operation = mediaOperation.value;
     const config = mediaOperationUI[operation];
     const hasPrompt = Boolean(config.prompt);
@@ -2118,10 +2101,9 @@ function configureMediaOperation() {
         const isImage = config.source === 'image';
         document.getElementById('media-image-source-controls').hidden = !isImage;
         mediaNonimageSource.hidden = isImage;
-        if (isImage) mediaSource.accept = accepts.image;
-        else mediaNonimageSource.accept = accepts[config.source];
+        if (!isImage) mediaNonimageSource.accept = accepts[config.source];
     }
-    clearMediaSourceSelection();
+    if (!preserveSource) clearMediaSourceSelection();
     document.getElementById('media-visual-fields').hidden = !config.visual;
     document.getElementById('media-video-fields').hidden = !config.video;
     document.getElementById('media-music-fields').hidden = !config.music;
@@ -2206,7 +2188,7 @@ mediaOperation.addEventListener('change', () => {
 
 function clearMediaSourceSelection() {
     selectedVisualImage = null;
-    mediaSource.value = '';
+    selectedMediaImageFile = null;
     mediaNonimageSource.value = '';
     if (mediaSelectionUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaSelectionUrl);
     mediaSelectionUrl = '';
@@ -2223,11 +2205,6 @@ function showMediaImageSelection(file, previewUrl) {
     document.getElementById('clear-media-image').hidden = false;
 }
 
-mediaSource.addEventListener('change', () => {
-    const file = mediaSource.files[0];
-    selectedVisualImage = null;
-    if (file) showMediaImageSelection(file, URL.createObjectURL(file));
-});
 document.getElementById('clear-media-image').addEventListener('click', clearMediaSourceSelection);
 
 function formatFileSize(bytes) {
@@ -2354,7 +2331,7 @@ async function selectVisualImage(item, button) {
             name: item.name,
             size: item.size,
         };
-        mediaSource.value = '';
+        selectedMediaImageFile = null;
         showMediaImageSelection(item, imageBrowserUrl('thumbnail', item.path));
         imageBrowserDialog.close();
         setFeedback(mediaStatus, `Selected ${item.name}.`, 'success');
@@ -2396,9 +2373,10 @@ document.getElementById('enhance-media-prompt').addEventListener('click', async 
 });
 
 function mediaParameters() {
+    const [width, height] = document.getElementById('media-size').value.split('x');
     return {
-        width: document.getElementById('media-width').value,
-        height: document.getElementById('media-height').value,
+        width,
+        height,
         steps: document.getElementById('media-steps').value,
         guidance: document.getElementById('media-guidance').value,
         frames: document.getElementById('media-frames').value,
@@ -2447,7 +2425,7 @@ document.getElementById('generate-media').addEventListener('click', async () => 
     const operation = mediaOperation.value;
     const config = mediaOperationUI[operation];
     const file = config.source === 'image'
-        ? mediaSource.files[0]
+        ? selectedMediaImageFile
         : mediaNonimageSource.files[0];
     const hasVisualImage = config.source === 'image' && Boolean(selectedVisualImage);
     if (['image', 'video'].includes(config.source) && !file && !hasVisualImage) {
@@ -2631,6 +2609,44 @@ async function loadGallery() {
     }
 }
 
+async function useGalleryImage(item, operation, button) {
+    button.disabled = true;
+    try {
+        const response = await fetch(`/api/desktop/gallery/file/${encodeURIComponent(item.id)}`);
+        if (!response.ok) throw new Error('This local image is unavailable. Refresh the gallery and try again.');
+        const blob = await response.blob();
+        if (blob.size > 25 * 1024 * 1024) throw new Error('This image exceeds the 25 MB source limit.');
+        const file = new File([blob], item.local_filename, {type: blob.type || item.content_type});
+        rememberMediaPrompt(activeMediaOperation);
+        mediaOperation.value = operation;
+        activeMediaOperation = operation;
+        configureMediaOperation();
+        selectedMediaImageFile = file;
+        showMediaImageSelection(file, URL.createObjectURL(file));
+        showView('media');
+        setFeedback(mediaStatus, 'Source image selected. Review the settings, then generate.', 'success');
+        if (mediaOperationUI[operation].prompt) mediaPrompt.focus();
+        else document.getElementById('generate-media').focus();
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+document.addEventListener('click', event => {
+    document.querySelectorAll('.gallery-menu[open]').forEach(menu => {
+        if (!menu.contains(event.target)) menu.open = false;
+    });
+});
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.gallery-menu[open]').forEach(menu => {
+        menu.open = false;
+        menu.querySelector('summary').focus();
+    });
+});
+
 function buildGalleryCard(item) {
     const card = document.createElement('article');
     card.className = 'gallery-card';
@@ -2653,6 +2669,39 @@ function buildGalleryCard(item) {
     }
     media.src = item.kind === 'video' && item.preview_url ? item.preview_url : item.media_url;
     preview.append(media);
+    if (item.kind === 'image') {
+        const menu = document.createElement('details');
+        menu.className = 'gallery-menu';
+        const toggle = document.createElement('summary');
+        toggle.textContent = '☰';
+        toggle.setAttribute('aria-label', 'Use image in media generation');
+        toggle.title = 'Use image…';
+        const options = document.createElement('div');
+        options.className = 'gallery-menu-options';
+        for (const [operation, label] of [
+            ['img2img', 'Restyle image (img2img)'],
+            ['img2video', 'Animate image (img2vid)'],
+            ['img-rmbg', 'Remove background'],
+            ['img-upscale', 'Upscale image'],
+        ]) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.disabled = !item.local_filename;
+            button.addEventListener('click', async () => {
+                await useGalleryImage(item, operation, button);
+                menu.open = false;
+            });
+            options.append(button);
+        }
+        if (!item.local_filename) {
+            const hint = document.createElement('p');
+            hint.textContent = 'A local copy is needed to reuse this image.';
+            options.append(hint);
+        }
+        menu.append(toggle, options);
+        preview.append(menu);
+    }
 
     const details = document.createElement('div');
     details.className = 'gallery-details';
@@ -3340,6 +3389,101 @@ function startNeuralVisualization() {
 startNeuralVisualization();
 document.addEventListener('visibilitychange', ensureNeuralVisualizationRunning);
 
+
+let providerKeysLoaded = false;
+const credentialNames = {gemini: 'Google Gemini', openai: 'OpenAI', local: 'Local / compatible server', deapi: 'deAPI media'};
+function renderProviderKeyStatus(providers) {
+    for (const [provider, status] of Object.entries(providers)) {
+        document.getElementById(`credential-status-${provider}`).textContent = {
+            saved: 'Saved in local settings', environment: 'Configured by environment', none: 'Not configured',
+        }[status.source];
+        document.getElementById(`credential-clear-${provider}`).disabled = !status.has_saved_key;
+    }
+}
+async function loadProviderKeys() {
+    try {
+        const payload = await apiJson('/api/desktop/provider-keys');
+        renderProviderKeyStatus(payload.providers);
+        providerKeysLoaded = true;
+    } catch (error) {
+        setFeedback(document.getElementById('provider-keys-status'), error.message, 'error');
+    }
+}
+for (const [provider, name] of Object.entries(credentialNames)) {
+    const card = document.createElement('div');
+    card.className = 'credential-card';
+    const label = document.createElement('label');
+    const title = document.createElement('span'); title.textContent = name;
+    const status = document.createElement('small'); status.id = `credential-status-${provider}`;
+    status.textContent = 'Loading…';
+    const input = document.createElement('input');
+    input.id = `credential-key-${provider}`; input.type = 'password'; input.autocomplete = 'new-password';
+    input.maxLength = 4096; input.placeholder = 'Leave blank to keep existing key';
+    label.append(title, status, input);
+    const actions = document.createElement('div'); actions.className = 'inline-actions';
+    for (const clear of [false, true]) {
+        const button = document.createElement('button'); button.type = 'button';
+        button.id = `credential-${clear ? 'clear' : 'save'}-${provider}`;
+        button.className = clear ? 'text-button' : 'secondary-button';
+        button.textContent = clear ? 'Clear saved key' : 'Save key';
+        if (clear) button.disabled = true;
+        button.addEventListener('click', async () => {
+            if (clear && !window.confirm(`Clear the saved ${name} key? Environment keys are unaffected.`)) return;
+            const feedback = document.getElementById('provider-keys-status');
+            button.disabled = true;
+            try {
+                const payload = await apiJson('/api/desktop/provider-keys', {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider, api_key: input.value, clear_api_key: clear}),
+                });
+                input.value = '';
+                renderProviderKeyStatus(payload.providers);
+                mediaModelsCache.clear(); mediaCatalogLoaded = false;
+                // Refresh credential indicators without overwriting unsaved provider/model choices.
+                const ai = await apiJson('/api/desktop/ai-provider');
+                aiProviderConfiguration = ai.configuration;
+                document.getElementById('vision-key-state').textContent = ai.configuration.vision_has_api_key ? 'Gemini key configured' : 'Gemini key not configured';
+                setFeedback(feedback, `${name} key ${clear ? 'cleared' : 'saved'}.`, 'success');
+            } catch (error) { setFeedback(feedback, error.message, 'error'); }
+            finally { if (!clear) button.disabled = false; else await loadProviderKeys(); }
+        });
+        actions.append(button);
+    }
+    card.append(label, actions);
+    document.getElementById('provider-key-fields').append(card);
+}
+document.querySelector('[data-open-media]').addEventListener('click', () => showView('media'));
+
+for (const [id, endpoint, statusId, read] of [
+    ['save-speech-provider', '/api/desktop/speech', 'speech-provider-save-status', () => ({
+        provider: speechProviderSelect.value,
+        gemini_model: document.getElementById('speech-gemini-model').value,
+        openai_model: document.getElementById('speech-openai-model').value,
+    })],
+    ['save-transcription-provider', '/api/desktop/voice-input', 'transcription-provider-status', () => ({
+        provider: voiceInputProviderSelect.value,
+        model: document.getElementById('voice-input-model').value,
+        gemini_model: voiceInputProviderSelect.value === 'gemini' ? document.getElementById('voice-input-model').value : voiceInputConfiguration.gemini_model,
+    })],
+]) {
+    const button = document.getElementById(id);
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        const feedback = document.getElementById(statusId);
+        try {
+            const payload = await apiJson(endpoint, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(read())});
+            if (id === 'save-speech-provider') {
+                speechConfiguration = payload.configuration;
+                mediaCatalogLoaded = false; mediaModelsCache.delete('txt2audio');
+            } else {
+                voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
+            }
+            setFeedback(feedback, 'Provider settings saved.', 'success');
+        } catch (error) { setFeedback(feedback, error.message, 'error'); }
+        finally { button.disabled = false; }
+    });
+}
+
 const requestedView = window.location.hash.replace('#', '');
-const knownViews = ['chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'knowledge', 'memory'];
+const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'knowledge', 'memory'];
 if (knownViews.includes(requestedView)) showView(requestedView);
