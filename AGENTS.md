@@ -58,7 +58,7 @@ Settings UI: `view-providers` (Providers & API keys) centralizes credentials, ch
 - Public provider settings must redact keys. Environment names: `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LOCAL_AI_API_KEY`, `DEAPI_KEY`. Use `.env.example` for names, not `.env` contents.
 - Tool availability is checked both when offering schemas and dispatching. Current conversational tool is `generate_image`, gated by explicit image intent; keep paid actions tied to user intent. Validate arguments in handlers.
 - Workspace paths resolve within approved roots (including symlink checks); AI writes/commands are proposals until approved. Preserve stale-content hashes, proposal expiry, 60s command timeout. Manual editor save is a separate path. Shell commands run with OS-user privileges, not an OS sandbox. These are product behavior requirements, not extra approval rules for coding agents editing this repo.
-- `AsyncRuntime.call` uses a fresh event loop per request and closes the shared deAPI session. Preserve session/loop ownership and job-worker shutdown; don't casually move blocking/provider calls between threads/loops.
+- `AsyncRuntime.call` uses a fresh event loop per request and closes the shared deAPI session. Media model/balance reads must create and close a request-local client for both saved and environment keys: the first Media visit requests them concurrently. Preserve session/loop ownership and job-worker shutdown; don't casually move blocking/provider calls between threads/loops.
 - Keep Flask loopback-only. Upload cap currently 25 MiB; workspace text-file cap 2 MiB. Preserve API error handling and bounded inputs.
 
 ## Extend + validate

@@ -1,4 +1,7 @@
+import asyncio
 import base64
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import tempfile
 import unittest
 from io import BytesIO
@@ -14,6 +17,64 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_initial_media_models_and_balance_have_independent_sessions(self):
+        # The first Media visit requests both endpoints concurrently. A shared
+        # aiohttp client cannot be used across their separate Flask event loops.
+        barrier = threading.Barrier(2)
+        clients = []
+
+        class Client:
+            def __init__(self, api_key=None):
+                self.api_key = api_key
+                self.loop = None
+                self.closed = False
+
+            async def read(self, result):
+                loop = asyncio.get_running_loop()
+                if self.loop is None:
+                    self.loop = loop
+                barrier.wait(timeout=3)
+                await asyncio.sleep(0)
+                if self.loop is not loop or self.closed:
+                    raise RuntimeError("Media session belongs to another request")
+                return result
+
+            async def get_models(self, operation):
+                return await self.read([{"slug": "image-model", "name": "Image model"}])
+
+            async def get_balance(self):
+                return await self.read(12.34)
+
+            async def close(self):
+                self.closed = True
+
+        def make_client(**kwargs):
+            client = Client(**kwargs)
+            clients.append(client)
+            return client
+
+        shared = Client()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ", {"DEAPI_KEY": "test-environment-key"}
+        ), patch("petey.deapi_client.DeapiClient", side_effect=make_client), patch(
+            "petey.deapi_client.deapi", shared
+        ), patch("petey.media_service.deapi", shared):
+            app = create_desktop_app(state=DesktopState(directory), runtime=AsyncRuntime())
+
+            def get(path):
+                with app.test_client() as client:
+                    response = client.get(path)
+                    return response.status_code, response.get_json()
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                models = executor.submit(get, "/api/desktop/media/models/txt2img")
+                balance = executor.submit(get, "/api/desktop/media/balance")
+                self.assertEqual(models.result(), (200, {"operation": "txt2img", "models": [{"slug": "image-model", "name": "Image model"}]}))
+                self.assertEqual(balance.result(), (200, {"balance": 12.34, "currency": "USD"}))
+            self.assertEqual(len(clients), 2)
+            self.assertIsNot(clients[0].loop, clients[1].loop)
+            self.assertTrue(all(client.closed for client in clients))
+
     def test_provider_keys_are_redacted_and_do_not_switch_chat(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             "os.environ", {"DEAPI_KEY": "environment-secret"}, clear=True

@@ -556,13 +556,14 @@ def create_desktop_app(
     async def media_provider_request(method, *args):
         from petey.deapi_client import DeapiClient
         key = app.config["PETEY_STATE"].ai_provider.get("deapi", {}).get("api_key")
-        client = DeapiClient(api_key=key) if key else None
-        service = MediaService(client) if client else MediaService()
+        # Models and balance load concurrently on separate request event loops.
+        # Keep both saved-key and environment-key clients request-local.
+        client = DeapiClient(api_key=key)
+        service = MediaService(client)
         try:
             return await getattr(service, method)(*args)
         finally:
-            if client:
-                await client.close()
+            await client.close()
 
     @app.route("/api/desktop/ai-provider", methods=["GET", "PUT"])
     def desktop_ai_provider():
