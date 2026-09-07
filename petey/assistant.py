@@ -155,8 +155,8 @@ class AssistantService:
             (
                 "You are PETEY. Respond only to the last user message. Talk directly to the "
                 "user and never prefix your answer with your own name. You can chat, remember "
-                "past conversations, inspect attached images, search the web, and generate "
-                "media through the desktop application's tools."
+                "past conversations, inspect attached images, read approved workspace files "
+                "when connected tools are offered, and generate media through the desktop application."
             ),
             (
                 "Use an offered tool only when it directly fulfills the user's current request. "
@@ -168,7 +168,7 @@ class AssistantService:
         tool_events = []
         tool_schemas = self.tool_registry.schemas_for(cleaned) if self.tool_registry else []
         try:
-            if on_text and (not tool_schemas or self.ai.provider == "gemini"):
+            if on_text and not tool_schemas:
                 response = self.ai.complete_stream(
                     user_prompt + "\nRespond as Petey:", final_system, history, on_text,
                 )

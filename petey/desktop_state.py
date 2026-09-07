@@ -140,6 +140,16 @@ class DesktopState:
         if "active_workspace_id" not in settings:
             settings["active_workspace_id"] = ""
             changed = True
+        if not isinstance(settings.get("tools"), dict):
+            settings["tools"] = {}
+            changed = True
+        filesystem_tool = settings["tools"].get("filesystem")
+        if not isinstance(filesystem_tool, dict):
+            settings["tools"]["filesystem"] = {"enabled": False}
+            changed = True
+        elif not isinstance(filesystem_tool.get("enabled"), bool):
+            filesystem_tool["enabled"] = False
+            changed = True
         if not isinstance(settings.get("ai_provider"), dict):
             settings["ai_provider"] = {
                 "provider": "gemini",
@@ -391,6 +401,20 @@ class DesktopState:
             self.settings["preferences"] = preferences
             self._write_json(self.settings_path, self.settings)
         return self.preferences
+
+    @property
+    def tools(self) -> dict:
+        return copy.deepcopy(self.settings.get("tools", {"filesystem": {"enabled": False}}))
+
+    def update_tool(self, tool_id: str, enabled: bool) -> dict:
+        if tool_id != "filesystem":
+            raise ValueError("Unknown tool connection.")
+        tools = self.tools
+        tools[tool_id] = {"enabled": bool(enabled)}
+        with self._lock:
+            self.settings["tools"] = tools
+            self._write_json(self.settings_path, self.settings)
+        return copy.deepcopy(tools[tool_id])
 
     @property
     def workspaces(self) -> list[dict]:

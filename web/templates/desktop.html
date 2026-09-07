@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Petey</title>
+    <title>PETEY</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='desktop.css') }}">
 </head>
 {% macro settings_navigation(active) -%}
@@ -16,6 +16,7 @@
         ('personality', 'Personality & voice', 'Character, tone & speaking', '✧'),
         ('microphone', 'Microphone', 'Listening & input device', '⌁'),
         ('providers', 'Models & API keys', 'Services & connections', '◇'),
+        ('tools', 'Tools', 'MCP connections & permissions', '⌘'),
         ('knowledge', 'Knowledge', 'Files Petey can reference', '▤'),
         ('memory', 'Memory & privacy', 'Stored chats & data controls', '◷')
     ] %}
@@ -29,7 +30,7 @@
         <aside class="sidebar">
             <div class="brand">
                 <img src="{{ url_for('static', filename='petey_avatar.png') }}" alt="Petey">
-                <div class="brand-copy"><strong>Petey</strong><span>Desktop Assistant</span></div>
+                <div class="brand-copy"><strong>PETEY</strong><span>AI Companion</span></div>
                 <button id="collapse-sidebar" class="collapse-button" type="button" title="Collapse sidebar">‹</button>
             </div>
             <nav class="desktop-nav" aria-label="Petey sections">
@@ -42,6 +43,7 @@
                 <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon">▦</span><span class="nav-label">Gallery</span></button>
                 <button class="nav-button" data-view="workspace" type="button"><span class="nav-icon">⌘</span><span class="nav-label">Workspace</span></button>
                 <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+                <button class="nav-button" data-view="help" type="button"><span class="nav-icon">?</span><span class="nav-label">Help</span></button>
             </nav>
             <div class="coming-next">
                 <a id="project-link" href="{{ project_url }}" target="_blank" rel="noopener">GitHub · PETEY-DESKTOP ↗</a>
@@ -51,7 +53,7 @@
 
         <section id="view-chat" class="chat-panel app-view active-view">
             <header class="chat-header">
-                <div><h1>Petey</h1><p id="status">Starting up…</p></div>
+                <div><h1>PETEY</h1><p id="status">Starting up…</p></div>
                 <div class="chat-header-actions">
                     <select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style" hidden><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option></select>
                     <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
@@ -72,7 +74,7 @@
             <div id="visual-chat" class="visual-chat" hidden>
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
                 <div id="visual-caption" class="visual-caption" aria-live="polite"></div>
-                <div class="visual-chat-identity"><strong>Petey</strong><span id="visual-chat-state">Present</span></div>
+                <div class="visual-chat-identity"><strong>PETEY</strong><span id="visual-chat-state">Present</span></div>
             </div>
 
             <form id="composer" class="composer">
@@ -91,6 +93,8 @@
                 <small><span id="voice-input-status">Enter to send · Shift+Enter for a new line</span> · 25 MB attachment limit</small>
             </form>
         </section>
+
+        {% include "desktop_help.html" %}
 
         <section id="view-media" class="tool-view app-view">
             <header class="tool-header"><div><h1>Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>
@@ -281,7 +285,7 @@
                 <details data-settings-keywords="Google Gemini OpenAI deAPI local credentials connection" id="api-key-settings" class="settings-card settings-section">
                     <summary><div class="settings-section-heading"><div><h2>API keys</h2><p>Shared credentials for chat, vision, speech, memory, and media.</p></div></div></summary>
                     <div class="settings-section-body">
-                        <p class="hint">Keys are stored in this installation’s settings. Blank fields keep existing keys; clearing a saved key restores any environment key.</p><div id="provider-key-fields" class="credential-grid"></div><p id="provider-keys-status" class="wide-status" role="status"></p></div>
+                        <p class="hint">Keys are stored in this installation’s settings. Blank fields keep existing keys; clearing a saved key restores any environment key.</p><p class="hint"><button class="text-button" data-settings-view="help" data-settings-target="help-api-keys" type="button">Where do I get an API key? →</button></p><div id="provider-key-fields" class="credential-grid"></div><p id="provider-keys-status" class="wide-status" role="status"></p></div>
                 </details>
                 <details id="chat-model-settings" class="settings-card settings-section ai-provider-card" open>
                     <summary><div class="settings-section-heading"><div><h2>Chat &amp; vision</h2><p>Choose the language model that powers Petey’s chat and prompt tools.</p></div><span id="ai-provider-badge" class="provider-badge">Gemini</span></div></summary>
@@ -445,6 +449,30 @@
 
                     <p class="hint">Need a different transcription service? <button class="text-button" data-settings-view="providers" data-settings-target="transcription-model-settings" type="button">Choose transcription provider →</button></p></div>
                 </details></div></section>
+        <section id="view-tools" class="tool-view app-view settings-view">
+            <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Tools</h1><p>Connect capabilities Petey can use while you chat.</p></div></header>
+            {{ settings_navigation("tools") }}
+            <div class="tool-content">
+                <section id="filesystem-tool-settings" class="settings-card tool-connection-card" data-settings-keywords="tools MCP filesystem files folders workspace connection permissions">
+                    <div class="tool-connection-heading">
+                        <div class="tool-identity"><span class="tool-mark" aria-hidden="true">⌘</span><div><h2>Filesystem</h2><p>Read files in folders you have already approved in Workspace.</p></div></div>
+                        <span id="filesystem-tool-badge" class="provider-badge">Off</span>
+                    </div>
+                    <label class="preference-row tool-enable-row"><span><strong>Let Petey use Filesystem</strong><small>Add read-only file tools to relevant conversations.</small></span><input id="filesystem-tool-enabled" type="checkbox" role="switch"></label>
+                    <div class="tool-access-summary"><strong>Folder access</strong><div id="filesystem-tool-roots" class="tool-root-list"><span class="muted">Loading approved folders…</span></div></div>
+                    <div class="inline-actions">
+                        <button id="test-filesystem-tool" class="secondary-button" type="button">Test connection</button>
+                        <button id="open-tools-workspace" class="text-button" type="button">Manage approved folders →</button>
+                    </div>
+                    <p class="hint">Uses a pinned release of the official MCP filesystem server through Node.js. Enabling it may download that npm package. Write, move, and delete tools are never offered to Petey.</p>
+                    <p id="filesystem-tool-status" class="wide-status" role="status"></p>
+                    <details class="tool-capabilities"><summary>Available capabilities <span id="filesystem-tool-count">Not connected</span></summary><div id="filesystem-tool-list" class="tool-capability-list"><p class="muted">Test or enable the connection to discover its tools.</p></div></details>
+                </section>
+                <section class="settings-card tool-next-card">
+                    <span class="section-eyebrow">NEXT CONNECTION</span><h2>GitHub</h2><p>Repository, issue, pull request, and CI access will build on this same connection layer.</p><span class="provider-badge">Coming next</span>
+                </section>
+            </div>
+        </section>
         <section id="view-knowledge" class="tool-view app-view settings-view">
             <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Knowledge</h1><p>Give Petey useful reference material.</p></div></header>
             {{ settings_navigation("knowledge") }}

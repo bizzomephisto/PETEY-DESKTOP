@@ -208,6 +208,18 @@ body.native-visual-fullscreen .chat-panel { grid-template-rows: minmax(0, 1fr); 
 .scale-controls output { min-width: 45px; text-align: center; }
 .settings-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-bottom: 18px; }
 .settings-card h2 { font-size: 16px; margin: 0 0 5px; }
+.help-content { line-height: 1.65; }
+.help-steps { padding-left: 24px; }
+.help-steps li + li { margin-top: 10px; }
+.help-provider-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; margin: 20px 0; }
+.help-provider { min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 12px; }
+.help-provider h3 { margin: 0; font-size: 16px; }
+.help-provider a { display: block; margin-top: 12px; }
+.help-content a { color: var(--accent); overflow-wrap: anywhere; }
+.help-topics details { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.help-topics details:last-child { border-bottom: 0; }
+.help-topics summary { cursor: pointer; font-weight: 600; }
+.help-content code { overflow-wrap: anywhere; }
 .settings-section { padding: 0; }
 .settings-section > summary { display: flex; align-items: center; gap: 16px; padding: 20px 22px; cursor: pointer; list-style: none; border-radius: 14px; }
 .settings-section > summary::-webkit-details-marker { display: none; }
@@ -537,6 +549,32 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
 .settings-shortcuts button > span { color: var(--accent-text); font-size: 22px; margin-bottom: 12px; }
 .settings-shortcuts strong { font-size: 12px; font-weight: 600; }
 .settings-shortcuts small { font-size: 10px; color: var(--muted); margin-top: 5px; line-height: 1.6; }
+.tool-connection-card { padding: 26px; }
+.tool-connection-heading, .tool-identity { display: flex; align-items: center; }
+.tool-connection-heading { justify-content: space-between; gap: 18px; margin-bottom: 16px; }
+.tool-identity { gap: 14px; min-width: 0; }
+.tool-identity h2 { font-size: 21px; margin-bottom: 4px; }
+.tool-identity p { line-height: 1.5; }
+.tool-mark { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border: 1px solid var(--accent-border); border-radius: 12px; color: var(--accent-text); background: var(--accent-soft); font-size: 20px; }
+.provider-badge.success { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); background: color-mix(in srgb, var(--success) 10%, var(--panel)); }
+.provider-badge.error { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 38%, var(--border)); }
+.tool-enable-row { margin-top: 4px; border-top: 1px solid var(--border); }
+.tool-access-summary { padding: 18px 0 2px; }
+.tool-access-summary > strong { display: block; font-size: 12px; margin-bottom: 10px; }
+.tool-root-list { display: grid; gap: 7px; }
+.tool-root-list > div { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--field); min-width: 0; }
+.tool-root-list strong { font-size: 12px; }
+.tool-root-list small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.tool-capabilities { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 17px; }
+.tool-capabilities summary { display: flex; justify-content: space-between; gap: 15px; color: var(--text); font-weight: 600; cursor: pointer; }
+.tool-capabilities summary span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.tool-capability-list { display: grid; gap: 7px; margin-top: 14px; }
+.tool-capability-list > div { display: grid; gap: 3px; padding: 10px 12px; border-radius: 8px; background: var(--field); }
+.tool-capability-list strong { text-transform: capitalize; font-size: 12px; }
+.tool-capability-list small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.tool-next-card { position: relative; padding: 24px; }
+.tool-next-card p { max-width: 62ch; line-height: 1.6; }
+.tool-next-card > .provider-badge { position: absolute; top: 23px; right: 23px; }
 :root[data-theme="paper"] .visual-mode-toggle.active { color: var(--accent-text); background: var(--accent-soft); }
 :root[data-theme="paper"] .visual-style-select { color: var(--text); background: var(--panel); }
 @container (max-width: 650px) {
@@ -547,6 +585,8 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
     .settings-shortcuts button > span { display: none; }
     .settings-save-bar { align-items: stretch; flex-direction: column; gap: 8px; }
     .theme-settings .provider-badge { display: none; }
+    .tool-connection-heading { align-items: flex-start; }
+    .tool-next-card > .provider-badge { position: static; display: inline-block; margin-top: 12px; }
 }
 @media (max-width: 1100px) {
     .app-shell { grid-template-columns: 210px minmax(0, 1fr); }

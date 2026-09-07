@@ -52,6 +52,32 @@ class AIProviderTests(unittest.TestCase):
         self.assertEqual(received, ["Partial"])
         response.close.assert_called_once()
 
+    def test_stream_accepts_final_event_without_trailing_blank_line(self):
+        response = MagicMock()
+        response.iter_lines.return_value = [
+            b'data: {"choices":[{"delta":{"content":"Complete"},"finish_reason":"stop"}]}'
+        ]
+        received = []
+
+        self.assertEqual(AIProvider._stream_text(response, False, received.append), "Complete")
+        self.assertEqual(received, ["Complete"])
+        response.close.assert_called_once()
+
+    def test_stream_interruption_retries_once_with_buffered_completion(self):
+        provider = AIProvider({"provider": "gemini"})
+        received = []
+        with (
+            patch.object(provider, "_gemini", side_effect=[AIProviderError("interrupted"), "Recovered"])
+            as gemini,
+        ):
+            result = provider.complete_stream("Hi", "System", [], received.append)
+
+        self.assertEqual(result, "Recovered")
+        self.assertEqual(received, ["Recovered"])
+        self.assertEqual(gemini.call_count, 2)
+        self.assertIsNotNone(gemini.call_args_list[0].args[3])
+        self.assertEqual(len(gemini.call_args_list[1].args), 3)
+
     def test_gemini_model_catalog_paginates_and_filters_specialized_models(self):
         first = MagicMock()
         first.json.return_value = {"models": [
@@ -139,6 +165,54 @@ class AIProviderTests(unittest.TestCase):
         followup_messages = post.call_args_list[1].kwargs["json"]["messages"]
         self.assertEqual(followup_messages[-1]["role"], "tool")
         self.assertEqual(followup_messages[-1]["tool_call_id"], "call-1")
+
+    def test_gemini_can_call_a_tool_and_receive_its_result(self):
+        tool_response = MagicMock()
+        tool_response.raise_for_status.return_value = None
+        tool_response.json.return_value = {
+            "candidates": [{"content": {"role": "model", "parts": [{
+                "functionCall": {
+                    "name": "mcp_filesystem__read_text_file",
+                    "args": {"path": "/approved/notes.txt"},
+                }
+            }]}}]
+        }
+        final_response = MagicMock()
+        final_response.raise_for_status.return_value = None
+        final_response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "The note says hello."}]}}]
+        }
+        provider = AIProvider({
+            "provider": "gemini",
+            "gemini": {"model": "gemini-test", "api_key": "test-key"},
+        })
+        executor = MagicMock(return_value={"result": "hello"})
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "mcp_filesystem__read_text_file",
+                "description": "Read an approved text file.",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            },
+        }]
+
+        with patch(
+            "petey.ai_provider.HTTP_SESSION.post",
+            side_effect=[tool_response, final_response],
+        ) as post:
+            text, events = provider.complete_with_tools(
+                "Read the note", "You are Petey", [], tools, executor
+            )
+
+        self.assertEqual(text, "The note says hello.")
+        self.assertEqual(events[0]["result"], {"result": "hello"})
+        executor.assert_called_once_with(
+            "mcp_filesystem__read_text_file", {"path": "/approved/notes.txt"}
+        )
+        declaration = post.call_args_list[0].kwargs["json"]["tools"][0]["functionDeclarations"][0]
+        self.assertEqual(declaration["name"], "mcp_filesystem__read_text_file")
+        followup = post.call_args_list[1].kwargs["json"]["contents"][-1]
+        self.assertEqual(followup["parts"][0]["functionResponse"]["response"], {"result": "hello"})
 
     def test_qwen_tool_call_markup_is_normalized(self):
         calls = AIProvider._normalize_tool_calls(

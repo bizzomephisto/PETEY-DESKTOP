@@ -18,6 +18,31 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_tools_api_controls_and_tests_filesystem_mcp(self):
+        manager = MagicMock()
+        off = {"id": "filesystem", "enabled": False, "connected": False, "tools": []}
+        on = {"id": "filesystem", "enabled": True, "connected": True,
+              "tools": [{"name": "read_text_file", "description": "Read text"}]}
+        manager.public_status.return_value = off
+        manager.set_enabled.return_value = on
+        manager.test_connection.return_value = on
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_desktop_app(
+                state=DesktopState(directory), memory=MagicMock(),
+                job_manager=MagicMock(), mcp_manager=manager,
+            )
+            client = app.test_client()
+            self.assertEqual(client.get("/api/desktop/tools").json["filesystem"], off)
+            enabled = client.put("/api/desktop/tools/filesystem", json={"enabled": True})
+            tested = client.post("/api/desktop/tools/filesystem/test")
+            invalid = client.put("/api/desktop/tools/filesystem", json={"enabled": "yes"})
+
+        self.assertEqual(enabled.json["filesystem"], on)
+        self.assertEqual(tested.json["filesystem"], on)
+        self.assertEqual(invalid.status_code, 400)
+        manager.set_enabled.assert_called_once_with(True)
+        manager.test_connection.assert_called_once_with()
+
     def test_theme_api_and_initial_html_use_saved_theme(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -218,6 +243,10 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn(MEDIA_PROVIDER_URL, shell.get_data(as_text=True))
             self.assertNotIn("deAPI Media", shell.get_data(as_text=True))
             self.assertIn('id="view-providers"', shell.get_data(as_text=True))
+            self.assertIn('id="view-help"', shell.get_data(as_text=True))
+            self.assertIn("https://aistudio.google.com/apikey", shell.get_data(as_text=True))
+            self.assertIn("https://platform.openai.com/api-keys", shell.get_data(as_text=True))
+            self.assertIn("https://docs.deapi.ai/quickstart", shell.get_data(as_text=True))
             self.assertEqual(bootstrap.status_code, 200)
             self.assertEqual(
                 bootstrap.get_json()["installation_id"], state.installation_id

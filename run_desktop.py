@@ -20,6 +20,7 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ICON_DIRECTORY = PROJECT_ROOT / "assets" / "icons"
+DESKTOP_APP_ID = "petey-desktop"
 
 
 def application_icon_path(platform: str | None = None) -> Path:
@@ -56,7 +57,7 @@ def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
             [
                 "[Desktop Entry]",
                 "Type=Application",
-                "Name=PETEY Desktop",
+                "Name=PETEY",
                 f"Comment=Personal AI assistant · v{__version__}",
                 f"Exec={_desktop_exec_argument(sys.executable)} {_desktop_exec_argument(Path(__file__).resolve())}",
                 f"Path={PROJECT_ROOT}",
@@ -64,6 +65,7 @@ def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
                 "Terminal=false",
                 "Categories=Utility;Development;",
                 "StartupNotify=true",
+                f"StartupWMClass={DESKTOP_APP_ID}",
                 "",
             ]
         ),
@@ -190,6 +192,17 @@ def linux_webview_backend_available():
     return sys.platform != "linux" or bool(preferred_linux_webview_backend())
 
 
+def configure_linux_window_identity(backend):
+    """Match the Qt window to its desktop entry on Wayland and X11."""
+    if sys.platform != "linux" or backend != "qt":
+        return
+    from qtpy.QtCore import QCoreApplication
+    from qtpy.QtGui import QGuiApplication
+
+    QCoreApplication.setApplicationName(DESKTOP_APP_ID)
+    QGuiApplication.setDesktopFileName(DESKTOP_APP_ID)
+
+
 def run_in_browser(url, reason=None):
     if reason:
         print(f"[DESKTOP] {reason}")
@@ -219,6 +232,7 @@ class LocalServer:
         jobs = self.app.config.get("PETEY_MEDIA_JOBS")
         if jobs is not None:
             jobs.close()
+        self.app.config["PETEY_MCP"].close()
         self.app.config["PETEY_RUNTIME"].close()
 
 
@@ -232,7 +246,7 @@ def main():
     parser.add_argument(
         "--install-shortcut",
         action="store_true",
-        help="Install PETEY Desktop in the current Linux user's application menu",
+        help="Install PETEY in the current Linux user's application menu",
     )
     args = parser.parse_args()
 
@@ -271,7 +285,7 @@ def main():
         state = local.app.config["PETEY_STATE"]
         bridge = DesktopBridge(local.app.config["PETEY_GALLERY"])
         bridge.window = webview.create_window(
-            f"Petey v{__version__}",
+            "PETEY",
             local.url,
             width=1180,
             height=780,
@@ -282,6 +296,7 @@ def main():
         )
         try:
             backend = preferred_linux_webview_backend()
+            configure_linux_window_identity(backend)
             if backend:
                 webview.start(gui=backend, icon=str(application_icon_path()))
             else:

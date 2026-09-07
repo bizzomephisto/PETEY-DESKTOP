@@ -77,11 +77,30 @@ class AIProvider:
         raise AIProviderError("Unsupported AI provider.")
 
     def complete_stream(self, prompt, system_message, history, on_text):
-        if self.provider == "gemini":
-            return self._gemini(prompt, system_message, history or [], on_text)
-        if self.provider in {"openai", "local"}:
-            return self._openai_compatible(prompt, system_message, history or [], on_text)
-        raise AIProviderError("Unsupported AI provider.")
+        delivered = False
+
+        def deliver(text):
+            nonlocal delivered
+            delivered = True
+            on_text(text)
+
+        try:
+            if self.provider == "gemini":
+                return self._gemini(prompt, system_message, history or [], deliver)
+            if self.provider in {"openai", "local"}:
+                return self._openai_compatible(prompt, system_message, history or [], deliver)
+            raise AIProviderError("Unsupported AI provider.")
+        except AIProviderError as stream_error:
+            # Some providers and network paths occasionally close an otherwise
+            # valid SSE response early. Retry once with the ordinary buffered
+            # endpoint so a transient streaming failure does not lose the reply.
+            try:
+                text = self.complete(prompt, system_message, history or [])
+            except AIProviderError as fallback_error:
+                raise fallback_error from stream_error
+            if not delivered:
+                on_text(text)
+            return text
 
     @staticmethod
     def _stream_text(response, gemini, on_text):
@@ -90,18 +109,11 @@ class AIProvider:
         data_lines = []
         try:
             response.raise_for_status()
-            for raw in response.iter_lines(chunk_size=1):
-                line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-                if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip())
-                    continue
-                if line or not data_lines:
-                    continue
-                data = "\n".join(data_lines)
-                data_lines = []
+            def consume(data):
+                nonlocal finished
                 if data == "[DONE]":
                     finished = True
-                    break
+                    return
                 payload = json.loads(data)
                 if payload.get("error"):
                     raise AIProviderError("The provider reported an error while streaming.")
@@ -119,6 +131,21 @@ class AIProvider:
                 if text:
                     chunks.append(text)
                     on_text(text)
+
+            for raw in response.iter_lines(chunk_size=1):
+                line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+                    continue
+                if line or not data_lines:
+                    continue
+                data = "\n".join(data_lines)
+                data_lines = []
+                consume(data)
+                if finished and data == "[DONE]":
+                    break
+            if data_lines:
+                consume("\n".join(data_lines))
             if not finished:
                 raise AIProviderError("The response stream ended early. Please try again.")
             if not chunks:
@@ -138,8 +165,14 @@ class AIProvider:
         execute_tool,
         max_rounds: int = 3,
     ) -> tuple[str, list[dict]]:
-        """Run an OpenAI-compatible tool loop with duplicate-call protection."""
-        if not tools or self.provider not in {"openai", "local"}:
+        """Run the selected provider's tool loop with duplicate-call protection."""
+        if not tools:
+            return self.complete(prompt, system_message, history), []
+        if self.provider == "gemini":
+            return self._gemini_with_tools(
+                prompt, system_message, history, tools, execute_tool, max_rounds
+            )
+        if self.provider not in {"openai", "local"}:
             return self.complete(prompt, system_message, history), []
 
         selected = self._selected()
@@ -241,6 +274,100 @@ class AIProvider:
             final = events[-1]["result"]
             return str(final.get("message") or final.get("error") or "The tool request finished."), events
         raise AIProviderError("The model did not finish its tool request.")
+
+    def _gemini_with_tools(
+        self,
+        prompt: str,
+        system_message: str,
+        history: list[dict] | None,
+        tools: list[dict],
+        execute_tool,
+        max_rounds: int,
+    ) -> tuple[str, list[dict]]:
+        selected = self._selected()
+        api_key = self._api_key()
+        if not api_key:
+            raise AIProviderError("Gemini needs an API key in Settings or GEMINI_API_KEY.")
+        model = str(selected.get("model") or "gemini-2.5-flash")
+        contents = [
+            {
+                "role": "model" if item.get("role") == "assistant" else "user",
+                "parts": [{"text": str(item.get("content") or "")}],
+            }
+            for item in (history or [])
+        ]
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+        declarations = []
+        for tool in tools:
+            function = dict(tool.get("function") or {})
+            if not function.get("name"):
+                continue
+            declaration = {
+                "name": function["name"],
+                "description": str(function.get("description") or ""),
+                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+            }
+            declarations.append(declaration)
+        if not declarations:
+            return self._gemini(prompt, system_message, history or []), []
+        generation_config = {"temperature": 0.8}
+        if not bool(selected.get("thinking_enabled", True)):
+            if model.startswith("gemini-2.5") and "pro" not in model.lower():
+                generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+            elif model.startswith("gemini-3"):
+                generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+        events = []
+        executed = {}
+        for _round in range(max(1, min(5, int(max_rounds)))):
+            try:
+                response = HTTP_SESSION.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                    json={
+                        "systemInstruction": {"parts": [{"text": system_message}]},
+                        "contents": contents,
+                        "tools": [{"functionDeclarations": declarations}],
+                        "generationConfig": generation_config,
+                    },
+                    timeout=120,
+                )
+                response.raise_for_status()
+                parts = response.json()["candidates"][0]["content"].get("parts", [])
+            except requests.RequestException as exc:
+                raise AIProviderError(f"Could not reach Gemini: {exc}") from exc
+            except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+                raise AIProviderError("Gemini returned an unreadable tool response.") from exc
+            calls = [part["functionCall"] for part in parts if isinstance(part, dict) and part.get("functionCall")]
+            if not calls:
+                text = "".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
+                if not text:
+                    raise AIProviderError("Gemini returned an empty response.")
+                return self._clean_output(text), events
+            contents.append({"role": "model", "parts": parts})
+            result_parts = []
+            for call in calls:
+                name = str(call.get("name") or "")
+                arguments = call.get("args") or {}
+                try:
+                    if not isinstance(arguments, dict):
+                        raise ValueError("Tool arguments must be an object.")
+                    cache_key = f"{name}:{json.dumps(arguments, sort_keys=True)}"
+                    if cache_key in executed:
+                        result = {**executed[cache_key], "duplicate_call_ignored": True}
+                    else:
+                        result = execute_tool(name, arguments)
+                        executed[cache_key] = result
+                except (ValueError, TypeError, KeyError) as exc:
+                    result = {"status": "error", "error": f"Invalid tool call: {exc}"}
+                except Exception as exc:
+                    result = {"status": "error", "error": str(exc)}
+                events.append({"name": name, "result": result})
+                result_parts.append({"functionResponse": {"name": name, "response": result}})
+            contents.append({"role": "user", "parts": result_parts})
+        if events:
+            final = events[-1]["result"]
+            return str(final.get("message") or final.get("error") or "The tool request finished."), events
+        raise AIProviderError("Gemini did not finish its tool request.")
 
     @staticmethod
     def _message_content(content) -> str:

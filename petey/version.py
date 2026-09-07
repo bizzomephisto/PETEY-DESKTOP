@@ -1,4 +1,4 @@
-"""PETEY Desktop release metadata."""
+"""PETEY release metadata."""
 
 __version__ = "0.14.0"
 PROJECT_URL = "https://github.com/bizzomephisto/PETEY-DESKTOP"

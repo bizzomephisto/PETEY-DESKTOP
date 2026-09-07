@@ -26,6 +26,7 @@ from petey.gemini_stt import GeminiSTT, GeminiSTTError, GEMINI_STT_MODELS
 from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
+from petey.mcp_client import FilesystemMCPManager, MCPError
 from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.tools import build_desktop_tool_registry
@@ -71,6 +72,7 @@ def create_desktop_app(
     job_manager: MediaJobManager | None = None,
     memory: DesktopMemory | None = None,
     workspace_service: WorkspaceService | None = None,
+    mcp_manager: FilesystemMCPManager | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -81,6 +83,9 @@ def create_desktop_app(
     )
     app.config["PETEY_MEDIA_JOBS"] = job_manager
     app.config["PETEY_WORKSPACES"] = workspace_service or WorkspaceService(
+        app.config["PETEY_STATE"]
+    )
+    app.config["PETEY_MCP"] = mcp_manager or FilesystemMCPManager(
         app.config["PETEY_STATE"]
     )
     app.config["PETEY_IMAGE_BROWSER"] = ImageBrowser()
@@ -163,6 +168,29 @@ def create_desktop_app(
             return jsonify({"person_name": current.update_display_name(payload.get("display_name", ""))})
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @app.get("/api/desktop/tools")
+    def desktop_tools():
+        return jsonify({"filesystem": app.config["PETEY_MCP"].public_status()})
+
+    @app.put("/api/desktop/tools/filesystem")
+    def desktop_filesystem_tool():
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload.get("enabled"), bool):
+            return jsonify({"error": "Choose whether Filesystem is enabled."}), 400
+        try:
+            status = app.config["PETEY_MCP"].set_enabled(payload["enabled"])
+            return jsonify({"filesystem": status})
+        except (MCPError, OSError) as exc:
+            return jsonify({"error": str(exc), "filesystem": app.config["PETEY_MCP"].public_status()}), 400
+
+    @app.post("/api/desktop/tools/filesystem/test")
+    def desktop_test_filesystem_tool():
+        try:
+            status = app.config["PETEY_MCP"].test_connection()
+            return jsonify({"filesystem": status})
+        except (MCPError, OSError) as exc:
+            return jsonify({"error": str(exc), "filesystem": app.config["PETEY_MCP"].public_status()}), 400
 
     @app.route("/api/desktop/workspaces", methods=["GET", "POST"])
     def desktop_workspaces():
@@ -347,6 +375,7 @@ def create_desktop_app(
             get_media_jobs,
             app.config["PETEY_MEMORY"],
             temporary=temporary,
+            mcp_manager=app.config["PETEY_MCP"],
         )
         service = AssistantService(
             current.system_prompt,

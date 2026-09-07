@@ -8,6 +8,15 @@ from petey.desktop_state import DesktopState
 
 
 class DesktopStateTests(unittest.TestCase):
+    def test_filesystem_tool_defaults_off_and_persists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            self.assertFalse(state.tools["filesystem"]["enabled"])
+            self.assertTrue(state.update_tool("filesystem", True)["enabled"])
+            self.assertTrue(DesktopState(directory).tools["filesystem"]["enabled"])
+            with self.assertRaises(ValueError):
+                state.update_tool("unknown", True)
+
     def test_theme_persists_and_invalid_theme_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)

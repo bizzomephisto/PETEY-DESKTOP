@@ -57,6 +57,7 @@ let activeWorkspaceId = '';
 let workspaceDirectory = '';
 let editorSha256 = null;
 let workspaceLoaded = false;
+let toolsLoaded = false;
 let activeChatAudio = null;
 let activeSpeechButton = null;
 let activeSpeechCancel = null;
@@ -684,7 +685,7 @@ function showView(view) {
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
     if (view === 'chat') ensureNeuralVisualizationRunning();
-    const settingsViews = ['providers', 'settings', 'personality', 'microphone', 'knowledge', 'memory'];
+    const settingsViews = ['providers', 'settings', 'personality', 'microphone', 'tools', 'knowledge', 'memory'];
     const navView = settingsViews.includes(view) ? 'settings' : view;
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
     window.location.hash = view === 'settings' ? 'settings' : view;
@@ -701,6 +702,7 @@ function showView(view) {
     if (view === 'media') loadMediaJobs();
     if (view === 'gallery') loadGallery();
     if (view === 'workspace' && !workspaceLoaded) loadWorkspaces();
+    if (view === 'tools' && !toolsLoaded) loadTools();
     if (view === 'knowledge') loadKnowledge();
     if (view === 'memory') {
         loadMemoryStats();
@@ -3713,6 +3715,101 @@ for (const [provider, name] of Object.entries(credentialNames)) {
 }
 document.querySelector('[data-open-media]').addEventListener('click', () => showView('media'));
 
+function renderFilesystemTool(filesystem) {
+    const enabled = Boolean(filesystem.enabled);
+    const connected = Boolean(filesystem.connected);
+    const toggle = document.getElementById('filesystem-tool-enabled');
+    toggle.checked = enabled;
+    const badge = document.getElementById('filesystem-tool-badge');
+    badge.textContent = connected ? 'Connected' : enabled ? 'Enabled' : 'Off';
+    badge.classList.toggle('success', connected);
+    badge.classList.toggle('error', Boolean(filesystem.error));
+
+    const roots = document.getElementById('filesystem-tool-roots');
+    roots.replaceChildren();
+    for (const folder of filesystem.approved_folders || []) {
+        const item = document.createElement('div');
+        const name = document.createElement('strong'); name.textContent = folder.name;
+        const path = document.createElement('small'); path.textContent = folder.path;
+        item.append(name, path); roots.append(item);
+    }
+    if (!roots.children.length) {
+        const empty = document.createElement('span'); empty.className = 'muted';
+        empty.textContent = 'No approved folders yet.'; roots.append(empty);
+    }
+
+    const tools = filesystem.tools || [];
+    document.getElementById('filesystem-tool-count').textContent = tools.length
+        ? `${tools.length} read-only tools` : connected ? 'No supported tools' : 'Not connected';
+    const list = document.getElementById('filesystem-tool-list');
+    list.replaceChildren();
+    for (const tool of tools) {
+        const row = document.createElement('div');
+        const name = document.createElement('strong'); name.textContent = tool.name.replaceAll('_', ' ');
+        const description = document.createElement('small'); description.textContent = tool.description || 'Read-only filesystem capability.';
+        row.append(name, description); list.append(row);
+    }
+    if (!tools.length) {
+        const empty = document.createElement('p'); empty.className = 'muted';
+        empty.textContent = 'Test or enable the connection to discover its tools.'; list.append(empty);
+    }
+    const feedback = document.getElementById('filesystem-tool-status');
+    if (filesystem.error) setFeedback(feedback, filesystem.error, 'error');
+    else if (!filesystem.available) setFeedback(feedback, 'Install Node.js to use the official Filesystem MCP server.', 'error');
+    else if (connected) setFeedback(feedback, 'Filesystem MCP is connected with read-only access.', 'success');
+    else if (enabled) setFeedback(feedback, 'Filesystem will connect when Petey needs a file tool.');
+    else feedback.textContent = '';
+}
+
+async function loadTools() {
+    const feedback = document.getElementById('filesystem-tool-status');
+    try {
+        const payload = await apiJson('/api/desktop/tools');
+        renderFilesystemTool(payload.filesystem);
+        toolsLoaded = true;
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    }
+}
+
+document.getElementById('filesystem-tool-enabled').addEventListener('change', async event => {
+    const toggle = event.target;
+    const feedback = document.getElementById('filesystem-tool-status');
+    toggle.disabled = true;
+    setFeedback(feedback, toggle.checked ? 'Connecting to Filesystem MCP…' : 'Turning Filesystem off…');
+    try {
+        const payload = await apiJson('/api/desktop/tools/filesystem', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: toggle.checked}),
+        });
+        renderFilesystemTool(payload.filesystem);
+    } catch (error) {
+        toggle.checked = !toggle.checked;
+        setFeedback(feedback, error.message, 'error');
+        await loadTools();
+    } finally {
+        toggle.disabled = false;
+    }
+});
+
+document.getElementById('test-filesystem-tool').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const feedback = document.getElementById('filesystem-tool-status');
+    button.disabled = true;
+    setFeedback(feedback, 'Testing the Filesystem MCP connection…');
+    try {
+        const payload = await apiJson('/api/desktop/tools/filesystem/test', {method: 'POST'});
+        renderFilesystemTool(payload.filesystem);
+        setFeedback(feedback, `Connection successful · ${payload.filesystem.tools.length} read-only tools found.`, 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
+});
+
+document.getElementById('open-tools-workspace').addEventListener('click', () => showView('workspace'));
+
 for (const [id, endpoint, statusId, read] of [
     ['save-speech-provider', '/api/desktop/speech', 'speech-provider-save-status', () => ({
         provider: speechProviderSelect.value,
@@ -3744,5 +3841,5 @@ for (const [id, endpoint, statusId, read] of [
 }
 
 const requestedView = window.location.hash.replace('#', '');
-const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'microphone', 'knowledge', 'memory'];
+const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'microphone', 'tools', 'knowledge', 'memory', 'help'];
 if (knownViews.includes(requestedView)) showView(requestedView);

@@ -1,0 +1,67 @@
+<section id="view-help" class="tool-view app-view">
+    <header class="tool-header"><div><span class="page-eyebrow">GETTING STARTED</span><h1>Help</h1><p>Make yourself at home with PETEY.</p></div></header>
+    <div class="tool-content help-content">
+        <section class="settings-card">
+            <h2>Your first conversation</h2>
+            <p>Start with one chat provider. Add voice, media, and memory search when you want them.</p>
+            <ol class="help-steps">
+                <li><strong>Get a key.</strong> Choose Gemini or OpenAI below, or use an already running local model server.</li>
+                <li><strong>Save it in PETEY.</strong> Open <button class="text-button" data-settings-view="providers" data-settings-target="api-key-settings" type="button">Models &amp; API keys → API keys</button>, paste it into the matching provider field, and select <strong>Save key</strong>.</li>
+                <li><strong>Choose a model.</strong> In <button class="text-button" data-settings-view="providers" data-settings-target="chat-model-settings" type="button">Chat &amp; vision</button>, choose the provider and a model, then <strong>Save provider</strong> and <strong>Test connection</strong>. Testing sends a small request to the provider.</li>
+                <li><strong>Say hello.</strong> Open Chat and send a message. Enter sends; Shift+Enter adds a new line.</li>
+            </ol>
+            <button class="secondary-button" data-settings-view="chat" type="button">Open Chat →</button>
+        </section>
+
+        <section id="help-api-keys" class="settings-card">
+            <h2>Get your API keys</h2>
+            <p>An API key connects PETEY to your account with a provider. You only need keys for the services you use. Keep keys in Settings, never in a chat message.</p>
+            <div class="help-provider-grid">
+                <article class="help-provider">
+                    <h3>Google Gemini</h3>
+                    <p>Chat and image understanding, with optional spoken replies, transcription, and memory search.</p>
+                    <p>Sign in to Google AI Studio. Create or copy a key on the API keys page, then save it in PETEY’s Google Gemini field.</p>
+                    <a class="secondary-button link-button" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Get a Gemini key ↗</a>
+                    <a href="https://ai.google.dev/gemini-api/docs/api-key" target="_blank" rel="noopener noreferrer">Google’s key setup guide ↗</a>
+                </article>
+                <article class="help-provider">
+                    <h3>OpenAI</h3>
+                    <p>Chat, with optional spoken replies and memory search.</p>
+                    <p>Sign in to the OpenAI Platform and create an API key for your project. Save it in PETEY’s OpenAI field and check your API billing and usage limits.</p>
+                    <a class="secondary-button link-button" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get an OpenAI key ↗</a>
+                    <a href="https://developers.openai.com/api/docs/quickstart" target="_blank" rel="noopener noreferrer">OpenAI’s setup guide ↗</a>
+                </article>
+                <article class="help-provider">
+                    <h3>deAPI</h3>
+                    <p>Images, video, music, and speech in Media, plus microphone transcription.</p>
+                    <p>Sign in to deAPI, open Dashboard → Settings → API Keys, and create a new secret key. Save it in PETEY’s deAPI field and check your credit balance.</p>
+                    <a class="secondary-button link-button" href="https://app.deapi.ai/" target="_blank" rel="noopener noreferrer">Open deAPI dashboard ↗</a>
+                    <a href="https://docs.deapi.ai/quickstart" target="_blank" rel="noopener noreferrer">deAPI’s setup guide ↗</a>
+                </article>
+            </div>
+            <p class="hint">Provider usage can cost money. Check the provider’s current pricing, balance, and limits before generating. A model appearing in the list does not guarantee your account can use it.</p>
+        </section>
+
+        <section class="settings-card">
+            <h2>Make PETEY yours</h2>
+            <div class="help-topics">
+                <details><summary>Personality and spoken replies</summary><p>Set PETEY’s character and tone in <button class="text-button" data-settings-view="personality" type="button">Personality &amp; voice</button>. Choose a speech service in <button class="text-button" data-settings-view="providers" data-settings-target="speech-model-settings" type="button">Spoken replies</button>, then pick his voice and whether to speak replies automatically. Chat and speech use separate settings.</p></details>
+                <details><summary>Using your microphone</summary><p>Open <button class="text-button" data-settings-view="microphone" type="button">Microphone</button> to choose an input device and listening mode. Allow microphone access when prompted. Transcription uses deAPI with Gemini fallback, or Gemini directly, according to your provider settings.</p></details>
+                <details><summary>Creating images, video, and music</summary><p>Save your deAPI key, then open <button class="text-button" data-settings-view="media" type="button">Media</button>. Choose an operation and model, add a prompt and any required input, and review the estimate when available. Jobs can take time; watch their progress and find completed creations in Gallery.</p></details>
+                <details><summary>Local models and image attachments</summary><p>Start your local model server and load a chat model. In <button class="text-button" data-settings-view="providers" data-settings-target="chat-model-settings" type="button">Chat &amp; vision</button>, choose Local, enter its OpenAI-compatible server URL, select a model, and save. Image attachments still use Gemini for descriptions, so they need a Gemini key even with local or OpenAI chat.</p></details>
+                <details><summary>Memory, knowledge, and temporary chats</summary><p>Saved conversations and generated media live in PETEY’s application-data folder. Add reference files in <button class="text-button" data-settings-view="knowledge" type="button">Knowledge</button> and configure a separate embedding model under <button class="text-button" data-settings-view="providers" data-settings-target="embedding-settings" type="button">Memory search</button>. Hosted providers receive relevant text or attachments needed for the feature you use.</p><p>Turn on Temporary in Chat to skip saved memory reads and writes for that conversation. Temporary chats can still contact providers and generate media; temporary does not mean offline. Manage stored chats in <button class="text-button" data-settings-view="memory" type="button">Memory &amp; privacy</button>.</p></details>
+                <details><summary>Working with folders</summary><p>Approve a folder in <button class="text-button" data-settings-view="workspace" type="button">Workspace</button> before browsing or editing it. Review proposed changes and commands before approving them. Optional filesystem tools are enabled in Settings → Tools and can read only approved folders.</p></details>
+            </div>
+        </section>
+
+        <section class="settings-card">
+            <h2>If something isn’t working</h2>
+            <ul class="help-steps">
+                <li><strong>Chat fails:</strong> confirm the key is saved for the selected provider, save your model choice, then use Test connection. Check the provider’s error message, account access, quota, and balance.</li>
+                <li><strong>No voice or microphone:</strong> check the separate speech and transcription providers, their keys, your selected device, system volume, and microphone permissions.</li>
+                <li><strong>Shortcut stopped opening after a move:</strong> from the new project folder, activate its Python environment and run <code>python run_desktop.py --install-shortcut</code> on Linux. Close and reopen PETEY after updating.</li>
+            </ul>
+            <p>For installation and update instructions, see the <a href="{{ project_url }}#readme" target="_blank" rel="noopener noreferrer">project README ↗</a>. Report a problem on <a href="{{ project_url }}/issues" target="_blank" rel="noopener noreferrer">GitHub ↗</a> with PETEY’s version (v{{ app_version }}), your operating system, and the error message. Leave API keys and private chats out of reports.</p>
+        </section>
+    </div>
+</section>

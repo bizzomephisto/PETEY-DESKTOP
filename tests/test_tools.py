@@ -1,11 +1,27 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from petey.tools import build_desktop_tool_registry
 from petey.tools.media import build_media_tools, explicit_image_request
 from petey.tools.registry import ToolError, ToolRegistry, ToolSpec
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_desktop_registry_includes_enabled_mcp_tools(self):
+        mcp = MagicMock()
+        mcp.tool_specs.return_value = [ToolSpec(
+            name="mcp_filesystem__read_text_file",
+            description="Read a file",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda _arguments: {"content": "hello"},
+        )]
+        registry = build_desktop_tool_registry(
+            MagicMock(ai_provider={"deapi": {}}), MagicMock(), MagicMock(),
+            mcp_manager=mcp,
+        )
+        names = [schema["function"]["name"] for schema in registry.schemas_for("read a file")]
+        self.assertIn("mcp_filesystem__read_text_file", names)
+
     def test_tool_is_only_offered_when_its_policy_allows_it(self):
         tool = ToolSpec(
             name="echo",

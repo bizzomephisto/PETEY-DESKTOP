@@ -33,9 +33,10 @@ class DesktopLauncherTests(unittest.TestCase):
             contents = launcher.read_text(encoding="utf-8")
 
             self.assertTrue(installed_icon.is_file())
-            self.assertIn("Name=PETEY Desktop", contents)
+            self.assertIn("Name=PETEY", contents.splitlines())
             self.assertIn(f"Icon={installed_icon}", contents)
             self.assertIn("run_desktop.py", contents)
+            self.assertIn("StartupWMClass=petey-desktop", contents)
             self.assertTrue(launcher.stat().st_mode & 0o100)
 
     def test_desktop_bridge_opens_project_repository(self):

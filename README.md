@@ -1,4 +1,4 @@
-# PETEY Desktop
+# PETEY
 
 Current release: **v0.14.0**
 
@@ -8,7 +8,7 @@ and an approval-gated project workspace.
 
 ## Preview
 
-![PETEY Desktop conversation view](docs/screenshots/chat.png)
+![PETEY conversation view](docs/screenshots/chat.png)
 
 | Media studio | Audio-reactive visual mode |
 | --- | --- |
@@ -60,6 +60,7 @@ speed, and hardware setup.
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
+- Read-only Filesystem MCP tools scoped to folders approved in Workspace
 
 PETEY runs a loopback-only Flask server inside a pywebview desktop window. If a
 native backend is unavailable, the launcher can open the same interface in your
@@ -72,11 +73,17 @@ browser.
 - A language-model provider: Gemini, OpenAI, or a local OpenAI-compatible server
 - A Gemini API key if you want image inspection, Gemini speech, or transcription fallback
 - A deAPI key if you want media generation or low-cost microphone transcription
+- Node.js with `npx` if you want to enable the Filesystem tool
 
 Manage keys and service models in **Settings → Models & API keys**. Gemini,
 OpenAI, local-server, and deAPI keys can be saved independently of the active chat
 provider. Existing environment keys remain supported. Voice identity and delivery
 settings stay under **Personality & voice**.
+
+Connected capabilities are managed under **Settings → Tools**. Filesystem uses a
+pinned release of the official MCP server and receives only folders already
+approved in Workspace. Petey exposes its read, list, metadata, and search tools;
+filesystem writes, moves, and deletes remain unavailable.
 
 ## Install and run
 
@@ -100,7 +107,7 @@ python run_desktop.py --browser
 On Linux, the requirements install the PySide6 backend for pywebview. Do not run
 `pip install gi`; PyGObject is supplied through Linux distribution packages.
 
-Install PETEY Desktop in your Linux application menu with:
+Install PETEY in your Linux application menu with:
 
 ```bash
 python run_desktop.py --install-shortcut
@@ -112,6 +119,37 @@ master, Linux PNG, Windows ICO, and macOS ICNS file.
 Provider keys and models can be configured from **Settings**. Values saved there
 are stored in PETEY's platform application-data directory. Environment variables
 from `.env` are also supported.
+
+## Getting started and help
+
+Open **Help** in PETEY's sidebar for a first-chat checklist, provider setup,
+voice and microphone guidance, media, memory, Workspace, and troubleshooting.
+The API keys section in Settings also links directly to this guide.
+
+- **Gemini:** [Get a key in Google AI Studio](https://aistudio.google.com/apikey)
+  ([official guide](https://ai.google.dev/gemini-api/docs/api-key)).
+- **OpenAI:** [Create an API key](https://platform.openai.com/api-keys)
+  ([official guide](https://developers.openai.com/api/docs/quickstart)).
+- **deAPI:** [Open the dashboard](https://app.deapi.ai/) and use Settings → API Keys
+  ([official guide](https://docs.deapi.ai/quickstart)).
+
+Save each key in **Settings → Models & API keys → API keys**. Choose your chat
+provider and model, click **Save provider**, then **Test connection**. Add other
+services as needed; review provider pricing and account limits before use.
+
+## Updating
+
+Close PETEY, open a terminal in its project folder, and activate its environment.
+If you have local code changes, commit or stash them before updating:
+
+```bash
+git pull --ff-only
+python -m pip install -r requirements.txt
+python run_desktop.py
+```
+
+On Linux, run `python run_desktop.py --install-shortcut` again after moving the
+project or changing its Python environment so the menu launcher uses the new paths.
 
 ## Local data and privacy
 

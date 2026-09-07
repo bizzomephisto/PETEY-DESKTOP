@@ -33,7 +33,7 @@ Thumbs.db
 # Bundled executables are local deployment artifacts
 petey/ffmpeg/
 
-# Legacy Discord bot and web-admin source retained only in the local migration tree
+# Exclude removed legacy Discord bot and web-admin source
 main.py
 run_web.py
 generate_codes.py
