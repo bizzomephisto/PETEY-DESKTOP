@@ -7,7 +7,8 @@ To publish after the wiki has been initialized:
 
 ```bash
 git clone https://github.com/bizzomephisto/PETEY-DESKTOP.wiki.git /tmp/petey-wiki
-cp docs/wiki/*.md /tmp/petey-wiki/
+find docs/wiki -maxdepth 1 -type f -name '*.md' ! -name 'README.md' \
+  -exec cp {} /tmp/petey-wiki/ \;
 cd /tmp/petey-wiki
 git add .
 git commit -m "Build PETEY user guide"

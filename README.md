@@ -2,6 +2,8 @@
 
 Current release: **v0.14.0**
 
+**[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
+
 PETEY is a standalone desktop AI assistant with local conversations, configurable
 personality, universal SQLite memory, RAG document management, deAPI media tools,
 and an approval-gated project workspace.
