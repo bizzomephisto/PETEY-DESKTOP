@@ -1,3 +1,4 @@
+import json
 import asyncio
 import base64
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,81 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_gemini_model_selection_also_updates_vision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_ai_provider({"provider": "gemini", "model": "gemini-new-flash"})
+            self.assertEqual(state.ai_provider["gemini"]["vision_model"], "gemini-new-flash")
+            state.update_ai_provider({"provider": "local", "model": "local-chat"})
+            self.assertEqual(state.ai_provider["gemini"]["vision_model"], "gemini-new-flash")
+
+    def test_vision_catalog_uses_gemini_without_changing_chat_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_ai_provider({"provider": "local", "model": "local-chat"})
+            before = state.ai_provider
+            app = create_desktop_app(state=state, memory=MagicMock(), job_manager=MagicMock())
+            def catalog(provider):
+                self.assertEqual(provider.provider, "gemini")
+                return ["gemini-new-flash", "gemini-new-pro"]
+            with patch("web.desktop_app.AIProvider.list_models", autospec=True, side_effect=catalog):
+                response = app.test_client().get("/api/desktop/ai-provider/models?provider=gemini")
+            self.assertEqual(response.json["models"], ["gemini-new-flash", "gemini-new-pro"])
+            self.assertEqual(state.ai_provider, before)
+            self.assertEqual(state.ai_provider["provider"], "local")
+            self.assertEqual(app.test_client().get("/api/desktop/ai-provider/models?provider=bad").status_code, 400)
+
+    def test_chat_stream_delivers_text_before_reply_finishes(self):
+        release = threading.Event()
+        async def respond(*args, on_text, **kwargs):
+            on_text("Hello ")
+            if not release.wait(3):
+                raise RuntimeError("Client did not receive first delta")
+            on_text("world")
+            return AssistantReply(text="Hello world", gif_url=None)
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_desktop_app(state=DesktopState(directory), memory=MagicMock(), job_manager=MagicMock())
+            with patch("web.desktop_app.AssistantService.respond", side_effect=respond):
+                response = app.test_client().post("/api/desktop/chat", data={"message": "Hi", "stream": "true"}, buffered=False)
+                chunks = iter(response.response)
+                self.assertEqual(json.loads(next(chunks))["type"], "status")
+                self.assertEqual(json.loads(next(chunks)), {"type": "delta", "text": "Hello "})
+                release.set()
+                events = [json.loads(chunk) for chunk in chunks]
+                self.assertEqual(events[-1]["type"], "done")
+                self.assertEqual(events[-1]["text"], "Hello world")
+                response.close()
+
+    def test_chat_stream_reports_errors_without_done(self):
+        async def respond(*args, on_text, **kwargs):
+            on_text("Partial")
+            raise ValueError("Interrupted")
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_desktop_app(state=DesktopState(directory), memory=MagicMock(), job_manager=MagicMock())
+            with patch("web.desktop_app.AssistantService.respond", side_effect=respond):
+                response = app.test_client().post("/api/desktop/chat", data={"message": "Hi", "stream": "true"})
+                events = [json.loads(line) for line in response.data.splitlines()]
+            self.assertEqual([event["type"] for event in events], ["status", "delta", "error"])
+
+    def test_media_price_lookup_never_queues_a_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jobs = MagicMock()
+            app = create_desktop_app(state=DesktopState(directory), runtime=AsyncRuntime(), job_manager=jobs)
+            client = app.test_client()
+            quote = {"price": 0.003, "currency": "USD", "model_slug": "model"}
+            with patch("web.desktop_app.MediaService.estimate", new=AsyncMock(return_value=quote)) as estimate:
+                response = client.post("/api/desktop/media/estimate", data={
+                    "operation": "txt2img", "model_slug": "model", "parameters": '{"width":512}', "prompt": "Robot",
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json, quote)
+                estimate.assert_awaited_once_with("txt2img", "model", {"width": 512}, "Robot", None)
+            for operation in ("txt2audio", "txt2music"):
+                self.assertEqual(client.post("/api/desktop/media/estimate", data={"operation": operation}).status_code, 400)
+            self.assertEqual(client.post("/api/desktop/media/estimate", data={"parameters": "[]"}).status_code, 400)
+            self.assertEqual(client.post("/api/desktop/media/estimate", data={"operation": "img-upscale"}).status_code, 400)
+            jobs.submit.assert_not_called()
+
     def test_initial_media_models_and_balance_have_independent_sessions(self):
         # The first Media visit requests both endpoints concurrently. A shared
         # aiohttp client cannot be used across their separate Flask event loops.

@@ -4,6 +4,7 @@ import asyncio
 import time
 import io
 import random
+import math
 
 from petey.deapi_tts import DEAPI_TTS_MODEL
 
@@ -14,6 +15,14 @@ class RateLimitError(DeapiError):
     pass
 
 class DeapiClient:
+    PRICE_ENDPOINTS = {
+        "txt2img": "/api/v2/images/generations/price",
+        "img2img": "/api/v2/images/edits/price",
+        "txt2video": "/api/v2/videos/generations/price",
+        "img2video": "/api/v2/videos/animations/price",
+        "img-rmbg": "/api/v2/images/background-removals/price",
+        "img-upscale": "/api/v2/images/upscales/price",
+    }
     # deAPI currently omits MiniMax H3's fixed step count from its model metadata,
     # while both the v1 and v2 validators require exactly 8 steps.
     MODEL_PARAMETER_OVERRIDES = {
@@ -84,6 +93,56 @@ class DeapiClient:
             return float(balance)
         except (TypeError, ValueError) as exc:
             raise DeapiError("deAPI returned an invalid balance value.") from exc
+
+    async def estimate_price(self, operation, model_slug, parameters, prompt="", source=None):
+        """Read a provider quote; never submit or poll a generation job."""
+        endpoint = self.PRICE_ENDPOINTS.get(operation)
+        if not endpoint:
+            raise ValueError("Price lookup is unavailable for this operation.")
+        models = await self.get_models(operation)
+        model = next((item for item in models if item.get("slug") == model_slug), None) if model_slug else next(iter(models), None)
+        if not model:
+            raise ValueError("Choose an available model to estimate its price.")
+        slug = model["slug"]
+        info = model.get("info") or {}
+        defaults = info.get("defaults") or {}
+        payload = {"model": slug}
+        effective = {}
+        if operation in {"txt2img", "img2img"}:
+            effective = self._image_parameters(defaults, info, {**parameters, "seed": 0})
+            payload.update(effective)
+            payload["prompt"] = prompt.strip() or "Image"
+        elif operation in {"txt2video", "img2video"}:
+            effective = self._video_parameters(slug, defaults, info, {**parameters, "seed": 0})
+            payload.update({name: effective[name] for name in ("width", "height", "steps", "frames", "fps")})
+        else:
+            if source is None:
+                raise ValueError("Choose a source image to estimate its price.")
+            payload = aiohttp.FormData()
+            payload.add_field("model", slug)
+            if operation == "img-upscale":
+                payload.add_field("scale", str(parameters["scale"]))
+            payload.add_field("image", source.data, filename=source.filename, content_type=source.content_type)
+        session = await self.get_session()
+        multipart = isinstance(payload, aiohttp.FormData)
+        async with session.post(
+            f"{self.base_url}{endpoint}",
+            headers=self._get_headers(None if multipart else "application/json"),
+            timeout=aiohttp.ClientTimeout(total=20),
+            **({"data": payload} if multipart else {"json": payload}),
+        ) as response:
+            response.raise_for_status()
+            body = await response.json()
+        try:
+            data = body["data"]
+            raw_price = data["price"]
+            price = float(raw_price)
+            if isinstance(raw_price, bool) or not math.isfinite(price) or price < 0:
+                raise ValueError
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise DeapiError("The media provider returned an invalid price estimate.") from exc
+        return {"price": price, "currency": "USD", "is_estimated": bool(data.get("is_estimated", True)),
+                "model_slug": slug, "parameters": {key: value for key, value in effective.items() if key != "seed"}}
 
     async def get_models(self, inference_type=None, force_refresh=False):
         if not self.api_key:
@@ -239,6 +298,16 @@ class DeapiClient:
             )
         return params
 
+    def _image_parameters(self, defaults, info, kwargs):
+        limits = info.get("limits", {})
+        return {
+            "width": self._bounded_model_value("width", kwargs, defaults, limits, 1024),
+            "height": self._bounded_model_value("height", kwargs, defaults, limits, 1024),
+            "steps": self._bounded_model_value("steps", kwargs, defaults, limits, 20),
+            "guidance": kwargs.get("guidance", defaults.get("guidance", 3.5)),
+            "seed": kwargs.get("seed", random.randint(0, 2**32 - 1)),
+        }
+
     async def wait_for_job(self, request_id, interval=2, timeout=300):
         url = f"{self.base_url}/api/v1/client/request-status/{request_id}"
         session = await self.get_session()
@@ -299,11 +368,7 @@ class DeapiClient:
             return {
                 "prompt": prompt,
                 "model": model,
-                "width": kwargs.get("width", defaults.get("width", 1024)),
-                "height": kwargs.get("height", defaults.get("height", 1024)),
-                "steps": kwargs.get("steps", defaults.get("steps", 4)),
-                "seed": kwargs.get("seed", random.randint(0, 2**32 - 1)),
-                "guidance": kwargs.get("guidance", 3.5)
+                **self._image_parameters({"steps": 4, **defaults}, info, kwargs),
             }
 
         req_id = await self._execute_with_fallback("/api/v1/client/txt2img", build_payload, "txt2img", guild_id=guild_id, selected_model_slug=model_slug)
@@ -316,11 +381,8 @@ class DeapiClient:
             data = aiohttp.FormData()
             data.add_field("prompt", prompt)
             data.add_field("model", model)
-            data.add_field("steps", str(kwargs.get("steps", defaults.get("steps", 20))))
-            data.add_field("seed", str(random.randint(0, 2**32 - 1)))
-            data.add_field("guidance", str(kwargs.get("guidance", defaults.get("guidance", 3.5))))
-            data.add_field("width", str(kwargs.get("width", defaults.get("width", 1024))))
-            data.add_field("height", str(kwargs.get("height", defaults.get("height", 1024))))
+            for name, value in self._image_parameters(defaults, info, kwargs).items():
+                data.add_field(name, str(value))
             data.add_field("image", io.BytesIO(image_bytes), filename="source.png", content_type="image/png")
             return data
 

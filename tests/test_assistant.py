@@ -10,6 +10,30 @@ from petey.assistant import (
 
 
 class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_preserves_temporary_mode_and_stores_only_final_reply(self):
+        for temporary in (False, True):
+            memory = MagicMock()
+            memory.get_conversation_messages.return_value = []
+            memory.search_memories.return_value = ""
+            service = AssistantService("System", memory=memory)
+            received = []
+            def stream(prompt, system, history, on_text):
+                on_text("Hello ")
+                on_text("world")
+                return "Hello world"
+            with patch("petey.assistant.AIProvider.complete_stream", side_effect=stream):
+                reply = await service.respond("Hi", AssistantIdentity("test", "chat", "user"),
+                                              temporary=temporary, on_text=received.append)
+            self.assertEqual(received, ["Hello ", "world"])
+            self.assertEqual(reply.text, "Hello world")
+            if temporary:
+                memory.store_memory.assert_not_called()
+                memory.search_memories.assert_not_called()
+                memory.get_conversation_messages.assert_not_called()
+            else:
+                self.assertEqual(memory.store_memory.call_count, 2)
+                self.assertEqual(memory.store_memory.call_args.args[-1], "Hello world")
+
     async def test_response_uses_history_and_stores_both_speakers(self):
         stored = []
 

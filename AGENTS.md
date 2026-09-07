@@ -18,9 +18,17 @@ Start here; read only task-relevant implementation/tests. This is a navigation c
 
 UI `web/templates/desktop.html` + `web/static/desktop.js` + `desktop.css` -> `/api/desktop/*` in `web/desktop_app.py` (composition root, validation, errors, service injection).
 
+Chat model picker: `AIProvider.list_models` supports Gemini's paginated model catalog (filtered for chat), OpenAI, and local servers. Providers settings exposes one dropdown per model; `loadModelCatalogs` automatically refreshes on settings entry, provider/key changes, and local server URL changes, preserving selections and rejecting stale replies. Catalog presence does not guarantee account access; Test connection checks generation.
+
+Vision has no separate UI selector. With Gemini chat, `AIProvider._vision_model` follows the chat model (including older settings); saving Gemini chat also synchronizes the retained vision setting. OpenAI/local chat still uses the configured Gemini vision model. Read-only catalog provider and local `base_url` overrides never change saved settings.
+
 Chat: multipart `/chat` -> `AssistantIdentity` + optional `AssistantAttachment` -> `AssistantService.respond` -> recent history + cross-conversation retrieval + optional Gemini image description -> `AIProvider.complete[_with_tools]` -> `AssistantReply(text,gif_url,tool_events)` -> persistence/UI. User messages can use deferred embeddings; queue them after provider completion. Assistant author ID = `PETEY`.
 
+Chat streaming: multipart `/chat` with `stream=true` returns NDJSON status/delta/done/error events and heartbeats via a bounded worker queue. `AssistantService.respond(on_text=...)` uses `AIProvider.complete_stream` for Gemini and ordinary OpenAI/local replies; OpenAI/local tool loops remain buffered. Provider SSE responses close on completion/error; only final cleaned replies enter assistant memory. JS `readChatStream` handles split UTF-8/events and marks interrupted partial replies; speech runs after completion. The original JSON route behavior remains available without the stream flag.
+
 Media: route or model tool -> `MediaJobManager.submit` -> worker -> `MediaService` -> async `DeapiClient` -> progress/job polling -> `MediaGallery` capture. Default 3 workers; queued does not mean completed. Chat speech may use transient job audio outside gallery.
+
+Media estimates: `/media/estimate` -> `MediaService.estimate` -> `DeapiClient.estimate_price` uses deAPI v2 price lookups without queuing jobs. Images/video share model parameter limits with generation; speech, music, and legacy video restyling have no estimate. JS `scheduleMediaEstimate` debounces lookups and rejects stale replies. Catalog, balance, and estimate requests use request-local clients via `media_provider_request` to isolate event loops.
 
 State: `DesktopState` owns installation/person IDs, conversation metadata, settings, personas/voice slots, approved workspaces. JSON writes use temp-file replacement + lock. `DesktopMemory` owns message/document content and embeddings; SQLite WAL, per-operation connections, bounded background embedding workers. Tables: `memory_items`, `image_generations`, `metadata`; embedding provider/model/dimension signatures matter.
 

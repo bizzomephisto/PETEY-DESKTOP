@@ -1,3 +1,4 @@
+import json
 import base64
 import unittest
 from unittest.mock import MagicMock, patch
@@ -8,6 +9,81 @@ from petey.ai_provider import AIProvider, AIProviderError
 
 
 class AIProviderTests(unittest.TestCase):
+    def test_gemini_vision_follows_chat_even_with_older_saved_vision(self):
+        provider = AIProvider({"provider": "gemini", "gemini": {
+            "model": "gemini-new-flash", "vision_model": "gemini-2.5-flash", "api_key": "test",
+        }})
+        response = MagicMock()
+        response.json.return_value = {"candidates": [{"content": {"parts": [{"text": "A cat"}]}}]}
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
+            self.assertEqual(provider.describe_image(b"image", "image/png"), "A cat")
+        self.assertIn("/gemini-new-flash:generateContent", post.call_args.args[0])
+        self.assertEqual(provider.public_config()["vision_model"], "gemini-new-flash")
+
+    def test_streaming_providers_deliver_deltas_before_completion(self):
+        for name in ("gemini", "openai", "local"):
+            received = []
+            response = MagicMock()
+            def lines(**kwargs):
+                if name == "gemini":
+                    yield b'data: {"candidates":[{"content":{"parts":[{"text":"private","thought":true},{"text":"Hello "}]}}]}'
+                else:
+                    yield b'data: {"choices":[{"delta":{"content":"Hello "}}]}'
+                yield b''
+                self.assertEqual(received, ["Hello "])
+                if name == "gemini":
+                    yield b'data: {"candidates":[{"content":{"parts":[{"text":"world"}]},"finishReason":"STOP"}]}'
+                else:
+                    yield b'data: {"choices":[{"delta":{"content":"world"},"finish_reason":"stop"}]}'
+                yield b''
+            response.iter_lines.side_effect = lines
+            provider = AIProvider({"provider": name, name: {"api_key": "test", "model": "test-model"}})
+            with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
+                self.assertEqual(provider.complete_stream("Hi", "System", [], received.append), "Hello world")
+            self.assertTrue(post.call_args.kwargs["stream"])
+            response.close.assert_called_once()
+
+    def test_truncated_stream_fails_and_closes_response(self):
+        response = MagicMock()
+        response.iter_lines.return_value = [b'data: {"choices":[{"delta":{"content":"Partial"}}]}', b'']
+        received = []
+        with self.assertRaisesRegex(AIProviderError, "ended early"):
+            AIProvider._stream_text(response, False, received.append)
+        self.assertEqual(received, ["Partial"])
+        response.close.assert_called_once()
+
+    def test_gemini_model_catalog_paginates_and_filters_specialized_models(self):
+        first = MagicMock()
+        first.json.return_value = {"models": [
+            {"name": "models/gemini-new-flash", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-embedding", "supportedGenerationMethods": ["embedContent"]},
+            {"name": "models/gemini-preview-tts", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-image", "supportedGenerationMethods": ["generateContent"]},
+        ], "nextPageToken": "next"}
+        second = MagicMock()
+        second.json.return_value = {"models": [
+            {"name": "models/gemini-new-pro", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-new-flash", "supportedGenerationMethods": ["generateContent"]},
+        ]}
+        provider = AIProvider({"provider": "gemini", "gemini": {"api_key": "test-key"}})
+        with patch("petey.ai_provider.HTTP_SESSION.get", side_effect=[first, second]) as get:
+            self.assertEqual(provider.list_models(), ["gemini-new-flash", "gemini-new-pro"])
+        self.assertEqual(get.call_args.kwargs["params"]["pageToken"], "next")
+        self.assertEqual(get.call_args.kwargs["headers"], {"x-goog-api-key": "test-key"})
+        self.assertNotIn("test-key", get.call_args.args[0])
+
+    def test_gemini_catalog_requires_key_and_hides_transport_secrets(self):
+        provider = AIProvider({"provider": "gemini"})
+        with patch.dict("os.environ", {}, clear=True), patch("petey.ai_provider.HTTP_SESSION.get") as get:
+            with self.assertRaisesRegex(AIProviderError, "API key"):
+                provider.list_models()
+            get.assert_not_called()
+        provider = AIProvider({"provider": "gemini", "gemini": {"api_key": "secret"}})
+        with patch("petey.ai_provider.HTTP_SESSION.get", side_effect=requests.Timeout("secret")):
+            with self.assertRaises(AIProviderError) as error:
+                provider.list_models()
+        self.assertNotIn("secret", str(error.exception))
+
     def test_local_model_can_call_a_tool_and_receive_its_result(self):
         tool_response = MagicMock()
         tool_response.raise_for_status.return_value = None

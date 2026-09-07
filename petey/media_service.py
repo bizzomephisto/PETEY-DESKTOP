@@ -42,6 +42,32 @@ class MediaService:
     async def balance(self) -> float:
         return await self.client.get_balance()
 
+    async def estimate(self, operation, model_slug="", parameters=None, prompt="", source=None):
+        from petey.deapi_client import DeapiClient
+        if operation not in DeapiClient.PRICE_ENDPOINTS:
+            raise ValueError("Price lookup is unavailable for this operation.")
+        parameters = parameters or {}
+        if not isinstance(parameters, dict):
+            raise ValueError("Media parameters must be an object.")
+        values = {}
+        if operation in {"txt2img", "img2img", "txt2video", "img2video"}:
+            values = {
+                "width": self._integer(parameters, "width", 1024, 128, 2048),
+                "height": self._integer(parameters, "height", 1024, 128, 2048),
+                "steps": self._integer(parameters, "steps", 20, 1, 100),
+                "guidance": self._number(parameters, "guidance", 3.5, 0, 30),
+            }
+        if operation in {"txt2video", "img2video"}:
+            values.update(frames=self._integer(parameters, "frames", 120, 1, 600),
+                          fps=self._integer(parameters, "fps", 24, 1, 60))
+        if operation in {"img-rmbg", "img-upscale"}:
+            self._validate_source("image", source)
+            if len(source.data) > 10 * 1024 * 1024:
+                raise ValueError("Price lookup accepts source images up to 10 MB.")
+            if operation == "img-upscale":
+                values["scale"] = self._integer(parameters, "scale", 2, 2, 4)
+        return await self.client.estimate_price(operation, model_slug, values, prompt, source)
+
     async def generate(
         self,
         operation: str,

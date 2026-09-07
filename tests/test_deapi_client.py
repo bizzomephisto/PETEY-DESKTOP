@@ -1,6 +1,6 @@
 import unittest
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from petey.deapi_client import DeapiClient, DeapiError
 
@@ -74,6 +74,72 @@ class _StatusSession:
 
 
 class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_image_quote_uses_live_price_and_same_model_limits_as_generation(self):
+        client = DeapiClient(api_key="test-key")
+        info = {"limits": {"min_steps": 4, "max_steps": 4}, "defaults": {"steps": 4}}
+        client.get_models = AsyncMock(return_value=[{"slug": "image-model", "info": info}])
+        session = MagicMock()
+        session.post.return_value = _FakeResponse({"data": {"price": "0.003", "is_estimated": False}})
+        client.get_session = AsyncMock(return_value=session)
+        params = {"width": 1024, "height": 768, "steps": 20, "guidance": 3.5}
+        quote = await client.estimate_price("txt2img", "image-model", params, "Robot")
+        self.assertEqual(quote["price"], 0.003)
+        self.assertFalse(quote["is_estimated"])
+        self.assertTrue(session.post.call_args.args[0].endswith("/images/generations/price"))
+        quoted = session.post.call_args.kwargs["json"]
+        self.assertEqual(quoted["steps"], 4)
+        self.assertEqual(quoted["prompt"], "Robot")
+        generated = {}
+
+        async def capture(endpoint, build, operation, **kwargs):
+            generated.update(build("image-model", info["defaults"], info))
+            return "job"
+
+        client._execute_with_fallback = AsyncMock(side_effect=capture)
+        client.wait_for_job = AsyncMock(return_value={"result_url": "test"})
+        await client.generate_image("Robot", model_slug="image-model", **params)
+        for key in ("model", "width", "height", "steps", "guidance", "prompt"):
+            self.assertEqual(quoted[key], generated[key])
+
+    async def test_video_quote_uses_effective_frames_fps_and_auto_model(self):
+        client = DeapiClient(api_key="test-key")
+        client.get_models = AsyncMock(return_value=[{
+            "slug": "video-model", "info": {"limits": {"max_frames": 120, "min_fps": 30, "max_steps": 1}},
+        }])
+        session = MagicMock()
+        session.post.return_value = _FakeResponse({"data": {"price": 0.15}})
+        client.get_session = AsyncMock(return_value=session)
+        quote = await client.estimate_price("img2video", "", {"width": 512, "height": 512, "steps": 20, "frames": 240, "fps": 24})
+        self.assertEqual(quote["model_slug"], "video-model")
+        self.assertEqual(session.post.call_args.kwargs["json"], {"model": "video-model", "width": 512, "height": 512, "steps": 1, "frames": 120, "fps": 30})
+        self.assertTrue(session.post.call_args.args[0].endswith("/videos/animations/price"))
+
+    async def test_quotes_reject_unsupported_operations_and_invalid_prices(self):
+        client = DeapiClient(api_key="test-key")
+        client.get_models = AsyncMock(return_value=[{"slug": "model"}])
+        for operation in ("txt2audio", "txt2music", "vid2video", "unknown"):
+            with self.assertRaises(ValueError):
+                await client.estimate_price(operation, "model", {})
+        client.get_models.assert_not_awaited()
+        session = MagicMock()
+        client.get_session = AsyncMock(return_value=session)
+        for price in (None, -1, True, "NaN", "Infinity", "invalid"):
+            session.post.return_value = _FakeResponse({"data": {"price": price}})
+            with self.assertRaises(DeapiError):
+                await client.estimate_price("txt2img", "model", {})
+
+    async def test_upscale_quote_posts_source_only_to_price_endpoint(self):
+        from petey.media_service import MediaInput
+        client = DeapiClient(api_key="test-key")
+        client.get_models = AsyncMock(return_value=[{"slug": "upscale"}])
+        session = MagicMock()
+        session.post.return_value = _FakeResponse({"data": {"price": 0.01}})
+        client.get_session = AsyncMock(return_value=session)
+        await client.estimate_price("img-upscale", "upscale", {"scale": 2}, source=MediaInput("test.png", "image/png", b"image"))
+        self.assertTrue(session.post.call_args.args[0].endswith("/images/upscales/price"))
+        self.assertIn("data", session.post.call_args.kwargs)
+        self.assertNotIn("Content-Type", session.post.call_args.kwargs["headers"])
+
     async def test_missing_key_fails_with_configuration_message(self):
         with patch.dict(os.environ, {"DEAPI_KEY": ""}):
             client = DeapiClient()

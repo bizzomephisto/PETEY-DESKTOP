@@ -75,6 +75,7 @@ class AssistantService:
         attachment: AssistantAttachment | None = None,
         temporary: bool = False,
         temporary_history: list[dict] | None = None,
+        on_text=None,
     ) -> AssistantReply:
         cleaned = (message or "").strip()
         if cleaned.endswith("+++"):
@@ -173,7 +174,11 @@ class AssistantService:
         tool_events = []
         tool_schemas = self.tool_registry.schemas_for(cleaned) if self.tool_registry else []
         try:
-            if tool_schemas:
+            if on_text and (not tool_schemas or self.ai.provider == "gemini"):
+                response = self.ai.complete_stream(
+                    user_prompt + "\nRespond as Petey:", final_system, history, on_text,
+                )
+            elif tool_schemas:
                 response, tool_events = self.ai.complete_with_tools(
                     user_prompt + "\nRespond as Petey:",
                     final_system,

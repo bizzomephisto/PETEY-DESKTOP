@@ -58,13 +58,16 @@ class AIProvider:
         return {
             "provider": self.provider,
             "providers": providers,
-            "vision_model": str(
-                (self.config.get("gemini") or {}).get("vision_model")
-                or "gemini-2.5-flash"
-            ),
+            "vision_model": self._vision_model(),
             "vision_has_api_key": providers["gemini"]["has_api_key"],
             **providers[self.provider],
         }
+
+    def _vision_model(self) -> str:
+        gemini = self.config.get("gemini") or {}
+        if self.provider == "gemini":
+            return str(gemini.get("model") or "gemini-2.5-flash").strip()
+        return str(gemini.get("vision_model") or gemini.get("model") or "gemini-2.5-flash").strip()
 
     def complete(self, prompt: str, system_message: str, history: list[dict] | None = None) -> str:
         if self.provider == "gemini":
@@ -72,6 +75,59 @@ class AIProvider:
         if self.provider in {"openai", "local"}:
             return self._openai_compatible(prompt, system_message, history or [])
         raise AIProviderError("Unsupported AI provider.")
+
+    def complete_stream(self, prompt, system_message, history, on_text):
+        if self.provider == "gemini":
+            return self._gemini(prompt, system_message, history or [], on_text)
+        if self.provider in {"openai", "local"}:
+            return self._openai_compatible(prompt, system_message, history or [], on_text)
+        raise AIProviderError("Unsupported AI provider.")
+
+    @staticmethod
+    def _stream_text(response, gemini, on_text):
+        chunks = []
+        finished = False
+        data_lines = []
+        try:
+            response.raise_for_status()
+            for raw in response.iter_lines(chunk_size=1):
+                line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+                    continue
+                if line or not data_lines:
+                    continue
+                data = "\n".join(data_lines)
+                data_lines = []
+                if data == "[DONE]":
+                    finished = True
+                    break
+                payload = json.loads(data)
+                if payload.get("error"):
+                    raise AIProviderError("The provider reported an error while streaming.")
+                if gemini:
+                    candidates = payload.get("candidates") or []
+                    candidate = candidates[0] if candidates else {}
+                    text = "".join(part.get("text", "") for part in candidate.get("content", {}).get("parts", [])
+                                   if not part.get("thought"))
+                    finished = finished or bool(candidate.get("finishReason"))
+                else:
+                    choices = payload.get("choices") or []
+                    choice = choices[0] if choices else {}
+                    text = choice.get("delta", {}).get("content") or ""
+                    finished = finished or bool(choice.get("finish_reason"))
+                if text:
+                    chunks.append(text)
+                    on_text(text)
+            if not finished:
+                raise AIProviderError("The response stream ended early. Please try again.")
+            if not chunks:
+                raise AIProviderError("The provider returned no text. The response may have been blocked.")
+            return "".join(chunks)
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            raise AIProviderError("The response stream was interrupted. Please try again.") from exc
+        finally:
+            response.close()
 
     def complete_with_tools(
         self,
@@ -225,7 +281,7 @@ class AIProvider:
             )
         return normalized
 
-    def _gemini(self, prompt: str, system_message: str, history: list[dict]) -> str:
+    def _gemini(self, prompt: str, system_message: str, history: list[dict], on_text=None) -> str:
         selected = self._selected()
         api_key = self._api_key()
         if not api_key:
@@ -248,7 +304,8 @@ class AIProvider:
                 generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
         try:
             response = HTTP_SESSION.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:"
+                + ("streamGenerateContent?alt=sse" if on_text else "generateContent"),
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 json={
                     "systemInstruction": {"parts": [{"text": system_message}]},
@@ -256,9 +313,12 @@ class AIProvider:
                     "generationConfig": generation_config,
                 },
                 timeout=90,
+                **({"stream": True} if on_text else {}),
             )
         except requests.RequestException as exc:
             raise AIProviderError(f"Could not reach Gemini: {exc}") from exc
+        if on_text:
+            return self._stream_text(response, True, on_text)
         return self._response_text(response, "Gemini")
 
     def describe_image(
@@ -272,12 +332,11 @@ class AIProvider:
         api_key = str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
         if not api_key:
             raise AIProviderError(
-                "Gemini vision needs an API key. Select Google Gemini in Settings, save "
-                "its key, then switch back to your preferred chat provider if needed."
+                "Image attachments need a Gemini API key. Save it under Providers & API keys."
             )
-        model = str(gemini.get("vision_model") or "gemini-2.5-flash").strip()
+        model = self._vision_model()
         if not model:
-            raise AIProviderError("Choose a Gemini vision model in Settings.")
+            raise AIProviderError("Choose a Gemini chat model in Settings.")
         mime_type = str(content_type or "").split(";", 1)[0].strip().lower()
         if not mime_type.startswith("image/"):
             raise AIProviderError("Gemini vision can only inspect image attachments.")
@@ -317,7 +376,7 @@ class AIProvider:
             raise AIProviderError(f"Could not reach Gemini vision: {exc}") from exc
         return self._response_text(response, "Gemini vision")
 
-    def _openai_compatible(self, prompt: str, system_message: str, history: list[dict]) -> str:
+    def _openai_compatible(self, prompt: str, system_message: str, history: list[dict], on_text=None) -> str:
         selected = self._selected()
         api_key = self._api_key()
         if self.provider == "openai" and not api_key:
@@ -343,22 +402,60 @@ class AIProvider:
         if not bool(selected.get("thinking_enabled", True)):
             if self.provider == "local" or model.startswith(("gpt-5", "o1", "o3", "o4")):
                 request_payload["reasoning_effort"] = "none"
+        if on_text:
+            request_payload["stream"] = True
         try:
             response = HTTP_SESSION.post(
                 f"{base_url}/chat/completions",
                 headers=headers,
                 json=request_payload,
                 timeout=120,
+                **({"stream": True} if on_text else {}),
             )
         except requests.RequestException as exc:
             if self.provider == "local":
                 raise AIProviderError(self._local_connection_help(base_url, exc)) from exc
             raise AIProviderError(f"Could not reach OpenAI: {exc}") from exc
+        if on_text:
+            return self._stream_text(response, False, on_text)
         return self._response_text(response, "OpenAI" if self.provider == "openai" else "Local AI")
 
     def list_models(self) -> list[str]:
         if self.provider == "gemini":
-            return []
+            key = self._api_key()
+            if not key:
+                raise AIProviderError("Save a Gemini API key before loading models.")
+            models = set()
+            token = ""
+            seen = set()
+            try:
+                for _ in range(20):
+                    params = {"pageSize": 1000}
+                    if token:
+                        params["pageToken"] = token
+                    response = HTTP_SESSION.get(
+                        "https://generativelanguage.googleapis.com/v1beta/models",
+                        headers={"x-goog-api-key": key}, params=params, timeout=15,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    for item in payload.get("models", []):
+                        name = str(item.get("name") or "").removeprefix("models/")
+                        if (name.startswith("gemini-")
+                                and "generateContent" in item.get("supportedGenerationMethods", [])
+                                and not any(part in name for part in ("tts", "image", "audio", "robotics", "computer-use"))):
+                            models.add(name)
+                    token = payload.get("nextPageToken")
+                    if not token:
+                        return sorted(models)
+                    if token in seen:
+                        break
+                    seen.add(token)
+                raise AIProviderError("Gemini returned an incomplete model catalog. Try again.")
+            except requests.HTTPError as exc:
+                raise AIProviderError(f"Could not list Gemini models (HTTP {exc.response.status_code}). Check your Gemini API key.") from exc
+            except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+                raise AIProviderError("Could not load Gemini models. Check your connection and try again.") from exc
         selected = self._selected()
         base_url = (
             "https://api.openai.com/v1"

@@ -323,11 +323,38 @@ messageInput.addEventListener('keydown', event => {
     }
 });
 
+async function readChatStream(response, onEvent) {
+    if (!response.body) throw new Error('Streaming is unavailable in this browser.');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+        while (true) {
+            const {value, done} = await reader.read();
+            buffer += decoder.decode(value, {stream: !done});
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            if (done && buffer.trim()) lines.push(buffer);
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                const event = JSON.parse(line);
+                if (event.type === 'error') throw new Error(event.error);
+                if (event.type === 'done') return event;
+                onEvent(event);
+            }
+            if (done) throw new Error('The connection ended before the reply was complete.');
+        }
+    } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+    }
+}
+
 composer.addEventListener('submit', async event => {
     event.preventDefault();
     const text = messageInput.value.trim();
     const file = attachmentInput.files[0];
-    if (!text && !file) return;
+    if (sendButton.disabled || (!text && !file)) return;
 
     const displayedText = text || `[Attached ${file.name}]`;
     const temporary = document.getElementById('temporary-mode').checked;
@@ -336,6 +363,7 @@ composer.addEventListener('submit', async event => {
     const typing = addMessage('assistant', 'Typing…', {typing: true});
     const body = new FormData();
     body.append('message', text);
+    body.append('stream', 'true');
     if (file) body.append('attachment', file);
     if (temporary) {
         body.append('temporary', 'true');
@@ -348,12 +376,24 @@ composer.addEventListener('submit', async event => {
     attachmentInput.value = '';
     attachmentChip.hidden = true;
     sendButton.disabled = true;
-    statusText.textContent = 'Petey is typing…';
+    statusText.textContent = 'Petey is preparing a reply…';
+    let partialText = '';
     try {
         const response = await fetch('/api/desktop/chat', {method: 'POST', body});
-        const payload = await response.json();
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Request failed');
+        }
+        const payload = await readChatStream(response, event => {
+            if (event.type !== 'delta') return;
+            const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+            partialText += event.text;
+            typing.classList.remove('typing');
+            typing.querySelector('.bubble').textContent = partialText;
+            statusText.textContent = 'Petey is replying…';
+            if (follow) messages.scrollTop = messages.scrollHeight;
+        });
         typing.remove();
-        if (!response.ok) throw new Error(payload.error || 'Request failed');
         addMessage('assistant', payload.text || '', {
             gifUrl: payload.gif_url,
             toolEvents: payload.tool_events || [],
@@ -364,7 +404,12 @@ composer.addEventListener('submit', async event => {
         if (temporary) temporaryHistory.push({role: 'assistant', content: payload.text || ''});
         statusText.textContent = temporary ? 'Temporary · nothing saved' : `Ready for ${personName}`;
     } catch (error) {
-        typing.remove();
+        if (partialText) {
+            typing.classList.remove('typing');
+            typing.querySelector('.bubble').textContent = `${partialText}\n\n[Reply interrupted]`;
+        } else {
+            typing.remove();
+        }
         addMessage('assistant', `I hit a problem: ${error.message}`);
         statusText.textContent = 'Something went wrong';
     } finally {
@@ -575,7 +620,10 @@ function showView(view) {
     window.location.hash = view === 'settings' ? 'settings' : view;
     if (['providers', 'personality'].includes(view) && !personalityLoaded) loadPersonality();
     if (['providers', 'personality'].includes(view) && !speechSettingsLoaded) loadSpeechSettings();
-    if (view === 'providers' && !aiProviderLoaded) loadAIProvider();
+    if (view === 'providers') {
+        if (!aiProviderLoaded) loadAIProvider();
+        else loadModelCatalogs();
+    }
     if (['providers', 'personality'].includes(view) && !voiceInputSettingsLoaded) loadVoiceInputSettings();
     if (view === 'providers' && !memoryProviderLoaded) loadMemoryProvider();
     if (view === 'providers' && !providerKeysLoaded) loadProviderKeys();
@@ -591,8 +639,7 @@ function showView(view) {
 }
 
 const aiProviderSelect = document.getElementById('ai-provider');
-const aiModelInput = document.getElementById('ai-model');
-const aiVisionModelInput = document.getElementById('ai-vision-model');
+const aiModelSelect = document.getElementById('ai-model-select');
 const aiBaseUrlInput = document.getElementById('ai-base-url');
 
 const aiProviderDefaults = {
@@ -603,32 +650,62 @@ const aiProviderDefaults = {
 
 function configureAIProvider(provider = aiProviderSelect.value) {
     const saved = aiProviderConfiguration?.providers?.[provider] || aiProviderDefaults[provider];
-    aiModelInput.value = saved.model || aiProviderDefaults[provider].model;
-    aiVisionModelInput.value = aiProviderConfiguration?.vision_model || 'gemini-2.5-flash';
+    fillModelChoices(aiModelSelect, aiModelCatalogs.get(provider) || [], saved.model || aiProviderDefaults[provider].model);
     aiBaseUrlInput.value = saved.base_url || aiProviderDefaults.local.base_url;
     document.getElementById('ai-base-url-field').hidden = provider !== 'local';
     document.getElementById('local-provider-presets').hidden = provider !== 'local';
-    document.getElementById('load-ai-models').hidden = provider === 'gemini';
     document.getElementById('ai-thinking-enabled').checked = saved.thinking_enabled !== false;
-    document.getElementById('vision-key-state').textContent = aiProviderConfiguration?.vision_has_api_key
-        ? 'Gemini key configured'
-        : 'Gemini key not configured';
     document.getElementById('ai-provider-badge').textContent = {gemini: 'Gemini', openai: 'OpenAI', local: 'Local'}[provider];
     document.getElementById('ai-provider-note').textContent = provider === 'local'
         ? 'Compatible with LM Studio, Ollama, and other servers exposing /v1/chat/completions.'
         : provider === 'openai'
             ? 'Requires an OpenAI API key; a ChatGPT subscription does not supply API credits.'
             : 'The shared Gemini key powers Gemini chat, vision, speech, and embeddings when selected.';
-    const datalist = document.getElementById('ai-model-options');
-    datalist.innerHTML = '';
-    const suggestions = provider === 'gemini'
-        ? ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash']
-        : provider === 'openai' ? ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini'] : [];
-    suggestions.forEach(name => {
+}
+
+const aiModelCatalogs = new Map();
+let modelCatalogRequest = 0;
+function fillModelChoices(select, names, current = select.value) {
+    select.replaceChildren();
+    for (const name of [...new Set([current, ...names].filter(Boolean))]) {
         const option = document.createElement('option');
         option.value = name;
-        datalist.append(option);
+        option.textContent = name;
+        select.append(option);
+    }
+    if (!select.options.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No models available';
+        select.append(option);
+    }
+    if (current) select.value = current;
+}
+async function loadModelCatalogs() {
+    const requestNumber = ++modelCatalogRequest;
+    const provider = aiProviderSelect.value;
+    const feedback = document.getElementById('model-catalog-status');
+    setFeedback(feedback, 'Loading models…');
+    const providers = [provider];
+    const results = await Promise.allSettled(providers.map(async name => {
+        const params = new URLSearchParams({provider: name});
+        if (name === 'local') params.set('base_url', aiBaseUrlInput.value.trim());
+        const payload = await apiJson(`/api/desktop/ai-provider/models?${params}`);
+        return {name, models: payload.models};
+    }));
+    if (requestNumber !== modelCatalogRequest) return;
+    const errors = [];
+    results.forEach((result, index) => {
+        const name = providers[index];
+        if (result.status === 'fulfilled') {
+            aiModelCatalogs.set(name, result.value.models);
+            if (name === provider) fillModelChoices(aiModelSelect, result.value.models);
+            if (!result.value.models.length) errors.push(`${name}: no models returned.`);
+        } else {
+            errors.push(`${name}: ${result.reason.message}`);
+        }
     });
+    setFeedback(feedback, errors.join(' '), errors.length ? 'error' : '');
 }
 
 async function loadAIProvider() {
@@ -639,6 +716,7 @@ async function loadAIProvider() {
         aiProviderSelect.value = payload.configuration.provider;
         configureAIProvider();
         aiProviderLoaded = true;
+        loadModelCatalogs();
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
     }
@@ -651,8 +729,7 @@ async function saveAIProvider(showFeedback = true, extra = {}) {
     if (showFeedback) setFeedback(feedback, 'Saving provider…');
     const payload = {
         provider: aiProviderSelect.value,
-        model: aiModelInput.value.trim(),
-        vision_model: aiVisionModelInput.value.trim(),
+        model: aiModelSelect.value,
         base_url: aiBaseUrlInput.value.trim(),
         thinking_enabled: document.getElementById('ai-thinking-enabled').checked,
         ...extra,
@@ -670,7 +747,11 @@ async function saveAIProvider(showFeedback = true, extra = {}) {
     }
 }
 
-aiProviderSelect.addEventListener('change', () => configureAIProvider());
+aiProviderSelect.addEventListener('change', () => {
+    configureAIProvider();
+    loadModelCatalogs();
+});
+aiBaseUrlInput.addEventListener('change', loadModelCatalogs);
 document.getElementById('save-ai-provider').addEventListener('click', async () => {
     try {
         await saveAIProvider();
@@ -682,6 +763,7 @@ document.getElementById('save-ai-provider').addEventListener('click', async () =
 document.querySelectorAll('.local-preset').forEach(button => {
     button.addEventListener('click', () => {
         aiBaseUrlInput.value = button.dataset.url;
+        loadModelCatalogs();
     });
 });
 
@@ -694,30 +776,6 @@ document.getElementById('test-ai-provider').addEventListener('click', async () =
         setFeedback(feedback, 'Connecting and asking the model for a test response…');
         const payload = await apiJson('/api/desktop/ai-provider/test', {method: 'POST'});
         setFeedback(feedback, `Connected: ${payload.response}`, 'success');
-    } catch (error) {
-        setFeedback(feedback, error.message, 'error');
-    } finally {
-        button.disabled = false;
-    }
-});
-
-document.getElementById('load-ai-models').addEventListener('click', async () => {
-    const button = document.getElementById('load-ai-models');
-    const feedback = document.getElementById('ai-provider-status');
-    button.disabled = true;
-    try {
-        await saveAIProvider(false);
-        setFeedback(feedback, 'Loading available models…');
-        const payload = await apiJson('/api/desktop/ai-provider/models');
-        const datalist = document.getElementById('ai-model-options');
-        datalist.innerHTML = '';
-        payload.models.forEach(name => {
-            const option = document.createElement('option');
-            option.value = name;
-            datalist.append(option);
-        });
-        if (payload.models.length === 1) aiModelInput.value = payload.models[0];
-        setFeedback(feedback, `Found ${payload.models.length} model${payload.models.length === 1 ? '' : 's'}.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
     } finally {
@@ -2004,6 +2062,10 @@ let mediaModelRequest = 0;
 let selectedVisualImage = null;
 let selectedMediaImageFile = null;
 let mediaSelectionUrl = '';
+let mediaPriceTimer = null;
+let mediaPriceRequest = 0;
+let mediaPriceController = null;
+const pricedMediaOperations = new Set(['txt2img', 'img2img', 'txt2video', 'img2video', 'img-rmbg', 'img-upscale']);
 const mediaPromptDraftStorageKey = 'petey.media-prompt-drafts.v1';
 
 const mediaOperationUI = {
@@ -2152,6 +2214,7 @@ async function loadMediaModels(operation) {
             : mediaSelectedModels[operation];
         mediaModel.value = preferredModel || '';
         mediaModel.disabled = false;
+        scheduleMediaEstimate();
         if (!models.length) setFeedback(mediaStatus, 'No compatible models were returned. Check the media service configuration.', 'error');
     };
     if (operation === 'txt2audio') {
@@ -2166,6 +2229,7 @@ async function loadMediaModels(operation) {
     }
     mediaModel.disabled = true;
     mediaModel.innerHTML = '<option value="">Loading compatible models…</option>';
+    scheduleMediaEstimate();
     try {
         const payload = await apiJson(`/api/desktop/media/models/${encodeURIComponent(operation)}`);
         if (requestNumber !== mediaModelRequest) return;
@@ -2175,6 +2239,7 @@ async function loadMediaModels(operation) {
     } catch (error) {
         if (requestNumber !== mediaModelRequest) return;
         mediaModel.innerHTML = '<option value="">Models unavailable</option>';
+        scheduleMediaEstimate();
         setFeedback(mediaStatus, error.message, 'error');
     }
 }
@@ -2194,6 +2259,7 @@ function clearMediaSourceSelection() {
     mediaSelectionUrl = '';
     document.getElementById('media-image-selection').hidden = true;
     document.getElementById('clear-media-image').hidden = true;
+    scheduleMediaEstimate();
 }
 
 function showMediaImageSelection(file, previewUrl) {
@@ -2203,6 +2269,7 @@ function showMediaImageSelection(file, previewUrl) {
     document.getElementById('media-image-selection-name').textContent = `${file.name} · ${formatFileSize(file.size)}`;
     document.getElementById('media-image-selection').hidden = false;
     document.getElementById('clear-media-image').hidden = false;
+    scheduleMediaEstimate();
 }
 
 document.getElementById('clear-media-image').addEventListener('click', clearMediaSourceSelection);
@@ -2363,6 +2430,7 @@ document.getElementById('enhance-media-prompt').addEventListener('click', async 
         saveMediaPromptDrafts();
         if (mediaOperation.value === operation) {
             mediaPrompt.value = payload.prompt;
+            scheduleMediaEstimate();
             setFeedback(mediaStatus, 'Prompt enhanced. Review it, then generate.', 'success');
         }
     } catch (error) {
@@ -2388,6 +2456,79 @@ function mediaParameters() {
         style: document.getElementById('media-speech-style').value,
         scale: document.getElementById('media-scale').value,
     };
+}
+
+function scheduleMediaEstimate() {
+    window.clearTimeout(mediaPriceTimer);
+    mediaPriceController?.abort();
+    const requestNumber = ++mediaPriceRequest;
+    const button = document.getElementById('generate-media');
+    const note = document.getElementById('media-price-note');
+    button.textContent = 'Generate';
+    button.title = '';
+    note.hidden = true;
+    note.textContent = '';
+    const operation = mediaOperation.value;
+    if (['txt2audio', 'txt2music'].includes(operation)) return;
+    note.hidden = false;
+    if (!pricedMediaOperations.has(operation)) {
+        note.textContent = 'Estimate unavailable for this operation.';
+        return;
+    }
+    if (mediaModel.disabled) {
+        note.textContent = 'Select an available model to estimate cost.';
+        return;
+    }
+    if (['img-rmbg', 'img-upscale'].includes(operation) && !selectedVisualImage && !selectedMediaImageFile) {
+        note.textContent = 'Choose a source image to estimate cost.';
+        return;
+    }
+    button.textContent = 'Generate · estimating…';
+    note.textContent = 'Looking up the price for these settings…';
+    mediaPriceTimer = window.setTimeout(async () => {
+        const controller = new AbortController();
+        mediaPriceController = controller;
+        const body = new FormData();
+        body.append('operation', operation);
+        body.append('model_slug', mediaModel.value);
+        body.append('parameters', JSON.stringify(mediaParameters()));
+        body.append('prompt', mediaPrompt.value);
+        if (['img-rmbg', 'img-upscale'].includes(operation)) {
+            if (selectedMediaImageFile) body.append('source', selectedMediaImageFile);
+            if (selectedVisualImage) {
+                body.append('source_browser_token', selectedVisualImage.token);
+                body.append('source_browser_path', selectedVisualImage.path);
+            }
+        }
+        try {
+            const quote = await apiJson('/api/desktop/media/estimate', {method: 'POST', body, signal: controller.signal});
+            if (requestNumber !== mediaPriceRequest) return;
+            const price = Number(quote.price);
+            if (quote.price == null || !Number.isFinite(price) || price < 0 || quote.currency !== 'USD') throw new Error('Invalid price estimate.');
+            const amount = price > 0 && price < 0.000001 ? '<$0.000001'
+                : `$${price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 6})}`;
+            button.textContent = `Generate · ~${amount}`;
+            const model = mediaModelsCache.get(operation)?.find(item => item.slug === quote.model_slug);
+            note.textContent = `Estimate for ${model?.name || quote.model_slug}. A fallback model may cost differently.`;
+            const parameters = quote.parameters || {};
+            button.title = [
+                parameters.width && parameters.height ? `${parameters.width} × ${parameters.height}` : '',
+                parameters.steps ? `${parameters.steps} steps` : '',
+                parameters.frames ? `${parameters.frames} frames at ${parameters.fps} FPS` : '',
+            ].filter(Boolean).join(' · ');
+        } catch (error) {
+            if (requestNumber !== mediaPriceRequest || error.name === 'AbortError') return;
+            button.textContent = 'Generate';
+            note.textContent = 'Estimate unavailable. You can still generate.';
+            button.title = error.message;
+        }
+    }, 450);
+}
+
+mediaModel.addEventListener('change', scheduleMediaEstimate);
+for (const id of ['media-size', 'media-steps', 'media-guidance', 'media-frames', 'media-fps', 'media-scale', 'media-prompt']) {
+    document.getElementById(id).addEventListener('input', scheduleMediaEstimate);
+    document.getElementById(id).addEventListener('change', scheduleMediaEstimate);
 }
 
 function renderMediaResult(payload) {
@@ -3442,7 +3583,7 @@ for (const [provider, name] of Object.entries(credentialNames)) {
                 // Refresh credential indicators without overwriting unsaved provider/model choices.
                 const ai = await apiJson('/api/desktop/ai-provider');
                 aiProviderConfiguration = ai.configuration;
-                document.getElementById('vision-key-state').textContent = ai.configuration.vision_has_api_key ? 'Gemini key configured' : 'Gemini key not configured';
+                loadModelCatalogs();
                 setFeedback(feedback, `${name} key ${clear ? 'cleared' : 'saved'}.`, 'success');
             } catch (error) { setFeedback(feedback, error.message, 'error'); }
             finally { if (!clear) button.disabled = false; else await loadProviderKeys(); }

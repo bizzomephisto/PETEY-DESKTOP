@@ -7,8 +7,11 @@ import base64
 import json
 import mimetypes
 import os
+import queue
+import threading
 from io import BytesIO
 from pathlib import PurePath
+from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request, send_file, url_for
 
@@ -358,6 +361,56 @@ def create_desktop_app(
                     raise ValueError
             except (json.JSONDecodeError, ValueError):
                 return jsonify({"error": "Temporary chat history is invalid."}), 400
+        if request.form.get("stream") == "true":
+            runtime = app.config["PETEY_RUNTIME"]
+            events = queue.Queue(maxsize=128)
+            stopped = threading.Event()
+
+            def emit(event):
+                while not stopped.is_set():
+                    try:
+                        events.put(event, timeout=0.2)
+                        return
+                    except queue.Full:
+                        continue
+                raise RuntimeError("Chat stream disconnected.")
+
+            def run_reply():
+                try:
+                    reply = runtime.call(service.respond(
+                        message, identity, attachment, temporary=temporary,
+                        temporary_history=temporary_history,
+                        on_text=lambda text: emit({"type": "delta", "text": text}),
+                    ))
+                    emit({"type": "done", "text": reply.text, "gif_url": reply.gif_url,
+                          "tool_events": list(reply.tool_events)})
+                except Exception as exc:
+                    if not stopped.is_set():
+                        error = str(exc) if isinstance(exc, (ValueError, AIProviderError)) else "Petey had trouble processing that message."
+                        try:
+                            emit({"type": "error", "error": error})
+                        except RuntimeError:
+                            pass
+
+            def stream_reply():
+                worker = threading.Thread(target=run_reply, daemon=True, name="petey-chat-stream")
+                worker.start()
+                try:
+                    yield json.dumps({"type": "status", "text": "Preparing reply…"}) + "\n"
+                    while True:
+                        try:
+                            event = events.get(timeout=10)
+                        except queue.Empty:
+                            yield json.dumps({"type": "heartbeat"}) + "\n"
+                            continue
+                        yield json.dumps(event) + "\n"
+                        if event["type"] in {"done", "error"}:
+                            break
+                finally:
+                    stopped.set()
+
+            return Response(stream_reply(), mimetype="application/x-ndjson",
+                            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
         try:
             reply = app.config["PETEY_RUNTIME"].call(
                 service.respond(
@@ -712,8 +765,19 @@ def create_desktop_app(
     @app.get("/api/desktop/ai-provider/models")
     def desktop_ai_models():
         current: DesktopState = app.config["PETEY_STATE"]
+        configuration = dict(current.ai_provider)
+        provider = request.args.get("provider", configuration.get("provider", "gemini"))
+        if provider not in {"gemini", "openai", "local"}:
+            return jsonify({"error": "Unsupported AI provider."}), 400
+        configuration["provider"] = provider
+        if provider == "local" and "base_url" in request.args:
+            base_url = request.args["base_url"].strip().rstrip("/")
+            parsed = urlparse(base_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                return jsonify({"error": "Enter a valid local server URL."}), 400
+            configuration["local"] = {**configuration.get("local", {}), "base_url": base_url}
         try:
-            return jsonify({"models": AIProvider(current.ai_provider).list_models()})
+            return jsonify({"models": AIProvider(configuration).list_models()})
         except AIProviderError as exc:
             return jsonify({"error": str(exc)}), 502
 
@@ -984,6 +1048,40 @@ def create_desktop_app(
             return jsonify({"prompt": enhanced.strip()[:500]})
         except AIProviderError as exc:
             return jsonify({"error": str(exc)}), 502
+
+    @app.post("/api/desktop/media/estimate")
+    def desktop_media_estimate():
+        operation = request.form.get("operation", "")
+        try:
+            parameters = json.loads(request.form.get("parameters", "{}"))
+            if not isinstance(parameters, dict):
+                raise ValueError("Media parameters must be an object.")
+            source = None
+            if operation in {"img-rmbg", "img-upscale"}:
+                uploaded = request.files.get("source")
+                if uploaded and uploaded.filename:
+                    source = MediaInput(
+                        filename=PurePath(uploaded.filename.replace("\\", "/")).name,
+                        content_type=uploaded.mimetype or "application/octet-stream",
+                        data=uploaded.read(10 * 1024 * 1024 + 1),
+                    )
+                elif request.form.get("source_browser_token"):
+                    path = app.config["PETEY_IMAGE_BROWSER"].image_file(
+                        request.form.get("source_browser_token", ""),
+                        request.form.get("source_browser_path", ""),
+                    )
+                    if path.stat().st_size > 10 * 1024 * 1024:
+                        raise ValueError("Price lookup accepts source images up to 10 MB.")
+                    source = MediaInput(path.name, mimetypes.guess_type(path.name)[0] or "image/png", path.read_bytes())
+            quote = app.config["PETEY_RUNTIME"].call(media_provider_request(
+                "estimate", operation, request.form.get("model_slug", "")[:200], parameters,
+                request.form.get("prompt", "")[:32000], source,
+            ), timeout=30)
+            return jsonify(quote)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": f"Could not estimate generation: {_public_media_error(exc)}"}), 502
 
     @app.post("/api/desktop/media/generate")
     def desktop_media_generate():

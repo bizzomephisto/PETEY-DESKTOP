@@ -477,6 +477,8 @@ class DesktopState:
                 raise ValueError("Choose a Gemini vision model.")
             gemini_settings["vision_model"] = vision_model
             current["gemini"] = gemini_settings
+        if provider == "gemini":
+            current["gemini"]["vision_model"] = provider_settings.get("model") or "gemini-2.5-flash"
         with self._lock:
             self.settings["ai_provider"] = current
             self._write_json(self.settings_path, self.settings)
