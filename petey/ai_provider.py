@@ -327,12 +327,12 @@ class AIProvider:
         content_type: str,
         user_request: str = "",
     ) -> str:
-        """Inspect an image with the independently configured Gemini vision model."""
+        """Inspect an image with the selected Gemini model."""
         gemini = dict(self.config.get("gemini") or {})
         api_key = str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
         if not api_key:
             raise AIProviderError(
-                "Image attachments need a Gemini API key. Save it under Providers & API keys."
+                "Image attachments need a Gemini API key. Save it under Models & API keys."
             )
         model = self._vision_model()
         if not model:

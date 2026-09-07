@@ -142,18 +142,27 @@ function addMessage(role, text, options = {}) {
             meta.append(speakButton);
         }
     }
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.textContent = text;
-    content.append(meta, bubble);
-
-    if (options.gifUrl) {
-        const image = document.createElement('img');
-        image.className = 'gif';
-        image.src = options.gifUrl;
-        image.alt = 'GIF selected by Petey';
-        content.append(image);
+    content.append(meta);
+    if (text || options.typing) {
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = text;
+        content.append(bubble);
     }
+
+    if (options.attachmentPreviewUrl) {
+        const attachment = document.createElement('figure');
+        attachment.className = 'message-attachment';
+        const image = document.createElement('img');
+        image.src = options.attachmentPreviewUrl;
+        image.alt = options.attachmentName ? `Attached image: ${options.attachmentName}` : 'Attached image';
+        image.addEventListener('load', () => URL.revokeObjectURL(options.attachmentPreviewUrl), {once: true});
+        const caption = document.createElement('figcaption');
+        caption.textContent = options.attachmentName || 'Attached image';
+        attachment.append(image, caption);
+        content.append(attachment);
+    }
+
     if ((options.toolEvents || []).some(event =>
         event.name === 'generate_image' && event.result?.status === 'queued'
     )) {
@@ -305,10 +314,39 @@ document.getElementById('new-chat').addEventListener('click', async () => {
     }
 });
 
+let selectedAttachmentPreviewUrl = '';
+
+function clearAttachmentPreview() {
+    if (selectedAttachmentPreviewUrl) URL.revokeObjectURL(selectedAttachmentPreviewUrl);
+    selectedAttachmentPreviewUrl = '';
+    attachmentChip.replaceChildren();
+    attachmentChip.hidden = true;
+}
+
+function renderAttachmentPreview(file) {
+    clearAttachmentPreview();
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+        attachmentChip.textContent = `Attached: ${file.name}`;
+        attachmentChip.hidden = false;
+        return;
+    }
+    selectedAttachmentPreviewUrl = URL.createObjectURL(file);
+    const image = document.createElement('img');
+    image.src = selectedAttachmentPreviewUrl;
+    image.alt = `Selected image: ${file.name}`;
+    const details = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = file.name;
+    const size = document.createElement('small');
+    size.textContent = formatFileSize(file.size);
+    details.append(name, size);
+    attachmentChip.append(image, details);
+    attachmentChip.hidden = false;
+}
+
 attachmentInput.addEventListener('change', () => {
-    const file = attachmentInput.files[0];
-    attachmentChip.hidden = !file;
-    attachmentChip.textContent = file ? `Attached: ${file.name}` : '';
+    renderAttachmentPreview(attachmentInput.files[0]);
 });
 
 messageInput.addEventListener('input', () => {
@@ -356,10 +394,12 @@ composer.addEventListener('submit', async event => {
     const file = attachmentInput.files[0];
     if (sendButton.disabled || (!text && !file)) return;
 
-    const displayedText = text || `[Attached ${file.name}]`;
+    const attachmentPreviewUrl = file?.type?.startsWith('image/') ? URL.createObjectURL(file) : '';
+    const displayedText = text || (file && !attachmentPreviewUrl ? `Attached: ${file.name}` : '');
+    const historyText = text || (file ? `[Attached ${file.name}]` : '');
     const temporary = document.getElementById('temporary-mode').checked;
     const priorTemporaryHistory = temporaryHistory.slice();
-    addMessage('user', displayedText);
+    addMessage('user', displayedText, {attachmentPreviewUrl, attachmentName: file?.name || ''});
     const typing = addMessage('assistant', 'Typing…', {typing: true});
     const body = new FormData();
     body.append('message', text);
@@ -368,13 +408,13 @@ composer.addEventListener('submit', async event => {
     if (temporary) {
         body.append('temporary', 'true');
         body.append('temporary_history', JSON.stringify(priorTemporaryHistory));
-        temporaryHistory.push({role: 'user', content: displayedText});
+        temporaryHistory.push({role: 'user', content: historyText});
     }
 
     messageInput.value = '';
     messageInput.style.height = 'auto';
     attachmentInput.value = '';
-    attachmentChip.hidden = true;
+    clearAttachmentPreview();
     sendButton.disabled = true;
     statusText.textContent = 'Petey is preparing a reply…';
     let partialText = '';
@@ -395,7 +435,6 @@ composer.addEventListener('submit', async event => {
         });
         typing.remove();
         addMessage('assistant', payload.text || '', {
-            gifUrl: payload.gif_url,
             toolEvents: payload.tool_events || [],
         });
         if (speechConfiguration?.provider !== 'disabled' && speechConfiguration?.auto_speak && payload.text) {
@@ -434,6 +473,9 @@ function setFeedback(element, text, kind = '') {
 }
 
 function applyPreferences() {
+    const theme = preferences.theme || 'midnight';
+    document.documentElement.dataset.theme = theme;
+    document.querySelectorAll('[name="interface-theme"]').forEach(input => { input.checked = input.value === theme; });
     const scale = Number(preferences.ui_scale) || 1;
     document.documentElement.style.setProperty('--ui-scale', scale);
     document.querySelector('.app-shell').classList.toggle('sidebar-collapsed', Boolean(preferences.sidebar_collapsed));
@@ -453,6 +495,34 @@ function applyPreferences() {
     document.getElementById('visual-fullscreen').hidden = !visualMode;
     if (visualMode) ensureNeuralVisualizationRunning();
 }
+
+let themeSaving = false;
+document.querySelectorAll('[name="interface-theme"]').forEach(input => {
+    input.addEventListener('change', async () => {
+        if (!input.checked || themeSaving) return;
+        themeSaving = true;
+        const previous = preferences.theme || 'midnight';
+        const controls = document.querySelectorAll('[name="interface-theme"]');
+        controls.forEach(control => { control.disabled = true; });
+        document.documentElement.dataset.theme = input.value;
+        const feedback = document.getElementById('theme-status');
+        setFeedback(feedback, 'Saving theme…');
+        try {
+            const payload = await apiJson('/api/desktop/preferences', {
+                method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({theme: input.value}),
+            });
+            preferences = {...preferences, theme: payload.preferences.theme};
+            setFeedback(feedback, 'Theme saved. Make yourself at home.', 'success');
+        } catch (error) {
+            preferences.theme = previous;
+            setFeedback(feedback, `Could not save theme: ${error.message}`, 'error');
+        } finally {
+            themeSaving = false;
+            controls.forEach(control => { control.disabled = false; });
+            applyPreferences();
+        }
+    });
+});
 
 async function savePreferences(changes, nativeTop = false) {
     const feedback = document.getElementById('preference-status');
@@ -614,7 +684,7 @@ function showView(view) {
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
     if (view === 'chat') ensureNeuralVisualizationRunning();
-    const settingsViews = ['providers', 'settings', 'personality', 'knowledge', 'memory'];
+    const settingsViews = ['providers', 'settings', 'personality', 'microphone', 'knowledge', 'memory'];
     const navView = settingsViews.includes(view) ? 'settings' : view;
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
     window.location.hash = view === 'settings' ? 'settings' : view;
@@ -624,7 +694,7 @@ function showView(view) {
         if (!aiProviderLoaded) loadAIProvider();
         else loadModelCatalogs();
     }
-    if (['providers', 'personality'].includes(view) && !voiceInputSettingsLoaded) loadVoiceInputSettings();
+    if (['providers', 'microphone'].includes(view) && !voiceInputSettingsLoaded) loadVoiceInputSettings();
     if (view === 'providers' && !memoryProviderLoaded) loadMemoryProvider();
     if (view === 'providers' && !providerKeysLoaded) loadProviderKeys();
     if (view === 'media' && !mediaCatalogLoaded) loadMediaCatalog();
@@ -864,9 +934,9 @@ async function loadVoiceInputSettings() {
         configureVoiceInputUI();
         voiceInputSettingsLoaded = true;
         if (voiceInputConfiguration.mode !== 'disabled' && voiceInputConfiguration.provider === 'deapi' && !payload.deapi_has_api_key) {
-            setFeedback(feedback, 'Add a media service key in Providers & API keys before using media transcription.', 'error');
+            setFeedback(feedback, 'Add a media service key in Models & API keys before using media transcription.', 'error');
         } else if (voiceInputConfiguration.mode !== 'disabled' && voiceInputConfiguration.provider === 'gemini' && !payload.gemini_has_api_key) {
-            setFeedback(feedback, 'Add a Gemini API key in Providers & API keys before using the microphone.', 'error');
+            setFeedback(feedback, 'Add a Gemini API key in Models & API keys before using the microphone.', 'error');
         }
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -1579,8 +1649,56 @@ document.querySelectorAll('.nav-button').forEach(button => {
     button.addEventListener('click', () => showView(button.dataset.view));
 });
 
+function openSetting(view, targetId) {
+    showView(view);
+    if (!targetId) return;
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    for (let parent = target; parent; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS') parent.open = true;
+    }
+    target.scrollIntoView({block: 'start', behavior: 'auto'});
+    const focusTarget = target.querySelector('summary, h2, input, select, button');
+    if (focusTarget) {
+        if (focusTarget.tagName === 'H2') focusTarget.tabIndex = -1;
+        focusTarget.focus({preventScroll: true});
+    }
+}
 document.querySelectorAll('[data-settings-view]').forEach(button => {
-    button.addEventListener('click', () => showView(button.dataset.settingsView));
+    button.addEventListener('click', () => openSetting(button.dataset.settingsView, button.dataset.settingsTarget));
+});
+
+// Search headings and field labels, never saved values or API keys.
+const settingSearchEntries = [...document.querySelectorAll('.settings-view .settings-card')].map((card, index) => {
+    if (!card.id) card.id = `settings-group-${index}`;
+    return {id: card.id, view: card.closest('.app-view').id.replace('view-', ''),
+        title: card.querySelector('h2')?.textContent || '',
+        keywords: [card.dataset.settingsKeywords || '', ...[...card.querySelectorAll('h2, label > span, summary p')].map(label => label.textContent)].join(' ').toLowerCase()};
+}).filter(entry => entry.title);
+document.querySelectorAll('[data-settings-search]').forEach(input => {
+    const results = input.closest('nav').querySelector('.settings-search-results');
+    input.addEventListener('input', () => {
+        const query = input.value.trim().toLowerCase();
+        results.replaceChildren();
+        results.hidden = !query;
+        if (!query) return;
+        const matches = settingSearchEntries.filter(entry => query.split(/\s+/).every(word => entry.keywords.includes(word))).slice(0, 8);
+        for (const entry of matches) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = entry.title;
+            button.addEventListener('click', () => {
+                input.value = ''; results.hidden = true;
+                openSetting(entry.view, entry.id);
+            });
+            results.append(button);
+        }
+        if (!matches.length) results.textContent = 'No matches. Try voice, model, theme, or memory.';
+    });
+    input.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { input.value = ''; results.hidden = true; }
+        if (event.key === 'Enter') { event.preventDefault(); results.querySelector('button')?.click(); }
+    });
 });
 
 document.getElementById('project-link').addEventListener('click', async event => {
@@ -3626,5 +3744,5 @@ for (const [id, endpoint, statusId, read] of [
 }
 
 const requestedView = window.location.hash.replace('#', '');
-const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'knowledge', 'memory'];
+const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'microphone', 'knowledge', 'memory'];
 if (knownViews.includes(requestedView)) showView(requestedView);

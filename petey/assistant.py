@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
-from urllib.parse import urlencode
-
-import aiohttp
 
 from petey.ai_provider import AIProvider
 
@@ -49,7 +45,6 @@ class AssistantAttachment:
 @dataclass(frozen=True)
 class AssistantReply:
     text: str
-    gif_url: Optional[str] = None
     tool_events: tuple[dict, ...] = ()
 
 
@@ -168,7 +163,6 @@ class AssistantService:
                 "Never claim a tool succeeded until its result says so, and never repeat the same "
                 "tool call just because its result is still being processed."
             ),
-            "If you want to send a GIF or meme, include [GIF: <search query>] in your response.",
         ]
         final_system = "\n".join(part for part in system_parts if part)
         tool_events = []
@@ -196,10 +190,8 @@ class AssistantService:
             if deferred_user_embedding is not None:
                 self.memory.queue_embedding(*deferred_user_embedding)
         response = self._clean_model_response(response)
-        gif_query, response = self._extract_gif(response)
-        gif_url = await self._fetch_gif(gif_query) if gif_query else None
 
-        if not response and not gif_url:
+        if not response:
             response = "I don't have anything to say right now."
         if response and not temporary:
             self.memory.store_memory(
@@ -208,7 +200,7 @@ class AssistantService:
                 PETEY_USER_ID,
                 response,
             )
-        return AssistantReply(text=response, gif_url=gif_url, tool_events=tuple(tool_events))
+        return AssistantReply(text=response, tool_events=tuple(tool_events))
 
     async def _describe_image(
         self, attachment: AssistantAttachment | None, user_request: str
@@ -228,26 +220,7 @@ class AssistantService:
         response = re.sub(r"<\|start\|>.*", "", response, flags=re.DOTALL)
         response = re.sub(r"<\|channel\|>.*?(?=\n|$)", "", response)
         response = re.sub(r"<\|constrain\|>[\d\s.]+", "", response)
+        # Older desktop/Discord prompts taught Petey this private rendering token.
+        # Ignore it if it appears in saved model context instead of exposing it.
+        response = re.sub(r"\[GIF:\s*.*?]", "", response, flags=re.IGNORECASE)
         return response.strip()
-
-    @staticmethod
-    def _extract_gif(response: str) -> tuple[str | None, str]:
-        match = re.search(r"\[GIF:\s*(.*?)]", response, re.IGNORECASE)
-        if not match:
-            return None, response
-        query = match.group(1).strip()
-        cleaned = re.sub(r"\[GIF:\s*.*?]", "", response, flags=re.IGNORECASE).strip()
-        return query, cleaned
-
-    @staticmethod
-    async def _fetch_gif(query: str) -> str | None:
-        params = urlencode({"api_key": "dc6zaTOxFJmzC", "tag": query, "rating": "r"})
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"https://api.giphy.com/v1/gifs/random?{params}") as response:
-                    if response.status != 200:
-                        return None
-                    payload = await response.json()
-                    return payload.get("data", {}).get("images", {}).get("original", {}).get("url")
-        except aiohttp.ClientError:
-            return None

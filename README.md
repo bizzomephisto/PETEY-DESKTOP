@@ -1,6 +1,6 @@
 # PETEY Desktop
 
-Current release: **v0.13.0**
+Current release: **v0.14.0**
 
 PETEY is a standalone desktop AI assistant with local conversations, configurable
 personality, universal SQLite memory, RAG document management, deAPI media tools,
@@ -13,6 +13,10 @@ and an approval-gated project workspace.
 | Media studio | Audio-reactive visual mode |
 | --- | --- |
 | ![PETEY media generation studio](docs/screenshots/media.png) | ![PETEY audio-reactive neural visualization](docs/screenshots/visual-mode.png) |
+
+| Settings | Gallery actions |
+| --- | --- |
+| ![PETEY appearance settings and theme picker](docs/screenshots/settings.png) | ![PETEY gallery image actions](docs/screenshots/gallery.png) |
 
 ## Character creation and roleplay
 
@@ -52,7 +56,7 @@ speed, and hardware setup.
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
 - Per-operation media prompt drafts that remain available across app restarts
 - Conversational image generation through modular model tools
-- Gemini image inspection with an independently selectable vision model
+- Gemini image inspection using the selected Gemini chat model
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
@@ -69,7 +73,7 @@ browser.
 - A Gemini API key if you want image inspection, Gemini speech, or transcription fallback
 - A deAPI key if you want media generation or low-cost microphone transcription
 
-Manage keys and service models in **Settings → Providers & API keys**. Gemini,
+Manage keys and service models in **Settings → Models & API keys**. Gemini,
 OpenAI, local-server, and deAPI keys can be saved independently of the active chat
 provider. Existing environment keys remain supported. Voice identity and delivery
 settings stay under **Personality & voice**.

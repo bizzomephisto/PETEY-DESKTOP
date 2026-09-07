@@ -1,11 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{ theme }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Petey</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='desktop.css') }}">
 </head>
+{% macro settings_navigation(active) -%}
+<nav class="settings-tabs" aria-label="Settings categories">
+    <label class="settings-search"><span>Find a setting</span><input type="search" data-settings-search placeholder="Search settings…" aria-label="Find a setting" autocomplete="off"></label>
+    <div class="settings-search-results" aria-live="polite" hidden></div>
+    <span class="nav-eyebrow">YOUR PETEY</span>
+    {% for key, label, description, icon in [
+        ('settings', 'Appearance', 'Theme, display & your name', '◐'),
+        ('personality', 'Personality & voice', 'Character, tone & speaking', '✧'),
+        ('microphone', 'Microphone', 'Listening & input device', '⌁'),
+        ('providers', 'Models & API keys', 'Services & connections', '◇'),
+        ('knowledge', 'Knowledge', 'Files Petey can reference', '▤'),
+        ('memory', 'Memory & privacy', 'Stored chats & data controls', '◷')
+    ] %}
+    <button class="settings-tab{% if key == active %} active{% endif %}" data-settings-view="{{ key }}" type="button" {% if key == active %}aria-current="page"{% endif %}><span class="settings-nav-icon" aria-hidden="true">{{ icon }}</span><span><strong>{{ label }}</strong><small>{{ description }}</small></span></button>
+    {% endfor %}
+    <p class="settings-nav-note">Your settings stay on this device.</p>
+</nav>
+{%- endmacro %}
 <body>
     <main class="app-shell">
         <aside class="sidebar">
@@ -222,16 +240,18 @@
         </section>
 
         <section id="view-settings" class="tool-view app-view settings-view">
-            <header class="tool-header"><div><h1>Settings</h1><p>Manage your profile and the desktop interface.</p></div></header>
-            <div class="settings-tabs" role="tablist">
-                <button class="settings-tab active" data-settings-view="settings" type="button">App</button><button class="settings-tab" data-settings-view="providers" type="button">Providers &amp; API keys</button>
-                <button class="settings-tab" data-settings-view="personality" type="button">Personality &amp; voice</button>
-                <button class="settings-tab" data-settings-view="knowledge" type="button">Knowledge / RAG</button>
-                <button class="settings-tab" data-settings-view="memory" type="button">Memory</button>
-            </div>
-            <div class="tool-content">
+            <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Appearance</h1><p>A space that feels like yours.</p></div></header>
+            {{ settings_navigation("settings") }}
+            <div class="tool-content"><section id="theme-settings" class="settings-card theme-settings" data-settings-keywords="theme dark light color appearance">
+    <div class="card-heading"><div><h2>Pick a theme</h2><p>Choose a theme. It applies across Petey and saves automatically.</p></div><span class="provider-badge">Appearance</span></div>
+    <fieldset class="theme-picker"><legend class="sr-only">Interface theme</legend>
+<label class="theme-choice" data-theme-preview="midnight"><input type="radio" name="interface-theme" value="midnight" {% if theme == 'midnight' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Midnight</strong><small>The Petey original</small><span class="theme-check" aria-hidden="true">✓</span></span></label><label class="theme-choice" data-theme-preview="ocean"><input type="radio" name="interface-theme" value="ocean" {% if theme == 'ocean' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Ocean</strong><small>Cool & focused</small><span class="theme-check" aria-hidden="true">✓</span></span></label><label class="theme-choice" data-theme-preview="forest"><input type="radio" name="interface-theme" value="forest" {% if theme == 'forest' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Forest</strong><small>Quiet & grounded</small><span class="theme-check" aria-hidden="true">✓</span></span></label><label class="theme-choice" data-theme-preview="paper"><input type="radio" name="interface-theme" value="paper" {% if theme == 'paper' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Paper</strong><small>A little daylight</small><span class="theme-check" aria-hidden="true">✓</span></span></label></fieldset><p id="theme-status" class="wide-status" role="status"></p></section><div class="settings-shortcuts" aria-label="Popular settings">
+<button type="button" data-settings-view="personality" data-settings-target="speech-settings-card"><span aria-hidden="true">✧</span><strong>Change Petey’s voice</strong><small>Voice, delivery & read aloud →</small></button>
+<button type="button" data-settings-view="providers" data-settings-target="chat-model-settings"><span aria-hidden="true">◇</span><strong>Choose an AI model</strong><small>Chat models & connections →</small></button>
+<button type="button" data-settings-view="providers" data-settings-target="api-key-settings"><span aria-hidden="true">⌘</span><strong>Connect a service</strong><small>Add or update an API key →</small></button>
+</div>
 
-                <details class="settings-card settings-section">
+                <details id="profile-settings" class="settings-card settings-section">
                     <summary><div class="settings-section-heading"><div><h2>Your name</h2><p>Choose how Petey addresses you and labels your chat messages.</p></div><span class="provider-badge">Local profile</span></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
@@ -241,8 +261,8 @@
 
                     </div>
                 </details>
-                <details class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Appearance &amp; window</h2><p>Interface scale, navigation, and window behavior. Changes apply immediately.</p></div></div></summary>
+                <details id="window-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Display &amp; window</h2><p>Interface scale, navigation, and window behavior. Changes apply immediately.</p></div></div></summary>
                     <div class="settings-section-body">
                         <label class="preference-row"><span><strong>Always on top</strong><small>Keep Petey above other desktop windows.</small></span><input id="always-on-top" type="checkbox" role="switch"></label>
                         <label class="preference-row"><span><strong>Collapsed sidebar</strong><small>Use a compact navigation rail.</small></span><input id="sidebar-collapsed-setting" type="checkbox" role="switch"></label>
@@ -255,20 +275,15 @@
         </section>
 
         <section id="view-providers" class="tool-view app-view settings-view">
-            <header class="tool-header"><div><h1>Settings · Providers &amp; API keys</h1><p>Manage connections, credentials, and models for every service.</p></div></header>
-            <div class="settings-tabs" role="tablist">
-                <button class="settings-tab" data-settings-view="settings" type="button">App</button><button class="settings-tab active" data-settings-view="providers" type="button">Providers &amp; API keys</button>
-                <button class="settings-tab" data-settings-view="personality" type="button">Personality &amp; voice</button>
-                <button class="settings-tab" data-settings-view="knowledge" type="button">Knowledge / RAG</button>
-                <button class="settings-tab" data-settings-view="memory" type="button">Memory</button>
-            </div>
+            <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Models & API keys</h1><p>Connect your services. Choose what powers each part of Petey.</p></div></header>
+            {{ settings_navigation("providers") }}
             <div class="tool-content">
-                <details class="settings-card settings-section" open>
+                <details data-settings-keywords="Google Gemini OpenAI deAPI local credentials connection" id="api-key-settings" class="settings-card settings-section">
                     <summary><div class="settings-section-heading"><div><h2>API keys</h2><p>Shared credentials for chat, vision, speech, memory, and media.</p></div></div></summary>
                     <div class="settings-section-body">
                         <p class="hint">Keys are stored in this installation’s settings. Blank fields keep existing keys; clearing a saved key restores any environment key.</p><div id="provider-key-fields" class="credential-grid"></div><p id="provider-keys-status" class="wide-status" role="status"></p></div>
                 </details>
-                <details class="settings-card settings-section ai-provider-card">
+                <details id="chat-model-settings" class="settings-card settings-section ai-provider-card" open>
                     <summary><div class="settings-section-heading"><div><h2>Chat &amp; vision</h2><p>Choose the language model that powers Petey’s chat and prompt tools.</p></div><span id="ai-provider-badge" class="provider-badge">Gemini</span></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column ai-provider-fields">
@@ -299,8 +314,8 @@
 
                     </div>
                 </details>
-                <details class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Speech generation</h2><p>Choose who speaks and which speech models to use.</p></div></div></summary>
+                <details id="speech-model-settings" class="settings-card settings-section">
+                    <summary><div class="settings-section-heading"><div><h2>Spoken replies</h2><p>Choose who speaks and which speech models to use.</p></div></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
                             <label><span>Speech provider</span><select id="speech-provider"><option value="automatic">Automatic — Gemini, then OpenAI</option><option value="gemini">Google Gemini only</option><option value="openai">OpenAI only</option><option value="disabled">Disabled</option></select></label>
@@ -308,20 +323,20 @@
                             <label id="speech-openai-model-field" hidden><span>OpenAI TTS model</span><select id="speech-openai-model"><option value="gpt-4o-mini-tts">GPT-4o Mini TTS</option></select></label>
                         </div>
                         <div class="inline-actions"><button id="save-speech-provider" class="primary-button" type="button">Save speech provider</button><a class="secondary-button link-button" href="https://aistudio.google.com/billing" target="_blank" rel="noopener">View Google balance ↗</a><span id="speech-provider-save-status" class="wide-status"></span></div>
-                        <p class="hint">Voice selection and delivery are in Personality &amp; voice. Saved personas also include speech provider and model choices.</p></div>
+                        <p class="hint">Your persona includes these speech settings. <button class="text-button" data-settings-view="personality" data-settings-target="speech-settings-card" type="button">Choose a voice &amp; delivery →</button></p></div>
                 </details>
-                <details class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Microphone transcription</h2><p>Choose who converts your speech into text.</p></div></div></summary>
+                <details id="transcription-model-settings" class="settings-card settings-section">
+                    <summary><div class="settings-section-heading"><div><h2>Speech recognition</h2><p>Choose who converts your speech into text.</p></div></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
                             <label><span>Transcription provider</span><select id="voice-input-provider"><option value="deapi">Automatic — Media, then Gemini</option><option value="gemini">Google Gemini only</option></select></label>
                             <label><span>Transcription model</span><select id="voice-input-model"><option value="WhisperLargeV3">Whisper Large V3</option></select></label>
                         </div>
                         <div class="inline-actions"><button id="save-transcription-provider" class="primary-button" type="button">Save transcription provider</button><span id="transcription-provider-status" class="wide-status"></span></div>
-                        <p class="hint">Listening mode, microphone, and sensitivity are in Personality &amp; voice.</p></div>
+                        <p class="hint"><button class="text-button" data-settings-view="microphone" data-settings-target="microphone-settings" type="button">Set up your microphone →</button></p></div>
                 </details>
-                <details class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Memory &amp; embeddings</h2><p>Messages and documents stay in local SQLite. Choose who creates their search vectors.</p></div><span class="provider-badge">Local database</span></div></summary>
+                <details id="embedding-settings" class="settings-card settings-section">
+                    <summary><div class="settings-section-heading"><div><h2>Memory search</h2><p>Choose how Petey finds relevant details in conversations and knowledge files.</p></div><span class="provider-badge">Local database</span></div></summary>
                     <div class="settings-section-body">
                     <div class="field-grid two-column memory-provider-fields">
                         <label><span>Embedding provider</span><select id="memory-provider"><option value="local">Local / OpenAI-compatible</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option></select></label>
@@ -332,14 +347,14 @@
                     <p id="memory-provider-note" class="hint"></p>
                     <div class="inline-actions">
                         <button id="save-memory-provider" class="primary-button" type="button">Save memory provider</button>
-                        <button id="test-memory-provider" class="secondary-button" type="button">Test embeddings</button>
-                        <button id="rebuild-memory" class="secondary-button" type="button">Rebuild vectors</button>
+                        <button id="test-memory-provider" class="secondary-button" type="button">Test memory search</button>
+                        <button id="rebuild-memory" class="secondary-button" type="button">Rebuild search index</button>
                         <button id="fully-local-preset" class="secondary-button" type="button">Local chat + memory</button>
                     </div>
                     <span id="memory-provider-status" class="wide-status"></span>
                 </div>
                 </details>
-                <details class="settings-card settings-section">
+                <details id="media-provider-settings" class="settings-card settings-section">
                     <summary><div class="settings-section-heading"><div><h2>Media generation</h2><p>Images, video, and music use deAPI. Its key is managed above.</p></div></div></summary>
                     <div class="settings-section-body">
                         <p class="hint">Choose an operation and its model on the Media page.</p><button class="secondary-button" data-open-media type="button">Open Media →</button></div>
@@ -348,18 +363,12 @@
         </section>
 
         <section id="view-personality" class="tool-view app-view settings-view">
-            <header class="tool-header"><div><h1>Settings · Personality &amp; voice</h1><p>Shape Petey’s character, spoken voice, and conversation style.</p></div><span id="personality-status" class="save-status"></span></header>
-            <div class="settings-tabs" role="tablist"><button class="settings-tab" data-settings-view="settings" type="button">App</button><button class="settings-tab" data-settings-view="providers" type="button">Providers &amp; API keys</button><button class="settings-tab active" data-settings-view="personality" type="button">Personality &amp; voice</button><button class="settings-tab" data-settings-view="knowledge" type="button">Knowledge / RAG</button><button class="settings-tab" data-settings-view="memory" type="button">Memory</button></div>
+            <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Personality & voice</h1><p>Make Petey sound, speak, and feel like Petey.</p></div><span id="personality-status" class="save-status"></span></header>
+            {{ settings_navigation("personality") }}
             <div class="tool-content">
-                <details class="settings-card settings-section" open>
-                    <summary><div class="settings-section-heading"><div><h2>Saved personas</h2><p>Keep up to five personality and voice snapshots on this machine.</p></div><span class="provider-badge">5 local slots</span></div></summary>
-                    <div class="settings-section-body">
-                        <div id="saved-persona-slots" class="persona-slot-grid"></div>
 
-                    </div>
-                </details>
-                <details class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Character &amp; instructions</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div></div></summary>
+                <details id="character-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
                             <label><span>Preset</span><select id="persona-preset"><option value="">Custom</option></select></label>
@@ -367,14 +376,14 @@
                             <label><span>Role</span><input id="persona-role" type="text" maxlength="80"></label>
                             <label><span>Tagline</span><input id="persona-tagline" type="text" maxlength="160"></label>
                         </div>
-                        <label class="full-field"><span>System prompt</span><textarea id="persona-prompt" rows="10" placeholder="You are Petey…"></textarea></label>
+                        <label class="full-field"><span>Instructions for Petey</span><textarea id="persona-prompt" rows="10" placeholder="You are Petey…"></textarea></label>
                         <div class="inline-actions"><button id="rewrite-persona" class="secondary-button" type="button">✦ Improve with Gemini</button><span class="hint">Rewrites the prompt without saving it.</span></div>
                         <label class="full-field"><span>Traits <small>comma separated</small></span><input id="persona-traits" type="text" placeholder="Supportive, Witty, Direct"></label>
 
                     </div>
                 </details>
 
-                <details class="settings-card settings-section">
+                <details id="communication-settings" class="settings-card settings-section">
                     <summary><div class="settings-section-heading"><div><h2>Communication style</h2><p>Adjust tone, detail, formality, and empathy.</p></div></div></summary>
                     <div class="settings-section-body">
 
@@ -397,16 +406,28 @@
                         </div>
                         <label id="speech-consistent-voice-row" class="preference-row" hidden><span><strong>Consistent voice</strong><small>Ask Gemini to preserve the selected speaker's identity, timbre, accent, and vocal character between replies.</small></span><input id="speech-consistent-voice" type="checkbox" role="switch" checked></label>
                         <label class="preference-row"><span><strong>Automatically speak replies</strong><small>Play each new Petey chat response using the selected speech provider.</small></span><input id="speech-auto-speak" type="checkbox" role="switch"></label>
-                        <p class="hint">Choose speech providers and models in <button class="text-button" data-settings-view="providers" type="button">Providers &amp; API keys →</button></p><p id="speech-provider-note" class="hint"></p>
+                        <p class="hint">Speech service and model: <button class="text-button" data-settings-view="providers" data-settings-target="speech-model-settings" type="button">Choose speech provider →</button></p><p id="speech-provider-note" class="hint"></p>
                         <div class="inline-actions"><button id="save-speech-settings" class="primary-button" type="button">Save voice</button><span id="speech-settings-status" class="wide-status"></span></div>
                         <p class="hint">Saving this personality also saves these voice settings.</p>
 
                     </div>
                 </details>
-                <details class="settings-card settings-section">
+
+                <details id="saved-personas-settings" class="settings-card settings-section">
+                    <summary><div class="settings-section-heading"><div><h2>Saved personas</h2><p>Keep up to five personality and voice snapshots on this machine.</p></div><span class="provider-badge">5 local slots</span></div></summary>
+                    <div class="settings-section-body">
+                        <div id="saved-persona-slots" class="persona-slot-grid"></div>
+
+                    </div>
+                </details>
+<div class="settings-save-bar"><span>Character, style, and voice save together.</span><button id="save-personality" class="primary-button" type="button">Save personality &amp; voice</button></div>
+            </div>
+        </section>
+
+<section id="view-microphone" class="tool-view app-view settings-view"><header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Microphone</h1><p>Choose how Petey hears you.</p></div></header>{{ settings_navigation("microphone") }}<div class="tool-content"><details id="microphone-settings" class="settings-card settings-section" open>
                     <summary><div class="settings-section-heading"><div><h2>Microphone input</h2><p>Talk to Petey using push-to-talk, continuous listening, or his wake name.</p></div><span id="voice-input-badge" class="provider-badge">Off</span></div></summary>
                     <div class="settings-section-body">
-                        <p class="hint">Microphone settings apply across all personas and are saved separately. Transcription providers are managed in Providers &amp; API keys.</p>
+                        <p class="hint">These settings apply to every personality. The microphone stays off until you enable a listening mode.</p>
                         <div class="field-grid two-column">
                             <label><span>Listening mode</span><select id="voice-input-mode"><option value="disabled">Off</option><option value="push_to_talk">Push to talk</option><option value="always_on">Mic always on</option><option value="wake_word">Always on · listen for Petey</option></select></label>
                             <label><span>Audio input</span><select id="voice-input-device"><option value="">System default microphone</option></select></label>
@@ -422,15 +443,11 @@
                         <div class="inline-actions"><button id="save-voice-input" class="primary-button" type="button">Save microphone settings</button><span id="voice-input-settings-status" class="wide-status"></span></div>
                         <p class="hint">Voice activity is detected on this machine. Completed utterance clips use low-cost media transcription first and Gemini only as a fallback; recordings are not added to Petey's gallery or memory.</p>
 
-                    </div>
-                </details>
-                <button id="save-personality" class="primary-button" type="button">Save personality &amp; voice</button>
-            </div>
-        </section>
-
+                    <p class="hint">Need a different transcription service? <button class="text-button" data-settings-view="providers" data-settings-target="transcription-model-settings" type="button">Choose transcription provider →</button></p></div>
+                </details></div></section>
         <section id="view-knowledge" class="tool-view app-view settings-view">
-            <header class="tool-header"><div><h1>Settings · Knowledge / RAG</h1><p>Give Petey reference material and verify what he recalls.</p></div></header>
-            <div class="settings-tabs" role="tablist"><button class="settings-tab" data-settings-view="settings" type="button">App</button><button class="settings-tab" data-settings-view="providers" type="button">Providers &amp; API keys</button><button class="settings-tab" data-settings-view="personality" type="button">Personality &amp; voice</button><button class="settings-tab active" data-settings-view="knowledge" type="button">Knowledge / RAG</button><button class="settings-tab" data-settings-view="memory" type="button">Memory</button></div>
+            <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Knowledge</h1><p>Give Petey useful reference material.</p></div></header>
+            {{ settings_navigation("knowledge") }}
             <div class="tool-content">
                 <section class="settings-card upload-card">
                     <div><h2>Add knowledge</h2><p>Text, Markdown, JSON, or text-based PDF · up to 25 MB</p></div>
@@ -443,25 +460,25 @@
                     <div id="knowledge-list" class="document-list"><p class="muted">Loading documents…</p></div>
                 </section>
                 <section class="settings-card">
-                    <h2>Test retrieval</h2>
-                    <p>Search the same semantic memory Petey uses while chatting.</p>
-                    <div class="search-row"><input id="rag-query" type="text" placeholder="What does Petey know about…?"><button id="search-rag" class="secondary-button" type="button">Search RAG</button></div>
+                    <h2>Try a knowledge search</h2>
+                    <p>See which reference material Petey can find for a question.</p>
+                    <div class="search-row"><input id="rag-query" type="text" placeholder="What does Petey know about…?"><button id="search-rag" class="secondary-button" type="button">Search knowledge</button></div>
                     <pre id="rag-results" class="rag-results" hidden></pre>
                 </section>
             </div>
         </section>
 
         <section id="view-memory" class="tool-view app-view settings-view">
-            <header class="tool-header"><div><h1>Settings · Memory</h1><p>Inspect what is stored for this installation.</p></div></header>
-            <div class="settings-tabs" role="tablist"><button class="settings-tab" data-settings-view="settings" type="button">App</button><button class="settings-tab" data-settings-view="providers" type="button">Providers &amp; API keys</button><button class="settings-tab" data-settings-view="personality" type="button">Personality &amp; voice</button><button class="settings-tab" data-settings-view="knowledge" type="button">Knowledge / RAG</button><button class="settings-tab active" data-settings-view="memory" type="button">Memory</button></div>
+            <header class="tool-header"><div><span class="page-eyebrow">SETTINGS</span><h1>Memory & privacy</h1><p>See what Petey remembers. Stay in control of your data.</p></div></header>
+            {{ settings_navigation("memory") }}
             <div class="tool-content">
-                <p class="hint">Configure embedding providers and rebuild search vectors in <button class="text-button" data-settings-view="providers" type="button">Providers &amp; API keys →</button></p>
+                <p class="hint">Memory is stored on this device. <button class="text-button" data-settings-view="providers" data-settings-target="embedding-settings" type="button">Configure memory search →</button></p>
                 <div class="stats-grid">
                     <article class="stat-card"><strong id="memory-conversation-count">—</strong><span>Conversation messages</span></article>
-                    <article class="stat-card"><strong id="memory-document-count">—</strong><span>Document chunks</span></article>
-                    <article class="stat-card"><strong id="memory-embedded-count">—</strong><span>Embedded memories</span></article>
+                    <article class="stat-card"><strong id="memory-document-count">—</strong><span>Document passages</span></article>
+                    <article class="stat-card"><strong id="memory-embedded-count">—</strong><span>Searchable memories</span></article>
                 </div>
-                <section class="settings-card danger-card">
+<details id="data-removal-settings" class="settings-card settings-section danger-zone"><summary><div class="settings-section-heading"><div><h2>Delete stored data</h2><p>Clear a conversation or reset Petey’s memory. These actions cannot be undone.</p></div></div></summary><div class="settings-section-body">                <section class="settings-card danger-card">
                     <div><h2>Clear current conversation</h2><p>Deletes messages from the selected chat. Uploaded knowledge files remain intact.</p></div>
                     <button id="clear-conversation" class="danger-button" type="button">Clear conversation</button>
                     <span id="clear-memory-status" class="wide-status"></span>
@@ -471,7 +488,7 @@
                     <button id="reset-all-memory" class="danger-button" type="button">Reset local database</button>
                     <span id="reset-memory-status" class="wide-status"></span>
                 </section>
-            </div>
+</div></details>            </div>
         </section>
     </main>
     <dialog id="image-browser-dialog" class="image-browser-dialog">

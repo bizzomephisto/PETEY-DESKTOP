@@ -132,12 +132,11 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("A small green robot on a desk.", llm.call_args.args[0])
 
-    def test_model_tokens_and_gif_directive_are_removed(self):
-        cleaned = AssistantService._clean_model_response("Hi <|junk|> there")
-        query, text = AssistantService._extract_gif(cleaned + " [GIF: happy robot]")
+    def test_model_and_legacy_gif_tokens_are_removed(self):
+        cleaned = AssistantService._clean_model_response(
+            "Hi <|junk|> there [GIF: happy robot]"
+        )
         self.assertEqual(cleaned, "Hi  there")
-        self.assertEqual(query, "happy robot")
-        self.assertEqual(text, "Hi  there")
 
 
 if __name__ == "__main__":

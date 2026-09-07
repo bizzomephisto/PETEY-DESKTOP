@@ -130,6 +130,7 @@ def create_desktop_app(
         return render_template(
             "desktop.html",
             app_version=__version__,
+            theme=app.config["PETEY_STATE"].preferences.get("theme", "midnight"),
             project_url=PROJECT_URL,
             media_provider_url=MEDIA_PROVIDER_URL,
         )
@@ -382,7 +383,7 @@ def create_desktop_app(
                         temporary_history=temporary_history,
                         on_text=lambda text: emit({"type": "delta", "text": text}),
                     ))
-                    emit({"type": "done", "text": reply.text, "gif_url": reply.gif_url,
+                    emit({"type": "done", "text": reply.text,
                           "tool_events": list(reply.tool_events)})
                 except Exception as exc:
                     if not stopped.is_set():
@@ -424,7 +425,6 @@ def create_desktop_app(
             return jsonify(
                 {
                     "text": reply.text,
-                    "gif_url": reply.gif_url,
                     "tool_events": list(reply.tool_events),
                 }
             )

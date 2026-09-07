@@ -8,6 +8,30 @@ from petey.desktop_state import DesktopState
 
 
 class DesktopStateTests(unittest.TestCase):
+    def test_theme_persists_and_invalid_theme_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            self.assertEqual(state.preferences["theme"], "midnight")
+            for theme in ("midnight", "ocean", "forest", "paper"):
+                state.update_preferences({"theme": theme})
+                self.assertEqual(DesktopState(directory).preferences["theme"], theme)
+            with self.assertRaises(ValueError):
+                state.update_preferences({"theme": "unsupported"})
+            self.assertEqual(state.preferences["theme"], "paper")
+
+    def test_old_or_invalid_theme_settings_load_with_default(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            for theme in (None, "unsupported", {"invalid": True}):
+                settings = json.loads(state.settings_path.read_text())
+                if theme is None:
+                    settings["preferences"].pop("theme", None)
+                else:
+                    settings["preferences"]["theme"] = theme
+                state.settings_path.write_text(json.dumps(settings))
+                self.assertEqual(DesktopState(directory).preferences["theme"], "midnight")
+
     def test_installation_identity_is_stable(self):
         with tempfile.TemporaryDirectory() as directory:
             first = DesktopState(directory)

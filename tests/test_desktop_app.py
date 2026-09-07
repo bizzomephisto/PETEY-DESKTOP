@@ -18,6 +18,17 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_theme_api_and_initial_html_use_saved_theme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            client = create_desktop_app(state=state, memory=MagicMock(), job_manager=MagicMock()).test_client()
+            response = client.put("/api/desktop/preferences", json={"theme": "paper"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json["preferences"]["theme"], "paper")
+            self.assertIn('data-theme="paper"', client.get('/').get_data(as_text=True))
+            self.assertEqual(client.get('/api/desktop/bootstrap').json['preferences']['theme'], 'paper')
+            self.assertEqual(client.put('/api/desktop/preferences', json={'theme': 'bad'}).status_code, 400)
+
     def test_gemini_model_selection_also_updates_vision(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -49,7 +60,7 @@ class DesktopAppTests(unittest.TestCase):
             if not release.wait(3):
                 raise RuntimeError("Client did not receive first delta")
             on_text("world")
-            return AssistantReply(text="Hello world", gif_url=None)
+            return AssistantReply(text="Hello world")
         with tempfile.TemporaryDirectory() as directory:
             app = create_desktop_app(state=DesktopState(directory), memory=MagicMock(), job_manager=MagicMock())
             with patch("web.desktop_app.AssistantService.respond", side_effect=respond):
@@ -61,6 +72,7 @@ class DesktopAppTests(unittest.TestCase):
                 events = [json.loads(chunk) for chunk in chunks]
                 self.assertEqual(events[-1]["type"], "done")
                 self.assertEqual(events[-1]["text"], "Hello world")
+                self.assertNotIn("gif_url", events[-1])
                 response.close()
 
     def test_chat_stream_reports_errors_without_done(self):
@@ -288,6 +300,7 @@ class DesktopAppTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.get_json()["text"], "Desktop reply")
+            self.assertNotIn("gif_url", response.get_json())
 
     def test_conversation_management_and_preferences(self):
         with tempfile.TemporaryDirectory() as directory:

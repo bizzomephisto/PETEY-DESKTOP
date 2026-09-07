@@ -125,11 +125,15 @@ class DesktopState:
             "ui_scale": 1.0,
             "visual_mode": False,
             "visual_style": "neural_core",
+            "theme": "midnight",
         }
         for key, value in defaults.items():
             if key not in settings["preferences"]:
                 settings["preferences"][key] = value
                 changed = True
+        if str(settings["preferences"].get("theme")) not in {"midnight", "ocean", "forest", "paper"}:
+            settings["preferences"]["theme"] = "midnight"
+            changed = True
         if not isinstance(settings.get("workspaces"), list):
             settings["workspaces"] = []
             changed = True
@@ -362,6 +366,11 @@ class DesktopState:
 
     def update_preferences(self, changes: dict) -> dict:
         preferences = self.preferences
+        if "theme" in changes:
+            theme = str(changes["theme"])
+            if theme not in {"midnight", "ocean", "forest", "paper"}:
+                raise ValueError("Choose a supported theme.")
+            preferences["theme"] = theme
         if "always_on_top" in changes:
             preferences["always_on_top"] = bool(changes["always_on_top"])
         if "sidebar_collapsed" in changes:

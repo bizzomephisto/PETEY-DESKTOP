@@ -1,6 +1,6 @@
 # PETEY coding-agent context
 
-Scope: repository. Snapshot: 2026-09-05, v0.13.0, source baseline `27acc19`.
+Scope: repository. Snapshot: 2026-09-06, v0.14.0, source baseline `a63ee7f`.
 Start here; read only task-relevant implementation/tests. This is a navigation cache, not a substitute for checking code before edits. Source wins on factual drift; update this file when architecture, commands, contracts, or extension points change. Keep it compact; no session logs or copied source.
 
 ## Fast start
@@ -22,7 +22,7 @@ Chat model picker: `AIProvider.list_models` supports Gemini's paginated model ca
 
 Vision has no separate UI selector. With Gemini chat, `AIProvider._vision_model` follows the chat model (including older settings); saving Gemini chat also synchronizes the retained vision setting. OpenAI/local chat still uses the configured Gemini vision model. Read-only catalog provider and local `base_url` overrides never change saved settings.
 
-Chat: multipart `/chat` -> `AssistantIdentity` + optional `AssistantAttachment` -> `AssistantService.respond` -> recent history + cross-conversation retrieval + optional Gemini image description -> `AIProvider.complete[_with_tools]` -> `AssistantReply(text,gif_url,tool_events)` -> persistence/UI. User messages can use deferred embeddings; queue them after provider completion. Assistant author ID = `PETEY`.
+Chat: multipart `/chat` -> `AssistantIdentity` + optional `AssistantAttachment` -> `AssistantService.respond` -> recent history + cross-conversation retrieval + optional Gemini image description -> `AIProvider.complete[_with_tools]` -> `AssistantReply(text,tool_events)` -> persistence/UI. User messages can use deferred embeddings; queue them after provider completion. Assistant author ID = `PETEY`.
 
 Chat streaming: multipart `/chat` with `stream=true` returns NDJSON status/delta/done/error events and heartbeats via a bounded worker queue. `AssistantService.respond(on_text=...)` uses `AIProvider.complete_stream` for Gemini and ordinary OpenAI/local replies; OpenAI/local tool loops remain buffered. Provider SSE responses close on completion/error; only final cleaned replies enter assistant memory. JS `readChatStream` handles split UTF-8/events and marks interrupted partial replies; speech runs after completion. The original JSON route behavior remains available without the stream flag.
 
@@ -57,7 +57,7 @@ Paths below are repo-relative; backend modules live under `petey/` unless otherw
 
 JS navigation (search symbols, not fixed line numbers): `loadDesktop`, `addMessage`, `showView`, `applyPreferences`; `loadAIProvider`; `loadVoiceInputSettings`; `speakChatText`, `playGeminiSpeechStream`; `loadPersonality`, `renderSavedPersonaSlots`; `loadKnowledge`, `loadMemoryProvider`; `loadMediaCatalog`; `loadWorkspaces`, `openWorkspaceFile`, `renderWorkspaceProposals`; `startNeuralVisualization`. Composer submission and many controls use inline event listeners. Match HTML element IDs, JS selectors, CSS classes, and API fields when changing UI.
 
-Settings UI: `view-providers` (Providers & API keys) centralizes credentials, chat/vision, TTS, STT, and embedding provider/model controls; `view-settings` (App) holds profile/appearance. `view-personality` retains persona snapshots, voice identity/delivery, and microphone behavior. These use native `details.settings-section` disclosures. Microphone settings remain installation-wide; persona snapshots include speech provider/models. `/api/desktop/provider-keys` saves keys independently of active chat selection and returns status only; saved `ai_provider.deapi.api_key` feeds media jobs, catalog/balance, and STT with environment fallback.
+Settings UI: `settings_navigation` template macro provides category navigation: Appearance (`view-settings`), Personality & voice, Microphone (`view-microphone`), Models & API keys (`view-providers`), Knowledge, Memory & privacy. Provider choices/keys stay centralized; `openSetting` and `data-settings-target` jump to specific sections. Search indexes headings/labels, not field values. Persona snapshots include speech configuration; microphone behavior stays installation-wide. Theme preference (`midnight`, `ocean`, `forest`, `paper`) is validated/persisted by DesktopState, server-rendered on `<html data-theme>`, and applied by semantic CSS variables. See `docs/interface-design.md`. `/api/desktop/provider-keys` returns status only; saved deAPI keys feed media and STT with environment fallback.
 
 ## Preserve these contracts
 
