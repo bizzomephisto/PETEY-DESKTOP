@@ -83,7 +83,7 @@ settings stay under **Personality & voice**.
 ```bash
 git clone https://github.com/bizzomephisto/PETEY-DESKTOP.git
 cd PETEY-DESKTOP
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
