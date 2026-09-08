@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 import run_desktop
+from petey.quick_window import screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
@@ -37,7 +38,59 @@ class DesktopLauncherTests(unittest.TestCase):
             self.assertIn(f"Icon={installed_icon}", contents)
             self.assertIn("run_desktop.py", contents)
             self.assertIn("StartupWMClass=petey-desktop", contents)
+            self.assertIn("[Desktop Action QuickPetey]", contents)
+            self.assertIn("--quick", contents)
             self.assertTrue(launcher.stat().st_mode & 0o100)
+
+    def test_cosmic_hotkey_installer_preserves_custom_shortcuts(self):
+        with TemporaryDirectory() as directory, patch("run_desktop.sys.platform", "linux"):
+            config = Path(directory) / "cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"
+            config.parent.mkdir(parents=True)
+            config.write_text("{\n    (modifiers: [Super],): System(AppLibrary),\n}\n", encoding="utf-8")
+
+            result = run_desktop.install_cosmic_quick_hotkey(directory)
+            contents = result.read_text(encoding="utf-8")
+
+            self.assertIn("System(AppLibrary)", contents)
+            self.assertIn('key: "F1"', contents)
+            self.assertIn('Spawn(', contents)
+            self.assertIn("--quick", contents)
+            self.assertEqual(run_desktop.install_cosmic_quick_hotkey(directory), result)
+            self.assertEqual(result.read_text(encoding="utf-8").count('key: "F1"'), 1)
+
+    def test_cosmic_hotkey_installer_does_not_replace_super_f1(self):
+        with TemporaryDirectory() as directory, patch("run_desktop.sys.platform", "linux"):
+            config = Path(directory) / "cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                '{\n    (modifiers: [Super], key: "F1",): Spawn("something-else"),\n}\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "already has"):
+                run_desktop.install_cosmic_quick_hotkey(directory)
+
+    def test_quick_window_anchors_nearest_corner_and_clamps(self):
+        self.assertEqual(
+            run_desktop.quick_window_position(200, 150, 0, 0, 1920, 1080, width=400, height=300),
+            (210, 160),
+        )
+        self.assertEqual(
+            run_desktop.quick_window_position(1800, 1000, 0, 0, 1920, 1080, width=400, height=300),
+            (1390, 690),
+        )
+        self.assertEqual(
+            run_desktop.quick_window_position(149, 2628, 149, 2628, 1755, 987, width=430, height=390),
+            (159, 2638),
+        )
+
+    def test_cosmic_screenshot_output_returns_existing_file(self):
+        with TemporaryDirectory() as directory:
+            screenshot = Path(directory) / "Screenshot.png"
+            screenshot.write_bytes(b"image")
+
+            self.assertEqual(screenshot_path(f"portal notice\n{screenshot}\n"), screenshot)
+            self.assertIsNone(screenshot_path("cancelled"))
 
     def test_desktop_bridge_opens_project_repository(self):
         bridge = run_desktop.DesktopBridge()

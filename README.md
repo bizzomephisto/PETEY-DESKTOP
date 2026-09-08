@@ -54,6 +54,7 @@ speed, and hardware setup.
 - Per-reply Speak controls and optional automatic playback for new chat responses
 - Push-to-talk, always-on microphone, and wake-name input with deAPI transcription and Gemini fallback
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
+- Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
 - F11 visual fullscreen with progressive captions during Petey's spoken replies
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
 - Per-operation media prompt drafts that remain available across app restarts
@@ -114,6 +115,18 @@ Install PETEY in your Linux application menu with:
 ```bash
 python run_desktop.py --install-shortcut
 ```
+
+On the COSMIC desktop, install the **Super+F1** Quick PETEY shortcut with:
+
+```bash
+python run_desktop.py --install-quick-hotkey
+```
+
+Quick PETEY opens beside the mouse pointer and focuses its message box. Press
+Enter to send, hold Space while the empty message box is focused to talk, use
+the Screen or Window buttons to attach a capture, and press Escape to close it.
+The Window button opens COSMIC Screenshot so you can select the window. Run
+`python run_desktop.py --quick` directly to use a different shortcut manager.
 
 Application artwork is available under `assets/icons/` as a transparent PNG
 master, Linux PNG, Windows ICO, and macOS ICNS file.
@@ -206,3 +219,4 @@ Core layout:
 - `petey/tools/` — permission-aware model tool registry and capability modules
 - `web/desktop_app.py` — loopback Flask API
 - `web/templates/desktop.html` and `web/static/desktop.*` — desktop interface
+- `petey/quick_window.py` — cursor-anchored compact interface

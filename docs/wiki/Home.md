@@ -19,6 +19,7 @@ local memory, voice, media creation, and work inside folders you approve.
 - Become a character, narrator, companion, game master, or writing partner.
 - Read image attachments with Gemini vision.
 - Speak replies and accept push-to-talk, continuous, or wake-name microphone input.
+- Open Quick PETEY at the pointer with Super+F1 for chat, screenshots, and push-to-talk.
 - Generate images, video, music, and speech with deAPI.
 - Store generated work in a local Gallery.
 - Search knowledge files and approved Workspace folders.

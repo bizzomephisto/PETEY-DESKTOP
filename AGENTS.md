@@ -7,7 +7,7 @@ Start here; read only task-relevant implementation/tests. This is a navigation c
 
 - Product: standalone desktop AI companion/roleplay assistant; chats, personas, SQLite memory/RAG, media studio/gallery, voice, visual mode, approved-folder IDE.
 - Stack: Python 3.12+, Flask/Werkzeug, pywebview, vanilla JS/CSS/HTML; direct HTTP provider clients. No JS build pipeline/package.json.
-- Launch: `python run_desktop.py`; browser development: `python run_desktop.py --browser`; Linux menu shortcut: `python run_desktop.py --install-shortcut`.
+- Launch: `python run_desktop.py`; browser development: `python run_desktop.py --browser`; Linux menu shortcut: `python run_desktop.py --install-shortcut`; cursor popup: `python run_desktop.py --quick`; COSMIC Super+F1 binding: `python run_desktop.py --install-quick-hotkey`.
 - The visible app/window/launcher name is `PETEY`. Linux Qt windows retain `petey-desktop` as their application name and desktop-file ID; keep the installed launcher's `StartupWMClass` aligned so docks resolve the icon on Wayland/X11.
 - Setup: venv + `python -m pip install -r requirements.txt`; copy `.env.example` only if `.env` absent. Linux requirements select pywebview/PySide6; FFmpeg supplies video previews. See README for platform setup.
 - First checks: `git status --short`; `git ls-files`. Use `rg -n 'symbol' specific/files` then bounded reads. Avoid dumping entire large files, repository-wide recursive reads, assets, environments, databases.
@@ -55,7 +55,7 @@ Paths below are repo-relative; backend modules live under `petey/` unless otherw
 | Microphone/transcription | `deapi_stt.py`, `gemini_stt.py`; API `/voice-input[/transcribe]`; JS `handleMicrophoneAudio`, `finishVoiceCapture`, `handleVoiceTranscript`, `beginPushToTalk` |
 | Folder IDE/edit/command approval | `workspace.py`: `resolve`, `preview_write`, `propose_write`, `propose_command`, `approve`, `agent_proposals`; API `/workspaces*`, `/workspace/*` |
 | Image picker/thumbnails | `image_browser.py`: token-scoped `open`, `resolve`, `thumbnail`; API `/image-browser/*` |
-| Window/launcher/packaging artwork | `run_desktop.py`: `DesktopBridge`, `LocalServer`, `main`; `assets/icons/`; `tests/test_desktop_launcher.py` |
+| Window/launcher/packaging artwork | `run_desktop.py`: `DesktopBridge`, `quick_window_position`, `LocalServer`, `main`; `petey/quick_window.py`; `assets/icons/`; `tests/test_desktop_launcher.py` |
 | API wiring/contracts | `web/desktop_app.py:create_desktop_app`; injectable state/runtime/gallery/jobs/memory/workspace service; `tests/test_desktop_app.py` |
 | Version/project URLs | `version.py`; README release text; template receives version/URLs from Flask |
 

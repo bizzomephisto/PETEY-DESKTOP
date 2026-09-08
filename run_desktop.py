@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,8 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 PROJECT_ROOT = Path(__file__).resolve().parent
 ICON_DIRECTORY = PROJECT_ROOT / "assets" / "icons"
 DESKTOP_APP_ID = "petey-desktop"
+QUICK_WINDOW_WIDTH = 430
+QUICK_WINDOW_HEIGHT = 390
 
 
 def application_icon_path(platform: str | None = None) -> Path:
@@ -66,6 +69,11 @@ def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
                 "Categories=Utility;Development;",
                 "StartupNotify=true",
                 f"StartupWMClass={DESKTOP_APP_ID}",
+                "Actions=QuickPetey;",
+                "",
+                "[Desktop Action QuickPetey]",
+                "Name=Quick PETEY",
+                f"Exec={_desktop_exec_argument(sys.executable)} {_desktop_exec_argument(Path(__file__).resolve())} --quick",
                 "",
             ]
         ),
@@ -73,6 +81,62 @@ def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
     )
     launcher.chmod(0o755)
     return launcher
+
+
+def quick_launch_command() -> str:
+    """Return the shell command used by desktop keyboard shortcut managers."""
+    return f"{_desktop_exec_argument(sys.executable)} {_desktop_exec_argument(Path(__file__).resolve())} --quick"
+
+
+def install_cosmic_quick_hotkey(config_home: str | Path | None = None) -> Path:
+    """Bind Super+F1 to Quick PETEY without replacing an existing binding."""
+    if sys.platform != "linux":
+        raise RuntimeError("The COSMIC hotkey installer is available on Linux.")
+    root = Path(config_home) if config_home else Path(
+        os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")
+    )
+    path = root / "cosmic" / "com.system76.CosmicSettings.Shortcuts" / "v1" / "custom"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    contents = path.read_text(encoding="utf-8") if path.exists() else "{}\n"
+    compact = "".join(contents.split())
+    if re.search(r'modifiers:\[Super,?\],key:"F1"', compact):
+        if "--quick" in contents:
+            return path
+        raise RuntimeError("Super+F1 already has a COSMIC shortcut. PETEY left it unchanged.")
+    closing = contents.rfind("}")
+    if closing < 0:
+        raise RuntimeError("The COSMIC custom shortcut file is not in the expected format.")
+    command = quick_launch_command().replace("\\", "\\\\").replace('"', '\\"')
+    entry = (
+        "    (\n"
+        "        modifiers: [\n"
+        "            Super,\n"
+        "        ],\n"
+        '        key: "F1",\n'
+        '        description: Some("Quick PETEY"),\n'
+        f'    ): Spawn("{command}"),\n'
+    )
+    prefix = contents[:closing].rstrip()
+    if prefix and not prefix.endswith("{"):
+        prefix += "\n"
+    updated = prefix + "\n" + entry + "}\n"
+    temporary = path.with_name(path.name + ".petey-tmp")
+    temporary.write_text(updated, encoding="utf-8")
+    os.replace(temporary, path)
+    return path
+
+
+def quick_window_position(cursor_x, cursor_y, screen_x, screen_y, screen_width, screen_height,
+                          width=QUICK_WINDOW_WIDTH, height=QUICK_WINDOW_HEIGHT, gap=10):
+    """Anchor the nearest popup corner to the cursor and keep it on-screen."""
+    right = screen_x + screen_width
+    bottom = screen_y + screen_height
+    x = cursor_x + gap if cursor_x < screen_x + screen_width / 2 else cursor_x - width - gap
+    y = cursor_y + gap if cursor_y < screen_y + screen_height / 2 else cursor_y - height - gap
+    return (
+        max(screen_x, min(x, right - width)),
+        max(screen_y, min(y, bottom - height)),
+    )
 
 
 class DesktopBridge:
@@ -248,6 +312,16 @@ def main():
         action="store_true",
         help="Install PETEY in the current Linux user's application menu",
     )
+    parser.add_argument(
+        "--install-quick-hotkey",
+        action="store_true",
+        help="Bind Super+F1 to Quick PETEY in the COSMIC desktop",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Open the compact PETEY window at the mouse cursor",
+    )
     args = parser.parse_args()
 
     if args.install_shortcut:
@@ -258,10 +332,31 @@ def main():
         print(f"[DESKTOP] Installed launcher: {launcher}")
         return
 
+    if args.install_quick_hotkey:
+        try:
+            path = install_cosmic_quick_hotkey()
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        print(f"[DESKTOP] Installed Super+F1 shortcut: {path}")
+        return
+
+    if args.quick and sys.platform == "linux":
+        # Qt chooses its platform plugin at import time. XWayland is intentional:
+        # Wayland clients cannot place a popup at an exact global cursor position.
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
     local = LocalServer()
     local.start()
     print(f"[DESKTOP] Petey is running locally at {local.url}")
     try:
+        if args.quick:
+            from petey.quick_window import run_quick_window
+
+            run_quick_window(
+                local.url, application_icon_path(), PROJECT_ROOT, quick_window_position
+            )
+            return
+
         if args.browser:
             run_in_browser(local.url)
             return

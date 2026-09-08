@@ -24,3 +24,17 @@ Start with one chat provider. Add the other services only when you want them.
 API keys, model choices, speech, transcription, and memory search are separate
 settings. A working chat connection does not automatically configure every other
 feature.
+
+## Quick PETEY on COSMIC
+
+Install the cursor popup hotkey once from the PETEY folder:
+
+```bash
+python run_desktop.py --install-quick-hotkey
+```
+
+Press **Super+F1** to open Quick PETEY beside the mouse pointer. Its message box
+is focused immediately. Enter sends, Shift+Enter adds a line, and Escape closes
+the popup. Hold Space while the empty message box is focused to talk. The Screen,
+Window, and File buttons attach context to the next message; Window opens the
+COSMIC screenshot picker.
