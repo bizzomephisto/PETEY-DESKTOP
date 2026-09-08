@@ -244,6 +244,7 @@ class DesktopAppTests(unittest.TestCase):
             self.assertNotIn("deAPI Media", shell.get_data(as_text=True))
             self.assertIn('id="view-providers"', shell.get_data(as_text=True))
             self.assertIn('id="view-help"', shell.get_data(as_text=True))
+            self.assertIn('id="view-plan"', shell.get_data(as_text=True))
             self.assertIn("https://aistudio.google.com/apikey", shell.get_data(as_text=True))
             self.assertIn("https://platform.openai.com/api-keys", shell.get_data(as_text=True))
             self.assertIn("https://docs.deapi.ai/quickstart", shell.get_data(as_text=True))

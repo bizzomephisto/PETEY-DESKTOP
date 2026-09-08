@@ -30,6 +30,7 @@ from petey.mcp_client import FilesystemMCPManager, MCPError
 from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.tools import build_desktop_tool_registry
+from petey.subscription_plans import estimate_plan
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
@@ -152,6 +153,7 @@ def create_desktop_app(
                 "conversation_id": current.conversation_id,
                 "conversations": current.conversations,
                 "preferences": current.preferences,
+                "plan_preview": current.plan_preview,
                 "speech": current.speech,
                 "voice_input": current.voice_input,
                 "installation_id": current.installation_id,
@@ -159,6 +161,21 @@ def create_desktop_app(
                 "active_workspace_id": current.active_workspace_id,
             }
         )
+
+    @app.route("/api/desktop/plan", methods=["GET", "POST", "PUT"])
+    def desktop_plan():
+        current: DesktopState = app.config["PETEY_STATE"]
+        try:
+            if request.method in {"POST", "PUT"}:
+                payload = request.get_json(silent=True)
+                if not isinstance(payload, dict):
+                    raise ValueError("Plan settings must be an object.")
+                if request.method == "PUT":
+                    current.update_plan_preview(payload)
+                return jsonify(estimate_plan(payload))
+            return jsonify(estimate_plan(current.plan_preview))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.put("/api/desktop/identity")
     def desktop_identity():

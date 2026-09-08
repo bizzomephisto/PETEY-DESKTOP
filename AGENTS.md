@@ -46,6 +46,7 @@ Paths below are repo-relative; backend modules live under `petey/` unless otherw
 | Chat/prompts/history/attachments | `assistant.py`: `AssistantService.respond`, `_describe_image`; `config.py`: presets, `_build_enriched_prompt`; `tests/test_assistant.py` |
 | Chat providers/models/vision/embeddings | `ai_provider.py`: `AIProvider`, `public_config`, `complete_with_tools`, `describe_image`, `embed`; `http_client.py`: shared bounded requests session |
 | Defaults/settings/personas/saved chats | `desktop_state.py`: `_load_or_create_settings`, `update_*`, `_validated_*`, persona-slot methods; `config.py` |
+| PETEY Plus plan preview | `subscription_plans.py`: `normalize_plan`, `estimate_plan`, rate card; API `/plan`; template `view-plan`; JS `loadPlanBuilder`, `renderPlanEstimate`; `tests/test_subscription_plans.py` |
 | Memory/RAG/search | `desktop_memory.py`: `store_memory_deferred`, `store_document`, `search_memories`, `rebuild_embeddings`; API `/knowledge*`, `/memory/*` |
 | New conversational tool | `tools/registry.py`: `ToolSpec`, `ToolRegistry`; implement module in `tools/`, compose in `tools/__init__.py:build_desktop_tool_registry`; `tools/media.py` is example; `tests/test_tools.py` |
 | MCP client/filesystem tools | `mcp_client.py`: `MCPStdioClient`, `FilesystemMCPManager`, read-only allowlist; API `/tools*`; `tests/test_mcp_client.py` |

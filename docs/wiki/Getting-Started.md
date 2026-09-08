@@ -38,3 +38,11 @@ is focused immediately. Enter sends, Shift+Enter adds a line, and Escape closes
 the popup. Hold Space while the empty message box is focused to talk. The Screen,
 Window, and File buttons attach context to the next message; Window opens the
 COSMIC screenshot picker.
+
+## Build a PETEY Plus plan
+
+Open **PETEY Plus** to choose a monthly budget, generation quality, and preferred
+mix of Chat, Images, Video, and Voice. PETEY rebalances the mix sliders and updates
+the estimated monthly capabilities as you move them. Saving currently stores a
+planning preview on the device. Checkout and shared provider access require the
+future hosted PETEY Cloud gateway and are clearly marked as unavailable.

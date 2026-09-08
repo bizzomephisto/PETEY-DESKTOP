@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from petey.config import _build_enriched_prompt, make_default_persona
+from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 
 PERSONA_SLOT_COUNT = 5
 
@@ -131,6 +132,13 @@ class DesktopState:
             if key not in settings["preferences"]:
                 settings["preferences"][key] = value
                 changed = True
+        try:
+            plan_preview = normalize_plan(settings.get("plan_preview"))
+        except ValueError:
+            plan_preview = copy.deepcopy(DEFAULT_PLAN)
+        if settings.get("plan_preview") != plan_preview:
+            settings["plan_preview"] = plan_preview
+            changed = True
         if str(settings["preferences"].get("theme")) not in {"midnight", "ocean", "forest", "paper"}:
             settings["preferences"]["theme"] = "midnight"
             changed = True
@@ -320,6 +328,17 @@ class DesktopState:
     @property
     def preferences(self) -> dict:
         return copy.deepcopy(self.settings.get("preferences", {}))
+
+    @property
+    def plan_preview(self) -> dict:
+        return copy.deepcopy(self.settings.get("plan_preview", DEFAULT_PLAN))
+
+    def update_plan_preview(self, changes: dict) -> dict:
+        plan = normalize_plan(changes)
+        with self._lock:
+            self.settings["plan_preview"] = plan
+            self._write_json(self.settings_path, self.settings)
+        return self.plan_preview
 
     def create_conversation(self, title: str = "New chat") -> dict:
         title = str(title or "New chat").strip()[:80] or "New chat"

@@ -42,6 +42,7 @@
                 <button class="nav-button" data-view="media" type="button"><span class="nav-icon">◆</span><span class="nav-label">Media</span></button>
                 <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon">▦</span><span class="nav-label">Gallery</span></button>
                 <button class="nav-button" data-view="workspace" type="button"><span class="nav-icon">⌘</span><span class="nav-label">Workspace</span></button>
+                <button class="nav-button plus-nav" data-view="plan" type="button"><span class="nav-icon">✦</span><span class="nav-label">PETEY Plus</span></button>
                 <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
                 <button class="nav-button" data-view="help" type="button"><span class="nav-icon">?</span><span class="nav-label">Help</span></button>
             </nav>
@@ -95,6 +96,69 @@
         </section>
 
         {% include "desktop_help.html" %}
+
+        <section id="view-plan" class="tool-view app-view plan-view">
+            <header class="tool-header plan-header">
+                <div><span class="page-eyebrow">BUILD YOUR OWN PLAN</span><h1>PETEY Plus</h1><p>Choose what you want to spend and what PETEY should be great at.</p></div>
+                <span class="plan-preview-badge">Planning preview</span>
+            </header>
+            <div class="tool-content plan-content">
+                <section class="settings-card plan-budget-card">
+                    <div class="plan-card-heading"><div><span class="section-eyebrow">MONTHLY BUDGET</span><h2>Pay what works for you</h2></div><output id="plan-budget-value" class="plan-price">$25<small>/month</small></output></div>
+                    <input id="plan-budget" class="plan-budget-slider" type="range" min="10" max="150" step="1" value="25" aria-label="Monthly PETEY budget">
+                    <div class="plan-range-labels"><span>$10</span><span>$150</span></div>
+                    <div class="quality-picker" role="radiogroup" aria-label="Generation quality">
+                        <label><input type="radio" name="plan-quality" value="economy"><span><strong>Economy</strong><small>Stretch every dollar</small></span></label>
+                        <label><input type="radio" name="plan-quality" value="balanced" checked><span><strong>Balanced</strong><small>Everyday quality</small></span></label>
+                        <label><input type="radio" name="plan-quality" value="premium"><span><strong>Premium</strong><small>Best available models</small></span></label>
+                    </div>
+                </section>
+
+                <section class="settings-card plan-mix-card">
+                    <div class="plan-card-heading"><div><span class="section-eyebrow">USAGE MIX</span><h2>What should your PETEY be great at?</h2><p>Moving one slider automatically balances the others.</p></div><strong id="plan-mix-total" class="mix-total">100%</strong></div>
+                    <div class="plan-mix-grid">
+                        {% for key, label, icon, description in [
+                            ('chat', 'Chat', '●', 'Questions, writing & roleplay'),
+                            ('images', 'Images', '◆', 'Generation & visual ideas'),
+                            ('video', 'Video', '▶', 'Motion and animation'),
+                            ('voice', 'Voice', '◖', 'Speech & transcription')
+                        ] %}
+                        <label class="plan-mix-row" data-plan-category="{{ key }}">
+                            <span class="plan-mix-icon">{{ icon }}</span><span class="plan-mix-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span>
+                            <output id="plan-{{ key }}-value">{{ {'chat':45, 'images':25, 'video':20, 'voice':10}[key] }}%</output>
+                            <input id="plan-{{ key }}" type="range" min="0" max="100" step="1" value="{{ {'chat':45, 'images':25, 'video':20, 'voice':10}[key] }}">
+                        </label>
+                        {% endfor %}
+                    </div>
+                </section>
+
+                <section class="settings-card plan-results-card">
+                    <span class="section-eyebrow">YOUR ESTIMATED MONTH</span><h2 id="plan-result-title">Built around how you use PETEY</h2>
+                    <div id="plan-capabilities" class="plan-capability-grid" aria-live="polite">
+                        <article><span>●</span><strong>—</strong><small>chat exchanges</small></article>
+                        <article><span>◆</span><strong>—</strong><small>generated images</small></article>
+                        <article><span>▶</span><strong>—</strong><small>video seconds</small></article>
+                        <article><span>◖</span><strong>—</strong><small>voice minutes</small></article>
+                    </div>
+                    <div class="plan-breakdown">
+                        <div class="plan-breakdown-bar"><span id="plan-ai-bar"></span><span id="plan-platform-bar"></span><span id="plan-reserve-bar"></span></div>
+                        <div class="plan-breakdown-legend">
+                            <span><i class="ai"></i>AI usage <strong id="plan-ai-amount">—</strong></span>
+                            <span><i class="platform"></i>PETEY & support <strong id="plan-platform-amount">—</strong></span>
+                            <span><i class="reserve"></i>Payments & reserve <strong id="plan-reserve-amount">—</strong></span>
+                        </div>
+                    </div>
+                    <p id="plan-estimate-notice" class="plan-notice"></p>
+                </section>
+
+                <section class="settings-card plan-controls-card">
+                    <div><h2>Keep spending predictable</h2><p>PETEY will share unused allowance across capabilities.</p></div>
+                    <label><span>When the monthly allowance runs out</span><select id="plan-overage"><option value="stop">Stop paid requests until renewal</option><option value="top_up">Ask before buying a top-up</option></select></label>
+                    <div class="plan-actions"><button id="save-plan-preview" class="primary-button" type="button">Save my plan preview</button><span id="plan-save-status" class="wide-status" role="status"></span></div>
+                    <p class="plan-cloud-note"><strong>Checkout comes with PETEY Cloud.</strong> This preview is saved locally. Payments and shared API access will activate when the hosted gateway is connected.</p>
+                </section>
+            </div>
+        </section>
 
         <section id="view-media" class="tool-view app-view">
             <header class="tool-header"><div><h1>Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>

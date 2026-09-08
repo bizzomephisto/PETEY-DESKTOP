@@ -15,6 +15,9 @@ let speechSettingsLoaded = false;
 let speechConfiguration = null;
 let voiceInputSettingsLoaded = false;
 let voiceInputConfiguration = {mode: 'disabled', provider: 'deapi', model: 'WhisperLargeV3', gemini_model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal'};
+let planBuilderLoaded = false;
+let planEstimateTimer = null;
+let planEstimateRequest = 0;
 let voiceInputModels = {deapi: ['WhisperLargeV3'], gemini: ['gemini-3.5-transcribe']};
 let microphoneStream = null;
 let microphoneContext = null;
@@ -702,11 +705,123 @@ function showView(view) {
     if (view === 'media') loadMediaJobs();
     if (view === 'gallery') loadGallery();
     if (view === 'workspace' && !workspaceLoaded) loadWorkspaces();
+    if (view === 'plan' && !planBuilderLoaded) loadPlanBuilder();
     if (view === 'tools' && !toolsLoaded) loadTools();
     if (view === 'knowledge') loadKnowledge();
     if (view === 'memory') {
         loadMemoryStats();
         if (!memoryProviderLoaded) loadMemoryProvider();
+    }
+}
+
+const planCategories = ['chat', 'images', 'video', 'voice'];
+
+function readPlanForm() {
+    return {
+        monthly_budget: Number(document.getElementById('plan-budget').value),
+        quality: document.querySelector('input[name="plan-quality"]:checked')?.value || 'balanced',
+        mix: Object.fromEntries(planCategories.map(category => [
+            category, Number(document.getElementById(`plan-${category}`).value),
+        ])),
+        overage_mode: document.getElementById('plan-overage').value,
+    };
+}
+
+function writePlanForm(plan) {
+    document.getElementById('plan-budget').value = plan.monthly_budget;
+    const quality = document.querySelector(`input[name="plan-quality"][value="${plan.quality}"]`);
+    if (quality) quality.checked = true;
+    document.getElementById('plan-overage').value = plan.overage_mode || 'stop';
+    for (const category of planCategories) {
+        document.getElementById(`plan-${category}`).value = plan.mix[category];
+    }
+    updatePlanLabels();
+}
+
+function updatePlanLabels() {
+    const plan = readPlanForm();
+    document.getElementById('plan-budget-value').innerHTML = `$${plan.monthly_budget}<small>/month</small>`;
+    let total = 0;
+    for (const category of planCategories) {
+        total += plan.mix[category];
+        document.getElementById(`plan-${category}-value`).textContent = `${plan.mix[category]}%`;
+    }
+    document.getElementById('plan-mix-total').textContent = `${total}%`;
+}
+
+function rebalancePlanMix(changedCategory) {
+    const changed = document.getElementById(`plan-${changedCategory}`);
+    const changedValue = Number(changed.value);
+    const others = planCategories.filter(category => category !== changedCategory);
+    const available = 100 - changedValue;
+    const currentTotal = others.reduce((total, category) => total + Number(document.getElementById(`plan-${category}`).value), 0);
+    let assigned = 0;
+    others.forEach((category, index) => {
+        const control = document.getElementById(`plan-${category}`);
+        const proposed = index === others.length - 1
+            ? available - assigned
+            : Math.round(available * (currentTotal ? Number(control.value) / currentTotal : 1 / others.length));
+        control.value = Math.max(0, Math.min(available - assigned, proposed));
+        assigned += Number(control.value);
+    });
+    updatePlanLabels();
+}
+
+function formatPlanUnits(value) {
+    return Number(value || 0).toLocaleString(undefined, {maximumFractionDigits: 0});
+}
+
+function renderPlanEstimate(estimate) {
+    const icons = {chat: '●', images: '◆', video: '▶', voice: '◖'};
+    const container = document.getElementById('plan-capabilities');
+    container.replaceChildren(...planCategories.map(category => {
+        const item = estimate.capabilities[category];
+        const article = document.createElement('article');
+        const icon = document.createElement('span');
+        const amount = document.createElement('strong');
+        const label = document.createElement('small');
+        icon.textContent = icons[category];
+        amount.textContent = `~${formatPlanUnits(item.estimated_units)}`;
+        label.textContent = item.unit_label;
+        article.append(icon, amount, label);
+        return article;
+    }));
+    const breakdown = estimate.breakdown;
+    const monthly = Math.max(1, breakdown.monthly_payment);
+    document.getElementById('plan-ai-amount').textContent = `$${breakdown.ai_usage.toFixed(2)}`;
+    document.getElementById('plan-platform-amount').textContent = `$${breakdown.platform_and_support.toFixed(2)}`;
+    document.getElementById('plan-reserve-amount').textContent = `$${breakdown.payments_and_reserve.toFixed(2)}`;
+    document.getElementById('plan-ai-bar').style.width = `${breakdown.ai_usage / monthly * 100}%`;
+    document.getElementById('plan-platform-bar').style.width = `${breakdown.platform_and_support / monthly * 100}%`;
+    document.getElementById('plan-reserve-bar').style.width = `${breakdown.payments_and_reserve / monthly * 100}%`;
+    document.getElementById('plan-estimate-notice').textContent = estimate.estimate_notice;
+}
+
+async function requestPlanEstimate() {
+    const requestNumber = ++planEstimateRequest;
+    try {
+        const estimate = await apiJson('/api/desktop/plan', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(readPlanForm()),
+        });
+        if (requestNumber === planEstimateRequest) renderPlanEstimate(estimate);
+    } catch (error) {
+        if (requestNumber === planEstimateRequest) setFeedback(document.getElementById('plan-save-status'), error.message, 'error');
+    }
+}
+
+function schedulePlanEstimate() {
+    clearTimeout(planEstimateTimer);
+    planEstimateTimer = setTimeout(requestPlanEstimate, 120);
+}
+
+async function loadPlanBuilder() {
+    try {
+        const estimate = await apiJson('/api/desktop/plan');
+        writePlanForm(estimate.plan);
+        renderPlanEstimate(estimate);
+        planBuilderLoaded = true;
+    } catch (error) {
+        setFeedback(document.getElementById('plan-save-status'), error.message, 'error');
     }
 }
 
@@ -1649,6 +1764,39 @@ async function playGeminiSpeechStream(text, button) {
 
 document.querySelectorAll('.nav-button').forEach(button => {
     button.addEventListener('click', () => showView(button.dataset.view));
+});
+
+document.getElementById('plan-budget').addEventListener('input', () => {
+    updatePlanLabels();
+    schedulePlanEstimate();
+});
+for (const category of planCategories) {
+    document.getElementById(`plan-${category}`).addEventListener('input', () => {
+        rebalancePlanMix(category);
+        schedulePlanEstimate();
+    });
+}
+document.querySelectorAll('input[name="plan-quality"]').forEach(control => {
+    control.addEventListener('change', schedulePlanEstimate);
+});
+document.getElementById('plan-overage').addEventListener('change', schedulePlanEstimate);
+document.getElementById('save-plan-preview').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const feedback = document.getElementById('plan-save-status');
+    button.disabled = true;
+    setFeedback(feedback, 'Saving your plan preview…');
+    try {
+        const estimate = await apiJson('/api/desktop/plan', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(readPlanForm()),
+        });
+        writePlanForm(estimate.plan);
+        renderPlanEstimate(estimate);
+        setFeedback(feedback, 'Plan preview saved on this device.', 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
 });
 
 function openSetting(view, targetId) {
@@ -3841,5 +3989,5 @@ for (const [id, endpoint, statusId, read] of [
 }
 
 const requestedView = window.location.hash.replace('#', '');
-const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'settings', 'personality', 'microphone', 'tools', 'knowledge', 'memory', 'help'];
+const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'plan', 'settings', 'personality', 'microphone', 'tools', 'knowledge', 'memory', 'help'];
 if (knownViews.includes(requestedView)) showView(requestedView);

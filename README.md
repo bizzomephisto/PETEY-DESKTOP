@@ -55,6 +55,7 @@ speed, and hardware setup.
 - Push-to-talk, always-on microphone, and wake-name input with deAPI transcription and Gemini fallback
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
 - Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
+- Build Your Plan preview with a monthly budget, capability mix, and live usage estimates
 - F11 visual fullscreen with progressive captions during Petey's spoken replies
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
 - Per-operation media prompt drafts that remain available across app restarts
