@@ -18,9 +18,9 @@ DEFAULT_PLAN = {
 # Planning rate card: estimated wholesale cost for one representative unit.
 # The hosted billing gateway will replace these with versioned live rates.
 UNIT_RATES = {
-    "economy": {"chat": 0.003, "images": 0.04, "video": 0.04, "voice": 0.002},
-    "balanced": {"chat": 0.008, "images": 0.08, "video": 0.10, "voice": 0.006},
-    "premium": {"chat": 0.03, "images": 0.20, "video": 0.28, "voice": 0.018},
+    "economy": {"chat": 0.0025, "images": 0.004, "video": 0.02, "voice": 0.0015},
+    "balanced": {"chat": 0.006, "images": 0.012, "video": 0.045, "voice": 0.003},
+    "premium": {"chat": 0.022, "images": 0.045, "video": 0.14, "voice": 0.01},
 }
 UNIT_LABELS = {
     "chat": "chat exchanges",
@@ -74,8 +74,8 @@ def estimate_plan(value: dict | None) -> dict:
     """Break a monthly payment into operating shares and estimated capabilities."""
     plan = normalize_plan(value)
     budget = float(plan["monthly_budget"])
-    platform = round(max(2.0, budget * 0.25), 2)
-    payment_reserve = round(0.30 + budget * 0.04, 2)
+    platform = round(max(2.0, budget * 0.20), 2)
+    payment_reserve = round(0.30 + budget * 0.035, 2)
     usage_pool = round(max(0.0, budget - platform - payment_reserve), 2)
     rates = UNIT_RATES[plan["quality"]]
     capabilities = {}
@@ -101,7 +101,8 @@ def estimate_plan(value: dict | None) -> dict:
         "currency": "USD",
         "checkout_available": False,
         "estimate_notice": (
-            "Planning estimate based on representative requests. Final allowances will use "
-            "the hosted PETEY rate card and can change when provider prices change."
+            "Planning estimate using a blended mix of efficient provider models and typical "
+            "request sizes. Long chats and complex generations use more; final allowances "
+            "will follow PETEY Cloud's live rate card."
         ),
     }

@@ -38,6 +38,21 @@ class SubscriptionPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "between"):
             normalize_plan({"monthly_budget": 5})
 
+    def test_efficient_quality_produces_more_units_than_premium(self):
+        base = {
+            "monthly_budget": 20,
+            "mix": {"chat": 25, "images": 25, "video": 25, "voice": 25},
+            "overage_mode": "stop",
+        }
+        economy = estimate_plan({**base, "quality": "economy"})
+        premium = estimate_plan({**base, "quality": "premium"})
+
+        for category in ("chat", "images", "video", "voice"):
+            self.assertGreater(
+                economy["capabilities"][category]["estimated_units"],
+                premium["capabilities"][category]["estimated_units"],
+            )
+
     def test_preview_endpoint_estimates_without_saving_and_put_persists(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
