@@ -44,6 +44,8 @@ COSMIC screenshot picker.
 Open **PETEY Plus** to choose a recurring contribution, generation quality, and preferred
 mix of Chat, Images, Video, and Voice. PETEY rebalances the mix sliders and updates
 the estimated capabilities added by each payment as you move them. Unused AI
-balance carries forward rather than resetting on the billing date. Saving stores a
+balance carries forward rather than resetting on the billing date. Contributions
+start at $5 and move in $5 steps; with light use, one $5 contribution could last
+several months. Saving stores a
 planning preview on the device. Checkout and shared provider access require the
 future hosted PETEY Cloud gateway and are clearly marked as unavailable.

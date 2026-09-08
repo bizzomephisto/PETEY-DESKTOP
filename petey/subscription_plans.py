@@ -15,12 +15,14 @@ DEFAULT_PLAN = {
     "overage_mode": "stop",
 }
 
-# Planning rate card: estimated wholesale cost for one representative unit.
-# The hosted billing gateway will replace these with versioned live rates.
+# Planning rate card: estimated provider cost for one representative unit. These
+# rates favor efficient routing while leaving room for normal variation in prompt
+# size, resolution, and model choice. The hosted gateway will replace them with a
+# versioned live rate card.
 UNIT_RATES = {
-    "economy": {"chat": 0.0025, "images": 0.004, "video": 0.02, "voice": 0.0015},
-    "balanced": {"chat": 0.006, "images": 0.012, "video": 0.045, "voice": 0.003},
-    "premium": {"chat": 0.022, "images": 0.045, "video": 0.14, "voice": 0.01},
+    "economy": {"chat": 0.0005, "images": 0.0025, "video": 0.004, "voice": 0.0008},
+    "balanced": {"chat": 0.002, "images": 0.006, "video": 0.012, "voice": 0.0015},
+    "premium": {"chat": 0.008, "images": 0.018, "video": 0.035, "voice": 0.004},
 }
 UNIT_LABELS = {
     "chat": "chat exchanges",
@@ -36,9 +38,11 @@ def normalize_plan(value: dict | None) -> dict:
     try:
         budget = int(round(float(source.get("monthly_budget", DEFAULT_PLAN["monthly_budget"]))))
     except (TypeError, ValueError, OverflowError):
-        raise ValueError("Monthly budget must be a number.") from None
-    if not 10 <= budget <= 150:
-        raise ValueError("Monthly budget must be between $10 and $150.")
+        raise ValueError("Recurring contribution must be a number.") from None
+    if not 5 <= budget <= 150:
+        raise ValueError("Recurring contribution must be between $5 and $150.")
+    if budget % 5:
+        raise ValueError("Recurring contribution must use $5 increments.")
     quality = str(source.get("quality") or DEFAULT_PLAN["quality"])
     if quality not in QUALITY_LEVELS:
         raise ValueError("Choose Economy, Balanced, or Premium quality.")
@@ -74,7 +78,7 @@ def estimate_plan(value: dict | None) -> dict:
     """Break a monthly payment into operating shares and estimated capabilities."""
     plan = normalize_plan(value)
     budget = float(plan["monthly_budget"])
-    platform = round(max(2.0, budget * 0.20), 2)
+    platform = round(max(0.75, budget * 0.15), 2)
     payment_reserve = round(0.30 + budget * 0.035, 2)
     usage_pool = round(max(0.0, budget - platform - payment_reserve), 2)
     rates = UNIT_RATES[plan["quality"]]
@@ -104,10 +108,11 @@ def estimate_plan(value: dict | None) -> dict:
             "rolls_over": True,
             "expires": False,
             "description": "Unused AI balance carries forward and does not expire.",
+            "example": "With light use, a single $5 contribution could last several months.",
         },
         "estimate_notice": (
-            "Planning estimate using a blended mix of efficient provider models and typical "
-            "request sizes. Unused AI balance carries forward and does not reset each month. "
-            "Long requests use more, and future capability estimates can change with provider prices."
+            "Planning estimate calibrated to current public provider rates, efficient routing, "
+            "and typical request sizes. Unused AI balance carries forward and does not reset. "
+            "Long requests use more, and future estimates can change with provider prices."
         ),
     }

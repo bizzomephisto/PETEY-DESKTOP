@@ -26,6 +26,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertFalse(estimate["checkout_available"])
         self.assertTrue(estimate["balance_policy"]["rolls_over"])
         self.assertFalse(estimate["balance_policy"]["expires"])
+        self.assertIn("$5", estimate["balance_policy"]["example"])
 
     def test_mix_is_normalized_and_invalid_budget_is_rejected(self):
         plan = normalize_plan({
@@ -37,8 +38,18 @@ class SubscriptionPlanTests(unittest.TestCase):
 
         self.assertEqual(sum(plan["mix"].values()), 100)
         self.assertEqual(plan["overage_mode"], "top_up")
+        self.assertEqual(normalize_plan({"monthly_budget": 5})["monthly_budget"], 5)
         with self.assertRaisesRegex(ValueError, "between"):
-            normalize_plan({"monthly_budget": 5})
+            normalize_plan({"monthly_budget": 2})
+        with self.assertRaisesRegex(ValueError, "increments"):
+            normalize_plan({"monthly_budget": 7})
+
+    def test_five_dollars_can_support_light_use_for_more_than_one_month(self):
+        estimate = estimate_plan({"monthly_budget": 5, "quality": "balanced"})
+
+        self.assertGreaterEqual(estimate["capabilities"]["chat"]["estimated_units"], 800)
+        self.assertGreaterEqual(estimate["capabilities"]["images"]["estimated_units"], 150)
+        self.assertGreaterEqual(estimate["capabilities"]["voice"]["estimated_units"], 250)
 
     def test_efficient_quality_produces_more_units_than_premium(self):
         base = {
@@ -77,6 +88,7 @@ class SubscriptionPlanTests(unittest.TestCase):
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(DesktopState(directory).plan_preview["monthly_budget"], 60)
             self.assertEqual(client.put("/api/desktop/plan", json={"monthly_budget": 2}).status_code, 400)
+            self.assertEqual(client.put("/api/desktop/plan", json={"monthly_budget": 7}).status_code, 400)
 
 
 if __name__ == "__main__":

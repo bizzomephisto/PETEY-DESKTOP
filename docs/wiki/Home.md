@@ -20,7 +20,7 @@ local memory, voice, media creation, and work inside folders you approve.
 - Read image attachments with Gemini vision.
 - Speak replies and accept push-to-talk, continuous, or wake-name microphone input.
 - Open Quick PETEY at the pointer with Super+F1 for chat, screenshots, and push-to-talk.
-- Shape a PETEY Plus contribution and see its estimated capabilities in real time; unused balance rolls over.
+- Shape a PETEY Plus contribution from $5 and see its estimated capabilities in real time; unused balance rolls over and may last for months.
 - Generate images, video, music, and speech with deAPI.
 - Store generated work in a local Gallery.
 - Search knowledge files and approved Workspace folders.
