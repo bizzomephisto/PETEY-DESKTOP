@@ -236,13 +236,12 @@ body.native-visual-fullscreen .chat-panel { grid-template-rows: minmax(0, 1fr); 
 .plan-budget-slider { height: 8px; padding: 0; border: 0; }
 .plan-range-labels { display: flex; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10px; }
 .quality-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 22px; }
-.quality-picker label { position: relative; cursor: pointer; }
-.quality-picker input { position: absolute; opacity: 0; pointer-events: none; }
-.quality-picker span { display: block; height: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); }
-.quality-picker strong, .quality-picker small { display: block; }
+.quality-option { display: block; width: 100%; height: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); color: var(--text); text-align: left; cursor: pointer; }
+.quality-option strong, .quality-option small { display: block; }
 .quality-picker strong { font-size: 12px; }
 .quality-picker small { margin-top: 2px; color: var(--muted); font-size: 10px; }
-.quality-picker input:checked + span { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.quality-option:hover { border-color: var(--accent-border); background: var(--panel-2); }
+.quality-option.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-border); }
 .mix-total { flex: 0 0 auto; padding: 6px 9px; border-radius: 999px; background: var(--field); color: var(--accent-text); font-size: 12px; }
 .plan-mix-grid { display: grid; gap: 15px; }
 .plan-mix-row { display: grid; grid-template-columns: 28px minmax(120px, 1fr) 42px; align-items: center; gap: 0 9px; }

@@ -719,7 +719,7 @@ const planCategories = ['chat', 'images', 'video', 'voice'];
 function readPlanForm() {
     return {
         monthly_budget: Number(document.getElementById('plan-budget').value),
-        quality: document.querySelector('input[name="plan-quality"]:checked')?.value || 'balanced',
+        quality: document.querySelector('.quality-option.active')?.dataset.planQuality || 'balanced',
         mix: Object.fromEntries(planCategories.map(category => [
             category, Number(document.getElementById(`plan-${category}`).value),
         ])),
@@ -729,8 +729,11 @@ function readPlanForm() {
 
 function writePlanForm(plan) {
     document.getElementById('plan-budget').value = plan.monthly_budget;
-    const quality = document.querySelector(`input[name="plan-quality"][value="${plan.quality}"]`);
-    if (quality) quality.checked = true;
+    document.querySelectorAll('.quality-option').forEach(option => {
+        const selected = option.dataset.planQuality === plan.quality;
+        option.classList.toggle('active', selected);
+        option.setAttribute('aria-checked', String(selected));
+    });
     document.getElementById('plan-overage').value = plan.overage_mode || 'stop';
     for (const category of planCategories) {
         document.getElementById(`plan-${category}`).value = plan.mix[category];
@@ -1776,8 +1779,15 @@ for (const category of planCategories) {
         schedulePlanEstimate();
     });
 }
-document.querySelectorAll('input[name="plan-quality"]').forEach(control => {
-    control.addEventListener('change', schedulePlanEstimate);
+document.querySelectorAll('.quality-option').forEach(control => {
+    control.addEventListener('click', () => {
+        document.querySelectorAll('.quality-option').forEach(option => {
+            const selected = option === control;
+            option.classList.toggle('active', selected);
+            option.setAttribute('aria-checked', String(selected));
+        });
+        schedulePlanEstimate();
+    });
 });
 document.getElementById('plan-overage').addEventListener('change', schedulePlanEstimate);
 document.getElementById('save-plan-preview').addEventListener('click', async event => {
