@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 import run_desktop
-from petey.quick_window import screenshot_path
+from petey.quick_window import move_x11_window_frame, screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
@@ -83,6 +83,10 @@ class DesktopLauncherTests(unittest.TestCase):
             run_desktop.quick_window_position(149, 2628, 149, 2628, 1755, 987, width=430, height=390),
             (159, 2638),
         )
+
+    def test_native_frame_move_is_skipped_outside_x11(self):
+        with patch("petey.quick_window.sys.platform", "darwin"):
+            self.assertFalse(move_x11_window_frame(123, 10, 20))
 
     def test_cosmic_screenshot_output_returns_existing_file(self):
         with TemporaryDirectory() as directory:

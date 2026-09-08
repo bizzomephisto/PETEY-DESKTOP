@@ -15,6 +15,59 @@ from pathlib import Path
 import requests
 
 
+def move_x11_window_frame(window_id: int, x: int, y: int) -> bool:
+    """Move the window-manager frame directly when COSMIC ignores Qt's move."""
+    if sys.platform != "linux" or os.environ.get("QT_QPA_PLATFORM") != "xcb":
+        return False
+    try:
+        import ctypes
+        import ctypes.util
+
+        library_name = ctypes.util.find_library("X11")
+        if not library_name:
+            return False
+        x11 = ctypes.CDLL(library_name)
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XQueryTree.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),
+            ctypes.POINTER(ctypes.c_uint),
+        ]
+        x11.XMoveWindow.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int
+        ]
+        x11.XFlush.argtypes = [ctypes.c_void_p]
+        x11.XFree.argtypes = [ctypes.c_void_p]
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        display = x11.XOpenDisplay(None)
+        if not display:
+            return False
+        root = ctypes.c_ulong()
+        parent = ctypes.c_ulong()
+        children = ctypes.POINTER(ctypes.c_ulong)()
+        child_count = ctypes.c_uint()
+        try:
+            if not x11.XQueryTree(
+                display, int(window_id), ctypes.byref(root), ctypes.byref(parent),
+                ctypes.byref(children), ctypes.byref(child_count),
+            ):
+                return False
+            frame = parent.value if parent.value and parent.value != root.value else int(window_id)
+            x11.XMoveWindow(display, frame, int(x), int(y))
+            x11.XFlush(display)
+            return True
+        finally:
+            if children:
+                x11.XFree(children)
+            x11.XCloseDisplay(display)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
 def screenshot_path(output: str) -> Path | None:
     """Extract the file emitted by cosmic-screenshot."""
     for line in reversed(str(output or "").splitlines()):
@@ -192,8 +245,26 @@ def run_quick_window(server_url: str, icon_path: Path, project_root: Path, posit
                 cursor.x(), cursor.y(), geometry.x(), geometry.y(),
                 geometry.width(), geometry.height(), self.width(), self.height(),
             )
-            self.move(int(x), int(y))
+            target = (int(x), int(y))
+            self.move(*target)
             self.show()
+            # COSMIC may apply its own initial placement after an XWayland window
+            # is mapped. Move its X11 frame after mapping so the compositor's
+            # centering policy cannot leave it on another monitor.
+            scale = self.devicePixelRatioF()
+            native_target = position(
+                cursor.x(), cursor.y(), geometry.x(), geometry.y(),
+                geometry.width(), geometry.height(),
+                round(self.width() * scale), round(self.height() * scale),
+            )
+            window_id = int(self.winId())
+            for delay in (75, 200):
+                QTimer.singleShot(
+                    delay,
+                    lambda point=native_target, identifier=window_id: move_x11_window_frame(
+                        identifier, int(point[0]), int(point[1])
+                    ),
+                )
             self.raise_()
             self.activateWindow()
             QTimer.singleShot(60, self.composer.setFocus)
