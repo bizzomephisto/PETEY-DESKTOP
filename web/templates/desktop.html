@@ -99,13 +99,13 @@
 
         <section id="view-plan" class="tool-view app-view plan-view">
             <header class="tool-header plan-header">
-                <div><span class="page-eyebrow">BUILD YOUR OWN PLAN</span><h1>PETEY Plus</h1><p>Choose what you want to spend and what PETEY should be great at.</p></div>
+                <div><span class="page-eyebrow">BUILD YOUR OWN PLAN</span><h1>PETEY Plus</h1><p>Choose a recurring contribution and what PETEY should be great at. Unused AI balance carries forward.</p></div>
                 <span class="plan-preview-badge">Planning preview</span>
             </header>
             <div class="tool-content plan-content">
                 <section class="settings-card plan-budget-card">
-                    <div class="plan-card-heading"><div><span class="section-eyebrow">MONTHLY BUDGET</span><h2>Pay what works for you</h2></div><output id="plan-budget-value" class="plan-price">$25<small>/month</small></output></div>
-                    <input id="plan-budget" class="plan-budget-slider" type="range" min="10" max="150" step="1" value="25" aria-label="Monthly PETEY budget">
+                    <div class="plan-card-heading"><div><span class="section-eyebrow">RECURRING CONTRIBUTION</span><h2>Pay what works for you</h2><p>Each payment adds to your available PETEY balance.</p></div><output id="plan-budget-value" class="plan-price">$25<small>/month</small></output></div>
+                    <input id="plan-budget" class="plan-budget-slider" type="range" min="10" max="150" step="1" value="25" aria-label="Recurring PETEY contribution">
                     <div class="plan-range-labels"><span>$10</span><span>$150</span></div>
                     <div class="quality-picker" role="radiogroup" aria-label="Generation quality">
                         <button class="quality-option" type="button" role="radio" aria-checked="false" data-plan-quality="economy"><strong>Economy</strong><small>Stretch every dollar</small></button>
@@ -133,7 +133,8 @@
                 </section>
 
                 <section class="settings-card plan-results-card">
-                    <span class="section-eyebrow">YOUR ESTIMATED MONTH</span><h2 id="plan-result-title">Built around how you use PETEY</h2>
+                    <span class="section-eyebrow">WHAT EACH PAYMENT ADDS</span><h2 id="plan-result-title">Estimated capabilities added to your balance</h2>
+                    <div class="rollover-callout"><strong>↻ Your balance rolls over</strong><span>Anything you do not use remains available after the next billing date.</span></div>
                     <div id="plan-capabilities" class="plan-capability-grid" aria-live="polite">
                         <article><span>●</span><strong>—</strong><small>chat exchanges</small></article>
                         <article><span>◆</span><strong>—</strong><small>generated images</small></article>
@@ -152,8 +153,8 @@
                 </section>
 
                 <section class="settings-card plan-controls-card">
-                    <div><h2>Keep spending predictable</h2><p>PETEY will share unused allowance across capabilities.</p></div>
-                    <label><span>When the monthly allowance runs out</span><select id="plan-overage"><option value="stop">Stop paid requests until renewal</option><option value="top_up">Ask before buying a top-up</option></select></label>
+                    <div><h2>Keep spending predictable</h2><p>PETEY shares your AI balance across capabilities and carries everything unused forward.</p></div>
+                    <label><span>When the available balance runs out</span><select id="plan-overage"><option value="stop">Pause until the next payment or top-up</option><option value="top_up">Ask before buying a top-up</option></select></label>
                     <div class="plan-actions"><button id="save-plan-preview" class="primary-button" type="button">Save my plan preview</button><span id="plan-save-status" class="wide-status" role="status"></span></div>
                     <p class="plan-cloud-note"><strong>Checkout comes with PETEY Cloud.</strong> This preview is saved locally. Payments and shared API access will activate when the hosted gateway is connected.</p>
                 </section>

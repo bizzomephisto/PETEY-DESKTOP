@@ -252,6 +252,9 @@ body.native-visual-fullscreen .chat-panel { grid-template-rows: minmax(0, 1fr); 
 .plan-mix-row input { grid-column: 2 / 4; height: 5px; padding: 0; border: 0; margin-top: 7px; }
 .plan-results-card, .plan-controls-card { grid-column: 1 / -1; }
 .plan-capability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+.rollover-callout { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--success) 9%, var(--field)); }
+.rollover-callout strong { color: var(--success); white-space: nowrap; }
+.rollover-callout span { color: var(--muted); font-size: 11px; }
 .plan-capability-grid article { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--field); }
 .plan-capability-grid article > span { color: var(--accent-text); }
 .plan-capability-grid strong, .plan-capability-grid small { display: block; }

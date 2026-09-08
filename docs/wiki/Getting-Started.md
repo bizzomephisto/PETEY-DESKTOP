@@ -41,8 +41,9 @@ COSMIC screenshot picker.
 
 ## Build a PETEY Plus plan
 
-Open **PETEY Plus** to choose a monthly budget, generation quality, and preferred
+Open **PETEY Plus** to choose a recurring contribution, generation quality, and preferred
 mix of Chat, Images, Video, and Voice. PETEY rebalances the mix sliders and updates
-the estimated monthly capabilities as you move them. Saving currently stores a
+the estimated capabilities added by each payment as you move them. Unused AI
+balance carries forward rather than resetting on the billing date. Saving stores a
 planning preview on the device. Checkout and shared provider access require the
 future hosted PETEY Cloud gateway and are clearly marked as unavailable.

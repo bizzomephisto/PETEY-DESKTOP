@@ -24,6 +24,8 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertGreater(estimate["capabilities"]["chat"]["estimated_units"], 0)
         self.assertGreater(estimate["capabilities"]["images"]["estimated_units"], 0)
         self.assertFalse(estimate["checkout_available"])
+        self.assertTrue(estimate["balance_policy"]["rolls_over"])
+        self.assertFalse(estimate["balance_policy"]["expires"])
 
     def test_mix_is_normalized_and_invalid_budget_is_rejected(self):
         plan = normalize_plan({

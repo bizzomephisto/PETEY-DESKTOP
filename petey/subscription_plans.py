@@ -56,7 +56,7 @@ def normalize_plan(value: dict | None) -> dict:
             raise ValueError(f"The {category} mix must be a number.") from None
     total = sum(raw.values())
     if total <= 0:
-        raise ValueError("Give at least one capability part of the monthly budget.")
+        raise ValueError("Give at least one capability part of the recurring contribution.")
     normalized = {
         category: int(round(raw[category] * 100 / total))
         for category in PLAN_CATEGORIES
@@ -100,9 +100,14 @@ def estimate_plan(value: dict | None) -> dict:
         "capabilities": capabilities,
         "currency": "USD",
         "checkout_available": False,
+        "balance_policy": {
+            "rolls_over": True,
+            "expires": False,
+            "description": "Unused AI balance carries forward and does not expire.",
+        },
         "estimate_notice": (
             "Planning estimate using a blended mix of efficient provider models and typical "
-            "request sizes. Long chats and complex generations use more; final allowances "
-            "will follow PETEY Cloud's live rate card."
+            "request sizes. Unused AI balance carries forward and does not reset each month. "
+            "Long requests use more, and future capability estimates can change with provider prices."
         ),
     }
