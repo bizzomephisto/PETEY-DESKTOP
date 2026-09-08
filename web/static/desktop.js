@@ -776,6 +776,14 @@ function formatPlanUnits(value) {
 
 function renderPlanEstimate(estimate) {
     const icons = {chat: '●', images: '◆', video: '▶', voice: '◖'};
+    const qualityName = estimate.plan.quality.charAt(0).toUpperCase() + estimate.plan.quality.slice(1);
+    document.getElementById('plan-impact-title').textContent = `${qualityName} at $${estimate.plan.monthly_budget} adds about`;
+    for (const category of planCategories) {
+        document.getElementById(`plan-impact-${category}`).textContent = formatPlanUnits(
+            estimate.capabilities[category].estimated_units,
+        );
+    }
+    document.getElementById('plan-live-impact').classList.remove('updating');
     const container = document.getElementById('plan-capabilities');
     container.replaceChildren(...planCategories.map(category => {
         const item = estimate.capabilities[category];
@@ -814,6 +822,10 @@ async function requestPlanEstimate() {
 
 function schedulePlanEstimate() {
     clearTimeout(planEstimateTimer);
+    const plan = readPlanForm();
+    const qualityName = plan.quality.charAt(0).toUpperCase() + plan.quality.slice(1);
+    document.getElementById('plan-impact-title').textContent = `${qualityName} estimate updating…`;
+    document.getElementById('plan-live-impact').classList.add('updating');
     planEstimateTimer = setTimeout(requestPlanEstimate, 120);
 }
 

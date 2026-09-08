@@ -244,6 +244,16 @@ body.native-visual-fullscreen .chat-panel { grid-template-rows: minmax(0, 1fr); 
 .quality-picker small { margin-top: 2px; color: var(--muted); font-size: 10px; }
 .quality-option:hover { border-color: var(--accent-border); background: var(--panel-2); }
 .quality-option.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.plan-live-impact { margin-top: 12px; padding: 11px 12px; border: 1px solid var(--accent-border); border-radius: 10px; background: var(--panel-2); transition: opacity .12s ease, border-color .12s ease; }
+.plan-live-impact.updating { opacity: .58; }
+.plan-impact-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.plan-impact-heading span { color: var(--accent-text); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.plan-impact-heading strong { color: var(--text); font-size: 11px; text-align: right; }
+.plan-impact-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
+.plan-impact-grid > span { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 0 5px; min-width: 0; }
+.plan-impact-grid b { color: var(--accent-text); font-size: 9px; }
+.plan-impact-grid strong { overflow: hidden; color: var(--text); font-size: 14px; text-overflow: ellipsis; }
+.plan-impact-grid small { grid-column: 1 / -1; color: var(--muted); font-size: 9px; }
 .mix-total { flex: 0 0 auto; padding: 6px 9px; border-radius: 999px; background: var(--field); color: var(--accent-text); font-size: 12px; }
 .plan-mix-grid { display: grid; gap: 15px; }
 .plan-mix-row { display: grid; grid-template-columns: 28px minmax(120px, 1fr) 42px; align-items: center; gap: 0 9px; }
