@@ -8,6 +8,25 @@ from petey.quick_window import move_x11_window_frame, screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
+    def test_desktop_bridge_opens_only_expected_discord_pages(self):
+        bridge = run_desktop.DesktopBridge()
+        with patch("run_desktop.webbrowser.open", return_value=True) as opened:
+            self.assertTrue(bridge.open_discord_url(
+                "https://discord.com/oauth2/authorize?client_id=123&scope=bot&permissions=68608"
+            ))
+            opened.assert_called_once()
+            opened.reset_mock()
+            self.assertTrue(bridge.open_discord_url("https://discord.com/developers/applications"))
+            opened.assert_called_once()
+            for url in (
+                "https://discord.com.evil.example/oauth2/authorize",
+                "https://user:secret@discord.com/oauth2/authorize",
+                "http://discord.com/oauth2/authorize",
+                "https://discord.com/channels/@me",
+            ):
+                self.assertFalse(bridge.open_discord_url(url))
+            self.assertEqual(opened.call_count, 1)
+
     def test_desktop_bridge_updates_native_window(self):
         bridge = run_desktop.DesktopBridge()
         window = type("Window", (), {"on_top": False, "toggle_fullscreen": lambda self: None})()
@@ -107,6 +126,46 @@ class DesktopLauncherTests(unittest.TestCase):
         with patch("run_desktop.webbrowser.open", return_value=True) as opened:
             self.assertTrue(bridge.open_media_provider())
         opened.assert_called_once_with(run_desktop.MEDIA_PROVIDER_URL)
+
+    def test_desktop_bridge_opens_addons_folder(self):
+        with TemporaryDirectory() as directory, patch(
+            "run_desktop.subprocess.Popen"
+        ) as opened, patch("run_desktop.sys.platform", "linux"):
+            path = Path(directory) / "addons"
+            result = run_desktop.DesktopBridge(addons_dir=path).open_addons_folder()
+            self.assertTrue(result["ok"])
+            self.assertTrue(path.is_dir())
+            opened.assert_called_once_with(["xdg-open", str(path)])
+
+    def test_desktop_bridge_replaces_current_process_once(self):
+        bridge = run_desktop.DesktopBridge()
+        bridge.window = MagicMock()
+        with (
+            patch("run_desktop.os.chdir") as changed,
+            patch("run_desktop.os.execv") as replaced,
+        ):
+            first = bridge.restart_petey()
+            second = bridge.restart_petey()
+        self.assertEqual(first, {"ok": True, "restarting": True})
+        self.assertEqual(second, {"ok": True, "restarting": True})
+        changed.assert_called_once_with(run_desktop.PROJECT_ROOT)
+        replaced.assert_called_once_with(
+            run_desktop.sys.executable,
+            [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve())],
+        )
+        bridge.window.destroy.assert_not_called()
+
+    def test_restart_requires_native_window_and_recovers_from_launch_error(self):
+        bridge = run_desktop.DesktopBridge()
+        self.assertFalse(bridge.restart_petey()["ok"])
+        bridge.window = MagicMock()
+        with patch("run_desktop.os.chdir"), patch(
+            "run_desktop.os.execv", side_effect=OSError("launch failed")
+        ):
+            result = bridge.restart_petey()
+        self.assertFalse(result["ok"])
+        self.assertFalse(bridge._restart_started)
+        bridge.window.destroy.assert_not_called()
 
     def test_desktop_bridge_opens_gallery_file_with_system_viewer(self):
         gallery = MagicMock()

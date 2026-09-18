@@ -158,7 +158,7 @@ class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         session = _FakeSession(pages)
-        client = DeapiClient()
+        client = DeapiClient(api_key="test-key")
         client.get_session = AsyncMock(return_value=session)
 
         models = await client.get_models("txt2video")

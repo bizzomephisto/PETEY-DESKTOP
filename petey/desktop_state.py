@@ -6,6 +6,7 @@ import getpass
 import copy
 import json
 import os
+import re
 import sys
 import threading
 import uuid
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from petey.config import _build_enriched_prompt, make_default_persona
+from petey.room_chat import ROOM_PROMPT
 from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 
 PERSONA_SLOT_COUNT = 5
@@ -150,6 +152,51 @@ class DesktopState:
             changed = True
         if not isinstance(settings.get("tools"), dict):
             settings["tools"] = {}
+            changed = True
+        if not isinstance(settings.get("addons"), dict):
+            settings["addons"] = {"discord": True}
+            changed = True
+        elif not isinstance(settings["addons"].get("discord", True), bool):
+            settings["addons"]["discord"] = True
+            changed = True
+        if not isinstance(settings.get("discord"), dict):
+            settings["discord"] = {
+                "bot_token": "", "pace": "auto", "watched_topics": [],
+                "room_prompt": ROOM_PROMPT, "auto_connect": False,
+                "last_location": {},
+            }
+            changed = True
+        elif not isinstance(settings["discord"].get("bot_token"), str):
+            settings["discord"]["bot_token"] = ""
+            changed = True
+        if settings["discord"].get("pace") not in {"auto", "relaxed", "balanced", "lively", "fast"}:
+            settings["discord"]["pace"] = "auto"
+            changed = True
+        try:
+            watched_topics = self._normalize_discord_topics(
+                settings["discord"].get("watched_topics", [])
+            )
+        except ValueError:
+            watched_topics = []
+        if settings["discord"].get("watched_topics") != watched_topics:
+            settings["discord"]["watched_topics"] = watched_topics
+            changed = True
+        room_prompt = settings["discord"].get("room_prompt")
+        if not isinstance(room_prompt, str) or not room_prompt.strip() or len(room_prompt) > 12000:
+            settings["discord"]["room_prompt"] = ROOM_PROMPT
+            changed = True
+        if not isinstance(settings["discord"].get("auto_connect"), bool):
+            settings["discord"]["auto_connect"] = False
+            changed = True
+        location = settings["discord"].get("last_location")
+        required_location = {"guild_id", "channel_id", "guild", "channel"}
+        if not isinstance(location, dict) or not required_location.issubset(location):
+            settings["discord"]["last_location"] = {}
+            changed = True
+        elif (any(not isinstance(location.get(key), str) for key in required_location)
+              or not location.get("guild_id", "").isdigit()
+              or not location.get("channel_id", "").isdigit()):
+            settings["discord"]["last_location"] = {}
             changed = True
         filesystem_tool = settings["tools"].get("filesystem")
         if not isinstance(filesystem_tool, dict):
@@ -500,6 +547,154 @@ class DesktopState:
     @property
     def ai_provider(self) -> dict:
         return copy.deepcopy(self.settings.get("ai_provider", {}))
+
+    @property
+    def discord_bot_token(self) -> str:
+        saved = str(self.settings.get("discord", {}).get("bot_token") or "").strip()
+        return saved or str(os.getenv("DISCORD_BOT_TOKEN", "")).strip()
+
+    @property
+    def discord_bot_token_status(self) -> dict:
+        saved = bool(str(self.settings.get("discord", {}).get("bot_token") or "").strip())
+        environment = bool(str(os.getenv("DISCORD_BOT_TOKEN", "")).strip())
+        return {
+            "has_token": saved or environment,
+            "has_saved_token": saved,
+            "source": "saved" if saved else "environment" if environment else "none",
+        }
+
+    def update_discord_bot_token(self, token: str = "", clear: bool = False) -> dict:
+        if not isinstance(token, str) or len(token) > 4096:
+            raise ValueError("Discord bot token must be text of at most 4096 characters.")
+        if not clear and not token.strip():
+            raise ValueError("Enter a Discord bot token.")
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["bot_token"] = "" if clear else token.strip()
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_bot_token_status
+
+    @property
+    def discord_pace(self) -> str:
+        pace = str(self.settings.get("discord", {}).get("pace") or "auto")
+        return pace if pace in {"auto", "relaxed", "balanced", "lively", "fast"} else "auto"
+
+    def update_discord_pace(self, pace: str) -> str:
+        if pace not in {"auto", "relaxed", "balanced", "lively", "fast"}:
+            raise ValueError("Choose a valid Discord pacing mode.")
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["pace"] = pace
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_pace
+
+    @staticmethod
+    def _normalize_discord_topics(topics) -> list[str]:
+        if not isinstance(topics, list) or len(topics) > 20:
+            raise ValueError("Enter up to 20 Discord watched topics.")
+        normalized = []
+        seen = set()
+        for topic in topics:
+            if not isinstance(topic, str):
+                raise ValueError("Each Discord watched topic must be text.")
+            topic = " ".join(topic.split())
+            if not 1 <= len(topic) <= 50:
+                raise ValueError("Each Discord watched topic must be 1–50 characters.")
+            key = topic.casefold()
+            if key not in seen:
+                normalized.append(topic)
+                seen.add(key)
+        return normalized
+
+    @property
+    def discord_watched_topics(self) -> list[str]:
+        try:
+            return self._normalize_discord_topics(
+                self.settings.get("discord", {}).get("watched_topics", [])
+            )
+        except ValueError:
+            return []
+
+    def update_discord_watched_topics(self, topics) -> list[str]:
+        topics = self._normalize_discord_topics(topics)
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["watched_topics"] = topics
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_watched_topics
+
+    @property
+    def discord_room_prompt(self) -> str:
+        prompt = self.settings.get("discord", {}).get("room_prompt")
+        return prompt if isinstance(prompt, str) and prompt.strip() else ROOM_PROMPT
+
+    def update_discord_room_prompt(self, prompt="", reset=False) -> str:
+        if reset:
+            prompt = ROOM_PROMPT
+        if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 12000:
+            raise ValueError("Discord room prompt must contain 1–12,000 characters.")
+        saved_prompt = ROOM_PROMPT if reset else prompt.strip()
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["room_prompt"] = saved_prompt
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_room_prompt
+
+    @property
+    def discord_auto_connect(self) -> bool:
+        return self.settings.get("discord", {}).get("auto_connect") is True
+
+    def update_discord_auto_connect(self, enabled) -> bool:
+        if not isinstance(enabled, bool):
+            raise ValueError("Choose whether Discord auto-connect is enabled.")
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["auto_connect"] = enabled
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_auto_connect
+
+    @property
+    def discord_last_location(self) -> dict:
+        location = self.settings.get("discord", {}).get("last_location")
+        return copy.deepcopy(location) if isinstance(location, dict) else {}
+
+    def update_discord_last_location(self, guild_id, channel_id, guild="", channel="") -> dict:
+        location = {
+            "guild_id": str(guild_id or "")[:24],
+            "channel_id": str(channel_id or "")[:24],
+            "guild": str(guild or "")[:100],
+            "channel": str(channel or "")[:100],
+        }
+        if not location["guild_id"].isdigit() or not location["channel_id"].isdigit():
+            raise ValueError("Choose a Discord server and channel first.")
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["last_location"] = location
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_last_location
+
+    def addon_enabled(self, addon_id: str, default=False) -> bool:
+        value = self.settings.get("addons", {}).get(str(addon_id))
+        return value if isinstance(value, bool) else bool(default)
+
+    def update_addon_enabled(self, addon_id: str, enabled) -> bool:
+        addon_id = str(addon_id or "")
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id):
+            raise ValueError("Choose a valid add-on.")
+        if not isinstance(enabled, bool):
+            raise ValueError("Add-on enabled must be true or false.")
+        with self._lock:
+            addons = dict(self.settings.get("addons") or {})
+            addons[addon_id] = enabled
+            self.settings["addons"] = addons
+            self._write_json(self.settings_path, self.settings)
+        return self.addon_enabled(addon_id)
 
     def update_ai_provider(self, changes: dict) -> dict:
         provider = str(changes.get("provider") or self.ai_provider.get("provider", "gemini"))

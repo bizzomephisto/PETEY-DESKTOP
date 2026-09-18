@@ -683,13 +683,118 @@ document.getElementById('temporary-mode').addEventListener('change', async event
     }
 });
 
+let addonsLoaded = false;
+
+function renderAddons(payload) {
+    const list = document.getElementById('addons-list');
+    list.replaceChildren();
+    document.getElementById('addons-directory').textContent = payload.directory || '';
+    for (const addon of payload.addons || []) {
+        const row = document.createElement('article');
+        row.className = 'addon-row';
+        const copy = document.createElement('div');
+        const heading = document.createElement('div');
+        heading.className = 'addon-heading';
+        const name = document.createElement('strong');
+        name.textContent = addon.name;
+        const version = document.createElement('small');
+        version.textContent = `${addon.version || ''} · ${addon.source}`;
+        heading.append(name, version);
+        const description = document.createElement('p');
+        description.textContent = addon.description;
+        copy.append(heading, description);
+        if (addon.error) {
+            const error = document.createElement('small');
+            error.className = 'addon-error';
+            error.textContent = addon.error;
+            copy.append(error);
+        } else if (addon.restart_required) {
+            const restart = document.createElement('small');
+            restart.className = 'addon-restart';
+            restart.textContent = 'Restart PETEY to apply this change.';
+            copy.append(restart);
+        }
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.role = 'switch';
+        toggle.checked = Boolean(addon.enabled);
+        // A broken enabled add-on must remain switchable off. Broken disabled
+        // manifests cannot be enabled until their files are repaired.
+        toggle.disabled = Boolean(addon.error && !addon.enabled);
+        toggle.setAttribute('aria-label', `Enable ${addon.name}`);
+        toggle.addEventListener('change', async () => {
+            if (toggle.checked && addon.source === 'user'
+                    && !window.confirm(`Enable ${addon.name}? Installed add-ons run trusted Python code when PETEY restarts.`)) {
+                toggle.checked = false;
+                return;
+            }
+            toggle.disabled = true;
+            try {
+                await apiJson(`/api/desktop/addons/${encodeURIComponent(addon.id)}`, {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({enabled: toggle.checked}),
+                });
+                document.getElementById('addons-status').textContent = 'Saved. Restart PETEY to apply add-on changes.';
+                await loadAddons(true);
+            } catch (error) {
+                toggle.checked = !toggle.checked;
+                document.getElementById('addons-status').textContent = error.message;
+            } finally { toggle.disabled = false; }
+        });
+        row.append(copy, toggle);
+        list.append(row);
+    }
+    if (!(payload.addons || []).length) list.innerHTML = '<p class="muted">No add-ons are installed.</p>';
+}
+
+async function loadAddons(force = false) {
+    if (addonsLoaded && !force) return;
+    try {
+        renderAddons(await apiJson('/api/desktop/addons'));
+        addonsLoaded = true;
+    } catch (error) {
+        document.getElementById('addons-status').textContent = error.message;
+    }
+}
+
+document.getElementById('open-addons-folder').addEventListener('click', async () => {
+    const status = document.getElementById('addons-status');
+    if (window.pywebview?.api?.open_addons_folder) {
+        const result = await window.pywebview.api.open_addons_folder();
+        status.textContent = result.ok ? `Opened ${result.path}` : result.error;
+    } else {
+        status.textContent = `Add add-on folders under ${document.getElementById('addons-directory').textContent}`;
+    }
+});
+
+document.getElementById('restart-petey').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const status = document.getElementById('addons-status');
+    if (!window.pywebview?.api?.restart_petey) {
+        status.textContent = 'Restart PETEY from its launcher or stop and rerun the browser development command.';
+        return;
+    }
+    button.disabled = true;
+    status.textContent = 'Restarting PETEY…';
+    try {
+        const result = await window.pywebview.api.restart_petey();
+        if (!result.ok) {
+            status.textContent = result.error;
+            button.disabled = false;
+        }
+    } catch (error) {
+        status.textContent = error.message || 'Could not restart PETEY.';
+        button.disabled = false;
+    }
+});
+
 function showView(view) {
+    if (!document.getElementById(`view-${view}`)) return;
     document.querySelectorAll('.nav-button').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
     if (view === 'chat') ensureNeuralVisualizationRunning();
-    const settingsViews = ['providers', 'settings', 'personality', 'microphone', 'tools', 'knowledge', 'memory'];
-    const navView = settingsViews.includes(view) ? 'settings' : view;
+    const navView = document.getElementById(`view-${view}`).classList.contains('settings-view') ? 'settings' : view;
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
     window.location.hash = view === 'settings' ? 'settings' : view;
     if (['providers', 'personality'].includes(view) && !personalityLoaded) loadPersonality();
@@ -707,11 +812,14 @@ function showView(view) {
     if (view === 'workspace' && !workspaceLoaded) loadWorkspaces();
     if (view === 'plan' && !planBuilderLoaded) loadPlanBuilder();
     if (view === 'tools' && !toolsLoaded) loadTools();
+    if (view === 'discord' && typeof loadDiscord === 'function') loadDiscord();
+    if (view === 'addons') loadAddons();
     if (view === 'knowledge') loadKnowledge();
     if (view === 'memory') {
         loadMemoryStats();
         if (!memoryProviderLoaded) loadMemoryProvider();
     }
+    window.dispatchEvent(new CustomEvent('petey:view', {detail: {view}}));
 }
 
 const planCategories = ['chat', 'images', 'video', 'voice'];
@@ -1819,58 +1927,6 @@ document.getElementById('save-plan-preview').addEventListener('click', async eve
     } finally {
         button.disabled = false;
     }
-});
-
-function openSetting(view, targetId) {
-    showView(view);
-    if (!targetId) return;
-    const target = document.getElementById(targetId);
-    if (!target) return;
-    for (let parent = target; parent; parent = parent.parentElement) {
-        if (parent.tagName === 'DETAILS') parent.open = true;
-    }
-    target.scrollIntoView({block: 'start', behavior: 'auto'});
-    const focusTarget = target.querySelector('summary, h2, input, select, button');
-    if (focusTarget) {
-        if (focusTarget.tagName === 'H2') focusTarget.tabIndex = -1;
-        focusTarget.focus({preventScroll: true});
-    }
-}
-document.querySelectorAll('[data-settings-view]').forEach(button => {
-    button.addEventListener('click', () => openSetting(button.dataset.settingsView, button.dataset.settingsTarget));
-});
-
-// Search headings and field labels, never saved values or API keys.
-const settingSearchEntries = [...document.querySelectorAll('.settings-view .settings-card')].map((card, index) => {
-    if (!card.id) card.id = `settings-group-${index}`;
-    return {id: card.id, view: card.closest('.app-view').id.replace('view-', ''),
-        title: card.querySelector('h2')?.textContent || '',
-        keywords: [card.dataset.settingsKeywords || '', ...[...card.querySelectorAll('h2, label > span, summary p')].map(label => label.textContent)].join(' ').toLowerCase()};
-}).filter(entry => entry.title);
-document.querySelectorAll('[data-settings-search]').forEach(input => {
-    const results = input.closest('nav').querySelector('.settings-search-results');
-    input.addEventListener('input', () => {
-        const query = input.value.trim().toLowerCase();
-        results.replaceChildren();
-        results.hidden = !query;
-        if (!query) return;
-        const matches = settingSearchEntries.filter(entry => query.split(/\s+/).every(word => entry.keywords.includes(word))).slice(0, 8);
-        for (const entry of matches) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = entry.title;
-            button.addEventListener('click', () => {
-                input.value = ''; results.hidden = true;
-                openSetting(entry.view, entry.id);
-            });
-            results.append(button);
-        }
-        if (!matches.length) results.textContent = 'No matches. Try voice, model, theme, or memory.';
-    });
-    input.addEventListener('keydown', event => {
-        if (event.key === 'Escape') { input.value = ''; results.hidden = true; }
-        if (event.key === 'Enter') { event.preventDefault(); results.querySelector('button')?.click(); }
-    });
 });
 
 document.getElementById('project-link').addEventListener('click', async event => {
@@ -4011,5 +4067,9 @@ for (const [id, endpoint, statusId, read] of [
 }
 
 const requestedView = window.location.hash.replace('#', '');
-const knownViews = ['providers', 'chat', 'media', 'gallery', 'workspace', 'plan', 'settings', 'personality', 'microphone', 'tools', 'knowledge', 'memory', 'help'];
+const knownViews = [...document.querySelectorAll('.app-view[id]')].map(page => page.id.replace('view-', ''));
 if (knownViews.includes(requestedView)) showView(requestedView);
+window.addEventListener('hashchange', () => {
+    const view = window.location.hash.slice(1) || 'chat';
+    if (knownViews.includes(view) && !document.getElementById(`view-${view}`).classList.contains('active-view')) showView(view);
+});

@@ -1,0 +1,19 @@
+<section id="view-addons" class="tool-view app-view addons-view">
+    <header class="tool-header">
+        <div><span class="page-eyebrow">EXTENSIONS</span><h1>Add-ons</h1><p>Choose which installed modules PETEY loads.</p></div>
+        <div class="inline-actions"><button id="restart-petey" class="primary-button" type="button">Restart PETEY</button><button id="open-addons-folder" class="secondary-button" type="button">Open add-ons folder</button></div>
+    </header>
+    <div class="tool-content">
+        <section class="settings-card">
+            <h2>Installed add-ons</h2>
+            <p class="hint">Add-ons run trusted Python code with the same local access as PETEY. Install only modules you trust. Changes take effect after restarting PETEY.</p>
+            <p id="addons-directory" class="code-path"></p>
+            <div id="addons-list" class="addons-list"><p class="muted">Loading installed add-ons…</p></div>
+            <p id="addons-status" class="wide-status" role="status"></p>
+        </section>
+        <section class="settings-card">
+            <h2>Build an add-on</h2>
+            <p>Create a separate folder containing <code>petey-addon.json</code> and an entrypoint with <code>setup(context)</code>. See <code>docs/addons.md</code> for the complete contract. External add-ons are not bundled with PETEY.</p>
+        </section>
+    </div>
+</section>

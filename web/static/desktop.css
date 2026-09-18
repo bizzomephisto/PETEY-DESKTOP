@@ -166,6 +166,7 @@ body.native-visual-fullscreen .chat-panel { grid-template-rows: minmax(0, 1fr); 
 
 .tool-view { grid-template-rows: auto minmax(0, 1fr); min-height: 0; height: 100%; overflow: hidden; }
 .tool-view.settings-view { grid-template-rows: auto auto minmax(0, 1fr); }
+.app-view.active-view.tool-view.addon-view { display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 28px max(28px, calc((100% - 900px) / 2)) 50px; }
 .tool-header { padding: 21px 30px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
 .tool-header h1, .tool-header p { margin: 0; }
 .tool-header h1 { font-size: 20px; }
@@ -702,3 +703,100 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
 
 .chat-panel.visual-mode .chat-header { color: #f4f6fa; }
 .chat-panel.visual-mode .chat-header p { color: #a8b0bf; }
+.discord-selectors { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 16px 0; }
+.discord-selectors label { display: grid; gap: 8px; }
+.discord-instructions { padding-left: 20px; overflow-wrap: anywhere; }
+.discord-instructions li { margin-top: 10px; }
+.discord-activity { max-height: 420px; overflow-y: auto; overflow-wrap: anywhere; }
+.discord-activity p { margin: 10px 0; }
+.discord-sent strong { color: var(--accent); }
+.discord-pacing { margin: 18px 0; }
+.discord-auto-connect { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 18px 0; }
+.discord-auto-connect span { display: grid; gap: 4px; }
+.discord-auto-connect small { color: var(--muted); font-weight: normal; }
+.discord-pacing label { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+.discord-pacing label span { display: grid; gap: 4px; }
+.discord-pacing label small { color: var(--muted); font-weight: normal; }
+.discord-pacing output { color: var(--accent-text); font-weight: 700; }
+#discord-pace { width: 100%; margin-top: 12px; }
+.discord-pace-scale { display: flex; justify-content: space-between; color: var(--muted); font-size: .75rem; }
+.discord-topics { display: grid; gap: 8px; margin: 18px 0; }
+.discord-topics label { display: grid; gap: 4px; }
+.discord-topics label small { color: var(--muted); font-weight: normal; }
+.discord-topics .inline-actions input { flex: 1 1 320px; }
+.discord-room-prompt { display: grid; gap: 8px; margin: 20px 0; }
+.discord-room-prompt label { display: grid; gap: 4px; }
+.discord-room-prompt label small { color: var(--muted); font-weight: normal; }
+.discord-room-prompt textarea { width: 100%; resize: vertical; min-height: 180px; }
+.discord-admin-proposals { display: grid; gap: 10px; margin-top: 16px; }
+.discord-admin-proposal { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--panel-2); }
+.discord-admin-proposal strong, .discord-admin-proposal small { display: block; overflow-wrap: anywhere; }
+.discord-admin-proposal small { color: var(--muted); margin-top: 4px; text-transform: capitalize; }
+.addons-list { display: grid; gap: 10px; margin-top: 16px; }
+.addon-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
+.addon-row p { margin: 5px 0 0; color: var(--muted); }
+.addon-heading { display: flex; align-items: baseline; gap: 10px; }
+.addon-heading small { color: var(--muted); }
+.addon-error { display: block; margin-top: 6px; color: var(--danger); }
+.addon-restart { display: block; margin-top: 6px; color: var(--accent-text); }
+.code-path { overflow-wrap: anywhere; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+/* Settings shell: shared navigation, bounded page width, and reusable category cards. */
+.settings-category-list, .settings-nav-group { display: grid; gap: 4px; }
+.settings-nav-group { margin-top: 18px; }
+.settings-nav-group .nav-eyebrow { display: block; padding: 0 10px 6px; font-size: 10px; }
+.settings-category-list .settings-tab { width: 100%; }
+.settings-help-link { margin-top: auto; padding: 24px 10px 0; text-align: left; }
+.settings-page-content { width: 100%; max-width: 960px; margin-inline: auto; }
+.settings-save-hint { margin: 0 0 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.settings-section-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 24px; }
+.settings-section-links button { padding: 7px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); font-size: 12px; cursor: pointer; }
+.settings-section-links button:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+.settings-page-content > .settings-card { scroll-margin-top: 16px; }
+.settings-page-content .inline-actions { gap: 10px; flex-wrap: wrap; }
+.settings-page-content .inline-actions > .wide-status { flex-basis: 100%; }
+.settings-page-content .wide-status:empty { display: none; }
+.settings-page-content .danger-zone .danger-card { padding: 18px 0; border-bottom: 1px solid var(--border); }
+.settings-page-content .danger-zone .danger-card:last-child { border-bottom: 0; }
+.settings-quick-start h2, .settings-overview-group h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.settings-quick-start .settings-shortcuts { margin: 0 0 30px; }
+.settings-overview-group { margin-bottom: 28px; }
+.settings-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.settings-overview-card { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 90px; padding: 18px; text-align: left; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); cursor: pointer; }
+.settings-overview-card:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+.settings-overview-card > span:nth-child(2) { flex: 1; min-width: 0; }
+.settings-overview-card strong, .settings-overview-card small { display: block; }
+.settings-overview-card strong { font-size: 14px; }
+.settings-overview-card small { margin-top: 5px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.settings-overview-icon { color: var(--accent-text); font-size: 24px; }
+.settings-search-results { max-height: 320px; overflow-y: auto; flex-shrink: 0; }
+.settings-search-results p { margin: 0; padding: 5px; font-size: 11px; }
+.settings-search-results strong, .settings-search-results small { display: block; }
+.settings-search-results small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.settings-view > .tool-header h1:focus { outline: none; }
+@container (max-width: 650px) {
+    .settings-overview-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+    .settings-tabs { position: relative; display: block; padding: 10px 14px; overflow: visible; }
+    .settings-tabs .settings-search { display: block; padding: 0 0 8px; }
+    .settings-search > span { display: none; }
+    .settings-search input { width: 100%; font-size: 14px; }
+    .settings-category-list { display: flex; overflow-x: auto; gap: 5px; padding-bottom: 3px; }
+    .settings-nav-group { display: contents; }
+    .settings-category-list .settings-tab { width: auto; flex-shrink: 0; }
+    .settings-help-link { display: none; }
+    .settings-search-results { position: absolute; top: 48px; left: 14px; right: 14px; z-index: 5; max-height: min(320px, 45vh); box-shadow: 0 8px 24px #0003; }
+    .settings-view > .tool-header p { font-size: 12px; line-height: 1.5; }
+    .settings-section-links { margin-bottom: 18px; }
+    .desktop-nav { overflow-x: auto; justify-content: flex-start; }
+    .sidebar .nav-button { flex-shrink: 0; }
+}
+.settings-category-list .settings-tab small { display: none; }
+.settings-category-list .settings-tab { min-height: 44px; padding: 10px; }
+.settings-category-list .settings-tab strong { font-size: 13px; line-height: 1.4; }
+.settings-nav-group { margin-top: 14px; }
+
+@media (max-width: 760px) {
+    .settings-nav-group .nav-eyebrow { display: none; }
+}

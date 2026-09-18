@@ -1,0 +1,78 @@
+<section id="view-discord" class="tool-view app-view">
+    <header class="tool-header"><div><h1>Discord</h1><p>Connect PETEY to one server channel as an official Discord bot.</p></div><span id="discord-badge" class="provider-badge">Disconnected</span></header>
+    <div class="tool-content">
+        <section class="settings-card">
+            <h2>1. Connect PETEY's bot account</h2>
+            <p>Create a Discord application with a bot, enable <strong>Message Content Intent</strong> on its Bot page, then paste its bot token here. Never use your personal Discord user token.</p>
+            <label for="discord-token">Bot token</label>
+            <input id="discord-token" type="password" maxlength="4096" autocomplete="new-password" placeholder="Leave blank to keep the saved token">
+            <div class="inline-actions">
+                <button id="discord-save-token" class="primary-button" type="button">Save and inspect bot</button>
+                <button id="discord-clear-token" class="text-button" type="button" disabled>Clear saved token</button>
+                <a id="discord-developer-link" class="secondary-button link-button" href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">Open Discord Developer Portal ↗</a>
+            </div>
+            <p id="discord-token-status" class="wide-status" role="status">No bot token configured.</p>
+            <a id="discord-invite" class="primary-button link-button" href="#" target="_blank" rel="noopener noreferrer" hidden>Add PETEY to a Discord server ↗</a>
+            <p class="hint">The invite requests Discord's Administrator role. Channel creation, channel deletion, and clearing recent messages are available only as reviewable owner proposals below; public Discord messages cannot invoke them. The token is saved in PETEY's protected local settings and is never returned to this page.</p>
+        </section>
+        <section class="settings-card">
+            <div class="card-heading"><h2>2. Choose where PETEY chats</h2><button id="discord-refresh" class="secondary-button" type="button">Refresh servers</button></div>
+            <div class="discord-selectors">
+                <label>Server<select id="discord-guild" disabled><option value="">Save a bot token first</option></select></label>
+                <label>Text channel<select id="discord-channel" disabled><option value="">Choose a server</option></select></label>
+            </div>
+            <div class="inline-actions">
+                <button id="discord-connect" class="primary-button" type="button" disabled>Connect</button>
+                <button id="discord-pause" class="secondary-button" type="button" disabled>Pause PETEY</button>
+                <button id="discord-disconnect" class="secondary-button" type="button" disabled>Disconnect</button>
+            </div>
+            <label class="discord-auto-connect" for="discord-auto-connect">
+                <span><strong>Auto-connect</strong><small>Reconnect to the last successfully used server and channel when PETEY starts.</small></span>
+                <input id="discord-auto-connect" type="checkbox" role="switch">
+            </label>
+            <div class="discord-pacing">
+                <label for="discord-pace"><span><strong>Spontaneous participation</strong><small>Controls how often PETEY joins unrelated conversation. Mentions, replies, his name, and watched topics take priority.</small></span><output id="discord-pace-label">Auto</output></label>
+                <input id="discord-pace" type="range" min="0" max="4" step="1" value="0" aria-label="Discord conversation pace">
+                <div class="discord-pace-scale" aria-hidden="true"><span>Auto</span><span>Relaxed</span><span>Balanced</span><span>Lively</span><span>Fast</span></div>
+            </div>
+            <form id="discord-topics-form" class="discord-topics">
+                <label for="discord-topics"><strong>Watched topics</strong><small>Comma-separated words or phrases. PETEY responds whenever a new message contains one, such as linux, retro games, or space.</small></label>
+                <div class="inline-actions">
+                    <input id="discord-topics" type="text" maxlength="1000" placeholder="linux, retro games, space">
+                    <button id="discord-save-topics" class="secondary-button" type="submit">Save topics</button>
+                </div>
+                <p id="discord-topics-status" class="hint" role="status">No watched topics.</p>
+            </form>
+            <form id="discord-room-prompt-form" class="discord-room-prompt">
+                <label for="discord-room-prompt"><strong>Room prompt</strong><small>Controls PETEY's behavior in Discord. Changes apply to the next generated reply.</small></label>
+                <textarea id="discord-room-prompt" rows="12" maxlength="12000" spellcheck="true"></textarea>
+                <div class="inline-actions">
+                    <button id="discord-save-room-prompt" class="primary-button" type="submit">Save room prompt</button>
+                    <button id="discord-enhance-room-prompt" class="secondary-button" type="button">AI enhance</button>
+                    <button id="discord-reset-room-prompt" class="secondary-button" type="button">Restore default</button>
+                    <span id="discord-room-prompt-status" class="hint" role="status"></span>
+                </div>
+            </form>
+            <p id="discord-status" class="wide-status" role="status">Save a token, add the bot to a server, then refresh the list.</p>
+            <p class="hint">PETEY starts with fresh room-only context. Direct conversation and watched topics get prompt replies; the participation control governs unrelated conversation. Other bots and webhooks are ignored to prevent bot loops.</p>
+            <p class="hint"><strong>Media commands:</strong> /genimg, /img2img, /genvid, /img2vid, /vid2vid, /genmusic, /tts, /rmbg, and /upscale use this desktop's provider settings and save results to Gallery. Anyone allowed to use these commands can consume the configured provider balance.</p>
+        </section>
+        <section class="settings-card">
+            <h2>Give PETEY an instruction</h2>
+            <p>Chat directions stay in PETEY and resulting replies are public. Server requests such as “create a channel named linux,” “delete this channel,” or “clear this channel’s last 50 messages” become proposals that require your approval below.</p>
+            <form id="discord-instruction-form">
+                <label for="discord-instruction">Your instruction</label>
+                <textarea id="discord-instruction" rows="3" maxlength="2000" placeholder="Offer everyone a round of made-up trivia." disabled></textarea>
+                <div class="inline-actions"><button id="discord-instruct" class="primary-button" type="submit" disabled>Give instruction</button><span class="hint">Instructions use the same pacing ceiling as normal replies.</span></div>
+            </form>
+            <ul id="discord-instructions" class="discord-instructions" aria-label="Discord instruction status"></ul>
+            <p id="discord-admin-status" class="wide-status" role="status"></p>
+            <div id="discord-admin-proposals" class="discord-admin-proposals"><p class="muted">No pending server actions.</p></div>
+        </section>
+        <section class="settings-card">
+            <h2>Channel activity</h2>
+            <p class="hint">Only messages seen after connecting appear here. This temporary transcript is not added to PETEY's personal memory.</p>
+            <div id="discord-activity" class="discord-activity" role="log" aria-live="polite"><p class="muted">Not connected yet.</p></div>
+        </section>
+    </div>
+</section>

@@ -1,0 +1,25 @@
+<section id="theme-settings" class="settings-card theme-settings" data-settings-keywords="theme dark light color appearance">
+    <div class="card-heading"><div><h2>Pick a theme</h2><p>Choose a theme. It applies across Petey and saves automatically.</p></div><span class="provider-badge">Appearance</span></div>
+    <fieldset class="theme-picker"><legend class="sr-only">Interface theme</legend>
+<label class="theme-choice" data-theme-preview="midnight"><input type="radio" name="interface-theme" value="midnight" {% if theme == 'midnight' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Midnight</strong><small>The Petey original</small><span class="theme-check" aria-hidden="true">✓</span></span></label><label class="theme-choice" data-theme-preview="ocean"><input type="radio" name="interface-theme" value="ocean" {% if theme == 'ocean' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Ocean</strong><small>Cool & focused</small><span class="theme-check" aria-hidden="true">✓</span></span></label><label class="theme-choice" data-theme-preview="forest"><input type="radio" name="interface-theme" value="forest" {% if theme == 'forest' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Forest</strong><small>Quiet & grounded</small><span class="theme-check" aria-hidden="true">✓</span></span></label><label class="theme-choice" data-theme-preview="paper"><input type="radio" name="interface-theme" value="paper" {% if theme == 'paper' %}checked{% endif %}><span class="theme-preview" aria-hidden="true"><span class="preview-sidebar"><i></i><i></i><i></i></span><span class="preview-main"><i></i><i></i><b></b><em></em></span></span><span class="theme-caption"><strong>Paper</strong><small>A little daylight</small><span class="theme-check" aria-hidden="true">✓</span></span></label></fieldset><p id="theme-status" class="wide-status" role="status"></p></section>
+
+                <details id="profile-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Your name</h2><p>Choose how Petey addresses you and labels your chat messages.</p></div><span class="provider-badge">Local profile</span></div></summary>
+                    <div class="settings-section-body">
+                        <div class="field-grid two-column">
+                            <label><span>User name</span><input id="user-display-name" type="text" maxlength="50" placeholder="User"></label>
+                        </div>
+                        <div class="inline-actions"><button id="save-user-display-name" class="primary-button" type="button">Save name</button><span id="user-display-name-status" class="wide-status"></span></div>
+
+                    </div>
+                </details>
+                <details id="window-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Display &amp; window</h2><p>Interface scale, navigation, and window behavior. Changes apply immediately.</p></div></div></summary>
+                    <div class="settings-section-body">
+                        <label class="preference-row"><span><strong>Always on top</strong><small>Keep Petey above other desktop windows.</small></span><input id="always-on-top" type="checkbox" role="switch"></label>
+                        <label class="preference-row"><span><strong>Collapsed sidebar</strong><small>Use a compact navigation rail.</small></span><input id="sidebar-collapsed-setting" type="checkbox" role="switch"></label>
+                        <div class="preference-row"><span><strong>Interface scale</strong><small>Ctrl + / − changes this anywhere in the app.</small></span><div class="scale-controls"><button id="scale-down" type="button">−</button><output id="ui-scale-value">100%</output><button id="scale-up" type="button">＋</button><button id="scale-reset" type="button">Reset</button></div></div>
+                        <span id="preference-status" class="wide-status"></span>
+
+                    </div>
+                </details>

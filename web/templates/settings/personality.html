@@ -1,0 +1,54 @@
+<details id="character-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div></div></summary>
+                    <div class="settings-section-body">
+                        <div class="field-grid two-column">
+                            <label><span>Preset</span><select id="persona-preset"><option value="">Custom</option></select></label>
+                            <label><span>Name</span><input id="persona-name" type="text" maxlength="80"></label>
+                            <label><span>Role</span><input id="persona-role" type="text" maxlength="80"></label>
+                            <label><span>Tagline</span><input id="persona-tagline" type="text" maxlength="160"></label>
+                        </div>
+                        <label class="full-field"><span>Instructions for Petey</span><textarea id="persona-prompt" rows="10" placeholder="You are Petey…"></textarea></label>
+                        <div class="inline-actions"><button id="rewrite-persona" class="secondary-button" type="button">✦ Improve with Gemini</button><span class="hint">Rewrites the prompt without saving it.</span></div>
+                        <label class="full-field"><span>Traits <small>comma separated</small></span><input id="persona-traits" type="text" placeholder="Supportive, Witty, Direct"></label>
+
+                    </div>
+                </details>
+
+                <details id="communication-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Communication style</h2><p>Adjust tone, detail, formality, and empathy.</p></div></div></summary>
+                    <div class="settings-section-body">
+
+                        <div class="slider-grid">
+                            <label><span>Tone <output id="tone-value">50</output></span><input id="persona-tone" type="range" min="0" max="100"></label>
+                            <label><span>Verbosity <output id="verbosity-value">50</output></span><input id="persona-verbosity" type="range" min="0" max="100"></label>
+                            <label><span>Formality <output id="formality-value">50</output></span><input id="persona-formality" type="range" min="0" max="100"></label>
+                            <label><span>Empathy <output id="empathy-value">50</output></span><input id="persona-empathy" type="range" min="0" max="100"></label>
+                        </div>
+
+                    </div>
+                </details>
+                <details id="speech-settings-card" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Voice</h2><p>Make Petey's spoken voice part of this personality, or turn speech off completely.</p></div><span id="speech-provider-badge" class="provider-badge">Automatic</span></div></summary>
+                    <div class="settings-section-body">
+                        <div class="field-grid two-column">
+                            <label id="speech-gemini-voice-field" hidden><span>Default Gemini voice</span><select id="speech-gemini-voice"><option value="Zephyr">Zephyr — Bright</option><option value="Puck">Puck — Upbeat</option><option value="Charon">Charon — Informative</option><option value="Kore" selected>Kore — Firm</option><option value="Fenrir">Fenrir — Excitable</option><option value="Leda">Leda — Youthful</option><option value="Orus">Orus — Firm</option><option value="Aoede">Aoede — Breezy</option><option value="Callirrhoe">Callirrhoe — Easy-going</option><option value="Autonoe">Autonoe — Bright</option><option value="Enceladus">Enceladus — Breathy</option><option value="Iapetus">Iapetus — Clear</option><option value="Umbriel">Umbriel — Easy-going</option><option value="Algieba">Algieba — Smooth</option><option value="Despina">Despina — Smooth</option><option value="Erinome">Erinome — Clear</option><option value="Algenib">Algenib — Gravelly</option><option value="Rasalgethi">Rasalgethi — Informative</option><option value="Laomedeia">Laomedeia — Upbeat</option><option value="Achernar">Achernar — Soft</option><option value="Alnilam">Alnilam — Firm</option><option value="Schedar">Schedar — Even</option><option value="Gacrux">Gacrux — Mature</option><option value="Pulcherrima">Pulcherrima — Forward</option><option value="Achird">Achird — Friendly</option><option value="Zubenelgenubi">Zubenelgenubi — Casual</option><option value="Vindemiatrix">Vindemiatrix — Gentle</option><option value="Sadachbia">Sadachbia — Lively</option><option value="Sadaltager">Sadaltager — Knowledgeable</option><option value="Sulafat">Sulafat — Warm</option></select></label>
+                            <label id="speech-openai-voice-field" hidden><span>Default OpenAI voice</span><select id="speech-openai-voice"><option value="marin">Marin</option><option value="cedar">Cedar</option><option value="alloy">Alloy</option><option value="ash">Ash</option><option value="ballad">Ballad</option><option value="coral">Coral</option><option value="echo">Echo</option><option value="fable">Fable</option><option value="nova">Nova</option><option value="onyx">Onyx</option><option value="sage">Sage</option><option value="shimmer">Shimmer</option><option value="verse">Verse</option></select></label>
+                            <label id="speech-style-field" class="full-span" hidden><span>Default delivery directions <small>optional</small></span><textarea id="speech-style" rows="3" maxlength="2000" placeholder="Warm and conversational, with a relaxed pace…"></textarea></label>
+                        </div>
+                        <label id="speech-consistent-voice-row" class="preference-row" hidden><span><strong>Consistent voice</strong><small>Ask Gemini to preserve the selected speaker's identity, timbre, accent, and vocal character between replies.</small></span><input id="speech-consistent-voice" type="checkbox" role="switch" checked></label>
+                        <label class="preference-row"><span><strong>Automatically speak replies</strong><small>Play each new Petey chat response using the selected speech provider.</small></span><input id="speech-auto-speak" type="checkbox" role="switch"></label>
+                        <p class="hint">Speech service and model: <button class="text-button" data-settings-view="providers" data-settings-target="speech-model-settings" type="button">Choose speech provider →</button></p><p id="speech-provider-note" class="hint"></p>
+                        <div class="inline-actions"><button id="save-speech-settings" class="primary-button" type="button">Save voice</button><span id="speech-settings-status" class="wide-status"></span></div>
+                        <p class="hint">Saving this personality also saves these voice settings.</p>
+
+                    </div>
+                </details>
+
+                <details id="saved-personas-settings" class="settings-card settings-section">
+                    <summary><div class="settings-section-heading"><div><h2>Saved personas</h2><p>Keep up to five personality and voice snapshots on this machine.</p></div><span class="provider-badge">5 local slots</span></div></summary>
+                    <div class="settings-section-body">
+                        <div id="saved-persona-slots" class="persona-slot-grid"></div>
+
+                    </div>
+                </details>
+<div class="settings-save-bar"><span>Character, style, and voice save together.</span><button id="save-personality" class="primary-button" type="button">Save personality &amp; voice</button></div>

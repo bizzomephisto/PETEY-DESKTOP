@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 envbak/
+/peteyai/
+/peteyvenv/
 
 # Python
 __pycache__/
@@ -32,6 +34,12 @@ Thumbs.db
 
 # Bundled executables are local deployment artifacts
 petey/ffmpeg/
+
+# Local add-on development and third-party source checkouts are not distributed.
+# PETEY v0.17.0 ships only the built-in Discord integration.
+/examples/
+/blender_mcp/
+/dist/
 
 # Exclude removed legacy Discord bot and web-admin source
 main.py

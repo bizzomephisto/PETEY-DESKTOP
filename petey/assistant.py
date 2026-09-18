@@ -147,7 +147,17 @@ class AssistantService:
         else:
             user_prompt = f"User {identity.display_name} said: {cleaned}"
 
+        tool_schemas = self.tool_registry.schemas_for(cleaned) if self.tool_registry else []
+        tool_operation_rule = (
+            "OPERATION RULE: The connected tools offered for this turn are real capabilities "
+            "available to you now. Personality controls how you speak, never whether you carry "
+            "out the user's requested action. If an offered tool can directly perform that "
+            "action, call it before responding. Do not roleplay inability, reluctance, or lack "
+            "of access to an offered tool."
+            if tool_schemas else ""
+        )
         system_parts = [
+            tool_operation_rule,
             self.system_prompt,
             f"This is Petey's standalone desktop installation {identity.installation_id}.",
             "Temporary mode is active. Do not claim to remember this conversation." if temporary else "",
@@ -160,21 +170,28 @@ class AssistantService:
             ),
             (
                 "Use an offered tool only when it directly fulfills the user's current request. "
+                "Offered tools are connected capabilities available to you now. When an offered "
+                "tool can perform the requested action, call it instead of refusing, claiming you "
+                "lack access, or replacing the action with persona banter. "
                 "Never claim a tool succeeded until its result says so, and never repeat the same "
                 "tool call just because its result is still being processed."
             ),
         ]
         final_system = "\n".join(part for part in system_parts if part)
         tool_events = []
-        tool_schemas = self.tool_registry.schemas_for(cleaned) if self.tool_registry else []
+        model_prompt = user_prompt + (
+            "\nA connected tool can perform this request. Follow the operation rule and call "
+            "the relevant tool before answering."
+            if tool_schemas else ""
+        )
         try:
             if on_text and not tool_schemas:
                 response = self.ai.complete_stream(
-                    user_prompt + "\nRespond as Petey:", final_system, history, on_text,
+                    model_prompt + "\nRespond as Petey:", final_system, history, on_text,
                 )
             elif tool_schemas:
                 response, tool_events = self.ai.complete_with_tools(
-                    user_prompt + "\nRespond as Petey:",
+                    model_prompt + "\nRespond as Petey:",
                     final_system,
                     history,
                     tool_schemas,
@@ -182,7 +199,7 @@ class AssistantService:
                 )
             else:
                 response = self.ai.complete(
-                    user_prompt + "\nRespond as Petey:",
+                    model_prompt + "\nRespond as Petey:",
                     final_system,
                     history,
                 )

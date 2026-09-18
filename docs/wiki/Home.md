@@ -25,6 +25,9 @@ local memory, voice, media creation, and work inside folders you approve.
 - Store generated work in a local Gallery.
 - Search knowledge files and approved Workspace folders.
 - Propose file edits and commands for your review.
+- Stream chat replies with visible progress and interruption handling.
+- Connect an official Discord bot for bounded room conversation and media commands.
+- Install trusted local add-ons separately from the PETEY source release.
 
 ## Guides
 
@@ -40,6 +43,6 @@ local memory, voice, media creation, and work inside folders you approve.
 - [Troubleshooting](Troubleshooting)
 - [Development](Development)
 
-PETEY currently reports version **0.14.0**. See the
+PETEY currently reports version **0.17.0**. See the
 [repository](https://github.com/bizzomephisto/PETEY-DESKTOP) for source code and
 the latest changes.

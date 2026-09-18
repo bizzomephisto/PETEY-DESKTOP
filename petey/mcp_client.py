@@ -44,10 +44,16 @@ class MCPError(RuntimeError):
 class MCPStdioClient:
     """Synchronous, single-flight MCP client for a local stdio server."""
 
-    def __init__(self, argv: list[str], roots: list[Path], timeout: float = 60):
+    def __init__(self, argv: list[str], roots: list[Path], timeout: float = 60,
+                 env: dict[str, str] | None = None, cwd: str | Path | None = None):
         self.argv = [str(part) for part in argv]
         self.roots = [Path(root).resolve() for root in roots]
         self.timeout = timeout
+        self.env = {
+            **os.environ,
+            **{str(key): str(value) for key, value in (env or {}).items()},
+        }
+        self.cwd = str(Path(cwd).resolve()) if cwd else None
         self._process: subprocess.Popen | None = None
         self._messages: queue.Queue = queue.Queue()
         self._stderr = deque(maxlen=30)
@@ -73,6 +79,8 @@ class MCPStdioClient:
                     errors="replace",
                     bufsize=1,
                     shell=False,
+                    env=self.env,
+                    cwd=self.cwd,
                 )
             except OSError as exc:
                 raise MCPError(f"Could not start the MCP server: {exc}") from exc

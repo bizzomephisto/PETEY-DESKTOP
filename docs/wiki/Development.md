@@ -24,14 +24,37 @@ contracts, and focused test commands.
 - `petey/media_service.py` and `petey/media_jobs.py` — media operations and queue
 - `petey/workspace.py` — approved-folder operations and proposals
 - `petey/mcp_client.py` — read-only Filesystem MCP integration
+- `petey/addons.py` — external add-on discovery and lifecycle
+- `petey/discord_*.py` and `petey/room_chat.py` — built-in Discord integration
 - `web/desktop_app.py` — loopback Flask API
+- `web/settings_pages.py` — Settings page and section catalog
 - `web/templates/` and `web/static/` — desktop interface
+
+PETEY releases include Discord as the only built-in integration. External add-ons
+belong in the user's PETEY data directory and are not stored in this repository.
+See [`docs/addons.md`](../addons.md) for the extension contract.
+
+## Build a source release
+
+The release builder uses Git's tracked and non-ignored source file set, rejects
+external add-on manifests and local development folders, and writes a versioned
+ZIP under `dist/`:
+
+```bash
+python scripts/package_release.py
+```
+
+Inspect the printed file count and SHA-256 digest before attaching the archive to
+a GitHub release. GitHub's automatic source archives should be created from the
+same reviewed commit and version tag.
 
 ## Validation
 
 ```bash
 python -m unittest discover -s tests -v
 node --check web/static/desktop.js
+node --check web/static/settings.js
+node --check web/static/discord.js
 git diff --check
 ```
 

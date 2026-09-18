@@ -1,6 +1,6 @@
 # PETEY
 
-Current release: **v0.14.0**
+Current release: **v0.17.0** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
@@ -56,6 +56,8 @@ speed, and hardware setup.
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
 - Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
 - Build Your Plan preview from $5 in $5 steps, with rollover balance, capability mix, and live usage estimates
+- Streaming chat responses with progress states, interruption handling, and final-only memory storage
+- Live Gemini, OpenAI, and local-server model catalogs with stale-request protection
 - F11 visual fullscreen with progressive captions during Petey's spoken replies
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
 - Per-operation media prompt drafts that remain available across app restarts
@@ -65,6 +67,13 @@ speed, and hardware setup.
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
 - Read-only Filesystem MCP tools scoped to folders approved in Workspace
+- [Discord bot bridge](docs/discord.md) with online Gateway presence, deAPI media slash commands, startup auto-connect, AI-enhanced room prompts, adaptive participation, watched topics, and approved channel-management proposals
+- [Add-on system](docs/addons.md) with explicit enablement, lifecycle hooks, API routes, sidebar panels, shared desktop services, and model-tool extensions
+- Reorganized Settings overview with grouped categories, cross-page search, section links, compact layouts, and a catalog-driven page structure
+
+The GitHub release includes only PETEY's built-in Discord integration. Third-party
+and locally developed add-ons are installed separately in PETEY's application-data
+folder and are not bundled with the source release.
 
 PETEY runs a loopback-only Flask server inside a pywebview desktop window. If a
 native backend is unavailable, the launcher can open the same interface in your

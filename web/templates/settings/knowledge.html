@@ -1,0 +1,16 @@
+<section id="knowledge-upload-settings" class="settings-card upload-card">
+                    <div><h2>Add knowledge</h2><p>Text, Markdown, JSON, or text-based PDF · up to 25 MB</p></div>
+                    <label class="upload-button"><input id="knowledge-file" type="file" accept=".txt,.md,.json,.pdf" hidden><span>Choose file</span></label>
+                    <button id="upload-knowledge" class="primary-button" type="button" disabled>Upload</button>
+                    <div id="knowledge-upload-status" class="wide-status"></div>
+                </section>
+                <section id="knowledge-files-settings" class="settings-card">
+                    <div class="card-heading"><div><h2>Knowledge files</h2><p>Deleting a file removes all of its stored chunks.</p></div><button id="refresh-knowledge" class="icon-button" type="button" title="Refresh">↻</button></div>
+                    <div id="knowledge-list" class="document-list"><p class="muted">Loading documents…</p></div>
+                </section>
+                <section id="knowledge-search-settings" class="settings-card">
+                    <h2>Try a knowledge search</h2>
+                    <p>See which reference material Petey can find for a question.</p>
+                    <div class="search-row"><input id="rag-query" type="text" placeholder="What does Petey know about…?"><button id="search-rag" class="secondary-button" type="button">Search knowledge</button></div>
+                    <pre id="rag-results" class="rag-results" hidden></pre>
+                </section>

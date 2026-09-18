@@ -16,7 +16,11 @@ from urllib.parse import urlparse
 from flask import Flask, Response, jsonify, render_template, request, send_file, url_for
 
 from petey.assistant import AssistantAttachment, AssistantIdentity, AssistantService, PETEY_USER_ID
+from petey.addons import AddonManager
+from web.settings_pages import SETTINGS_GROUPS, SETTINGS_PAGES
 from petey.ai_provider import AIProvider, AIProviderError
+from petey.discord_bridge import DiscordBridge
+from petey.discord_transport import DiscordError
 from petey.config import PERSONA_PRESETS
 from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
@@ -74,6 +78,8 @@ def create_desktop_app(
     memory: DesktopMemory | None = None,
     workspace_service: WorkspaceService | None = None,
     mcp_manager: FilesystemMCPManager | None = None,
+    discord_bridge: DiscordBridge | None = None,
+    addon_manager: AddonManager | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -90,6 +96,8 @@ def create_desktop_app(
         app.config["PETEY_STATE"]
     )
     app.config["PETEY_IMAGE_BROWSER"] = ImageBrowser()
+    app.config["PETEY_ADDONS"] = addon_manager or AddonManager(app.config["PETEY_STATE"])
+    app.config["PETEY_DISCORD"] = discord_bridge
 
     def create_embedding(text: str):
         current: DesktopState = app.config["PETEY_STATE"]
@@ -114,6 +122,12 @@ def create_desktop_app(
             app.config["PETEY_MEDIA_JOBS"] = manager
         return manager
 
+    if (app.config["PETEY_DISCORD"] is None
+            and app.config["PETEY_ADDONS"].enabled("discord")):
+        app.config["PETEY_DISCORD"] = DiscordBridge(
+            app.config["PETEY_STATE"], media_jobs_getter=get_media_jobs
+        )
+
     def gallery_json(item: dict) -> dict:
         local = bool(item.get("local_filename"))
         return {
@@ -130,15 +144,24 @@ def create_desktop_app(
         }
 
     app.config["PETEY_MEMORY"].init_db()
+    app.config["PETEY_ADDONS"].mark_builtin_loaded(
+        "discord", app.config["PETEY_DISCORD"] is not None
+    )
 
     @app.get("/")
     def desktop_home():
+        addon_views = app.config["PETEY_ADDONS"].template_views()
         return render_template(
             "desktop.html",
             app_version=__version__,
             theme=app.config["PETEY_STATE"].preferences.get("theme", "midnight"),
             project_url=PROJECT_URL,
             media_provider_url=MEDIA_PROVIDER_URL,
+            discord_enabled=app.config["PETEY_DISCORD"] is not None,
+            addon_views=addon_views,
+            addon_view_ids=[view["id"] for view in addon_views],
+            settings_pages=SETTINGS_PAGES,
+            settings_groups=SETTINGS_GROUPS,
         )
 
     @app.get("/api/desktop/bootstrap")
@@ -161,6 +184,121 @@ def create_desktop_app(
                 "active_workspace_id": current.active_workspace_id,
             }
         )
+
+    @app.get("/api/desktop/addons")
+    def desktop_addons():
+        return jsonify(app.config["PETEY_ADDONS"].public_status())
+
+    @app.put("/api/desktop/addons/<addon_id>")
+    def desktop_addon_update(addon_id):
+        origin = request.headers.get("Origin")
+        if origin and origin != request.host_url.rstrip("/"):
+            return jsonify({"error": "Add-ons must be managed from the PETEY app."}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Add-on settings require a JSON object."}), 400
+        try:
+            addon = app.config["PETEY_ADDONS"].set_enabled(addon_id, payload.get("enabled"))
+            return jsonify({"addon": addon, "restart_required": addon["restart_required"]})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.get("/api/desktop/addons/<addon_id>/assets/<path:relative_path>")
+    def desktop_addon_asset(addon_id, relative_path):
+        path = app.config["PETEY_ADDONS"].asset(addon_id, relative_path)
+        if path is None:
+            return jsonify({"error": "Add-on asset not found."}), 404
+        return send_file(path)
+
+    @app.get("/api/desktop/discord")
+    def desktop_discord_status():
+        bridge = app.config["PETEY_DISCORD"]
+        if bridge is None:
+            return jsonify({"error": "The Discord add-on is disabled. Enable it in Add-ons and restart PETEY."}), 404
+        return jsonify(bridge.status())
+
+    @app.route("/api/desktop/discord/token", methods=["GET", "PUT"])
+    def desktop_discord_token():
+        bridge = app.config["PETEY_DISCORD"]
+        if bridge is None:
+            return jsonify({"error": "The Discord add-on is disabled."}), 404
+        if request.method == "GET":
+            return jsonify({"credential": bridge.credential_status()})
+        origin = request.headers.get("Origin")
+        if origin and origin != request.host_url.rstrip("/"):
+            return jsonify({"error": "Discord credentials must be managed from the PETEY app."}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Discord credentials require a JSON object."}), 400
+        try:
+            credential = bridge.update_token(
+                payload.get("token", ""), clear=payload.get("clear_token") is True
+            )
+            return jsonify({"credential": credential})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except DiscordError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/desktop/discord/catalog")
+    def desktop_discord_catalog():
+        if app.config["PETEY_DISCORD"] is None:
+            return jsonify({"error": "The Discord add-on is disabled."}), 404
+        try:
+            return jsonify(app.config["PETEY_DISCORD"].catalog(request.args.get("guild_id", "")))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except DiscordError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.post("/api/desktop/discord/<action>")
+    def desktop_discord_action(action):
+        origin = request.headers.get("Origin")
+        if origin and origin != request.host_url.rstrip("/"):
+            return jsonify({"error": "Discord controls must be used from the PETEY app."}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Discord controls require a JSON object."}), 400
+        bridge = app.config["PETEY_DISCORD"]
+        if bridge is None:
+            return jsonify({"error": "The Discord add-on is disabled."}), 404
+        try:
+            if action == "connect":
+                result = bridge.connect(
+                    payload.get("guild_id"), payload.get("channel_id"),
+                    payload.get("guild", ""), payload.get("channel", ""),
+                )
+            elif action == "disconnect":
+                result = bridge.disconnect()
+            elif action == "pause":
+                result = bridge.set_paused(payload.get("paused"))
+            elif action == "pace":
+                result = bridge.set_pace(payload.get("pace"))
+            elif action == "topics":
+                result = bridge.set_watched_topics(payload.get("topics"))
+            elif action == "room-prompt":
+                result = bridge.set_room_prompt(
+                    payload.get("prompt", ""), reset=payload.get("reset") is True
+                )
+            elif action == "auto-connect":
+                result = bridge.set_auto_connect(payload.get("enabled"))
+            elif action == "enhance-room-prompt":
+                result = bridge.enhance_room_prompt(payload.get("prompt"))
+            elif action == "instruct":
+                result = bridge.instruct(payload.get("text"))
+            elif action == "admin-approve":
+                result = bridge.resolve_admin_proposal(payload.get("id"), approve=True)
+            elif action == "admin-reject":
+                result = bridge.resolve_admin_proposal(payload.get("id"), approve=False)
+            else:
+                return jsonify({"error": "Unknown Discord control."}), 404
+            return jsonify(result)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except DiscordError as exc:
+            return jsonify({"error": str(exc)}), 502
+        except AIProviderError as exc:
+            return jsonify({"error": str(exc)}), 502
 
     @app.route("/api/desktop/plan", methods=["GET", "POST", "PUT"])
     def desktop_plan():
@@ -393,6 +531,7 @@ def create_desktop_app(
             app.config["PETEY_MEMORY"],
             temporary=temporary,
             mcp_manager=app.config["PETEY_MCP"],
+            addon_manager=app.config["PETEY_ADDONS"],
         )
         service = AssistantService(
             current.system_prompt,
@@ -1250,5 +1389,15 @@ def create_desktop_app(
     @app.errorhandler(413)
     def attachment_too_large(_error):
         return jsonify({"error": "Attachments must be 25 MB or smaller."}), 413
+
+    # External routes are registered after PETEY's routes so an add-on cannot
+    # replace a core endpoint by reusing its URL.
+    app.config["PETEY_ADDONS"].activate_external(
+        app=app,
+        memory=app.config["PETEY_MEMORY"],
+        gallery=app.config["PETEY_GALLERY"],
+        runtime=app.config["PETEY_RUNTIME"],
+        get_media_jobs=get_media_jobs,
+    )
 
     return app

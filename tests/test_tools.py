@@ -22,6 +22,21 @@ class ToolRegistryTests(unittest.TestCase):
         names = [schema["function"]["name"] for schema in registry.schemas_for("read a file")]
         self.assertIn("mcp_filesystem__read_text_file", names)
 
+    def test_desktop_registry_includes_namespaced_addon_tools(self):
+        addons = MagicMock()
+        addons.tool_specs.return_value = [ToolSpec(
+            name="addon_weather__forecast",
+            description="Get a forecast",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda _arguments: {"forecast": "sunny"},
+        )]
+        registry = build_desktop_tool_registry(
+            MagicMock(ai_provider={"deapi": {}}), MagicMock(), MagicMock(),
+            addon_manager=addons,
+        )
+        names = [schema["function"]["name"] for schema in registry.schemas_for("weather")]
+        self.assertIn("addon_weather__forecast", names)
+
     def test_tool_is_only_offered_when_its_policy_allows_it(self):
         tool = ToolSpec(
             name="echo",

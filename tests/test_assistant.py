@@ -93,6 +93,15 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(reply.text, "Queued your image.")
         self.assertEqual(reply.tool_events, (event,))
+        self.assertTrue(complete.call_args.args[1].startswith("OPERATION RULE:"))
+        self.assertIn(
+            "call it instead of refusing",
+            complete.call_args.args[1],
+        )
+        self.assertIn(
+            "A connected tool can perform this request.",
+            complete.call_args.args[0],
+        )
         self.assertEqual(complete.call_args.args[3], registry.schemas_for.return_value)
         complete.call_args.args[4]("generate_image", {"prompt": "moon base"})
         registry.execute.assert_called_once_with(

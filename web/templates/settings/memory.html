@@ -1,0 +1,17 @@
+<p class="hint">Memory is stored on this device. <button class="text-button" data-settings-view="providers" data-settings-target="embedding-settings" type="button">Configure memory search →</button></p>
+                <div class="stats-grid">
+                    <article class="stat-card"><strong id="memory-conversation-count">—</strong><span>Conversation messages</span></article>
+                    <article class="stat-card"><strong id="memory-document-count">—</strong><span>Document passages</span></article>
+                    <article class="stat-card"><strong id="memory-embedded-count">—</strong><span>Searchable memories</span></article>
+                </div>
+<details id="data-removal-settings" class="settings-card settings-section danger-zone"><summary><div class="settings-section-heading"><div><h2>Delete stored data</h2><p>Clear a conversation or reset Petey’s memory. These actions cannot be undone.</p></div></div></summary><div class="settings-section-body">                <section class="danger-card">
+                    <div><h2>Clear current conversation</h2><p>Deletes messages from the selected chat. Uploaded knowledge files remain intact.</p></div>
+                    <button id="clear-conversation" class="danger-button" type="button">Clear conversation</button>
+                    <span id="clear-memory-status" class="wide-status"></span>
+                </section>
+                <section class="danger-card">
+                    <div><h2>Reset all memory</h2><p>Deletes every saved chat message, document chunk, vector, and generation metric from this installation.</p></div>
+                    <button id="reset-all-memory" class="danger-button" type="button">Reset local database</button>
+                    <span id="reset-memory-status" class="wide-status"></span>
+                </section>
+</div></details>

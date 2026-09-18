@@ -2,7 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from petey.desktop_state import DesktopState
 from petey.mcp_client import (
@@ -59,6 +59,22 @@ class MCPStdioClientTests(unittest.TestCase):
 
         self.assertEqual([tool["name"] for tool in tools], ["read_text_file", "write_file"])
         self.assertEqual(result["content"][0]["text"], "hello from notes.txt")
+
+    def test_stdio_supports_connection_specific_environment_and_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client = MCPStdioClient(
+                [sys.executable, "server.py"], [], env={"SERVICE_TOKEN": "secret"}, cwd=root
+            )
+            process = MagicMock()
+            process.poll.return_value = None
+            with patch("petey.mcp_client.subprocess.Popen", return_value=process) as popen, patch.object(
+                client, "request", return_value={"protocolVersion": "2025-06-18"}
+            ), patch.object(client, "notify"):
+                client.start()
+            self.assertEqual(popen.call_args.kwargs["env"]["SERVICE_TOKEN"], "secret")
+            self.assertEqual(popen.call_args.kwargs["cwd"], str(root.resolve()))
+            client.close()
 
 
 class FilesystemMCPManagerTests(unittest.TestCase):

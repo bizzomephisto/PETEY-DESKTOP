@@ -1,0 +1,21 @@
+<details id="microphone-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Microphone input</h2><p>Talk to Petey using push-to-talk, continuous listening, or his wake name.</p></div><span id="voice-input-badge" class="provider-badge">Off</span></div></summary>
+                    <div class="settings-section-body">
+                        <p class="hint">These settings apply to every personality. The microphone stays off until you enable a listening mode.</p>
+                        <div class="field-grid two-column">
+                            <label><span>Listening mode</span><select id="voice-input-mode"><option value="disabled">Off</option><option value="push_to_talk">Push to talk</option><option value="always_on">Mic always on</option><option value="wake_word">Always on · listen for Petey</option></select></label>
+                            <label><span>Audio input</span><select id="voice-input-device"><option value="">System default microphone</option></select></label>
+                            <label><span>Voice sensitivity</span><select id="voice-input-sensitivity"><option value="high">High · quiet microphones</option><option value="normal" selected>Normal</option><option value="low">Low · noisy rooms</option></select></label>
+                            <label id="voice-wake-word-field" hidden><span>Wake name</span><input id="voice-wake-word" type="text" maxlength="40" value="Petey"></label>
+                        </div>
+                        <div class="microphone-test">
+                            <div class="microphone-meter" aria-label="Microphone input level"><span id="voice-input-meter"></span></div>
+                            <button id="test-voice-input" class="secondary-button" type="button">Test microphone</button>
+                            <span id="voice-input-test-status" class="wide-status">Choose Test microphone and speak.</span>
+                        </div>
+                        <p id="voice-input-note" class="hint">Audio stays off until microphone input is enabled.</p>
+                        <div class="inline-actions"><button id="save-voice-input" class="primary-button" type="button">Save microphone settings</button><span id="voice-input-settings-status" class="wide-status"></span></div>
+                        <p class="hint">Voice activity is detected on this machine. Completed utterance clips use low-cost media transcription first and Gemini only as a fallback; recordings are not added to Petey's gallery or memory.</p>
+
+                    <p class="hint">Need a different transcription service? <button class="text-button" data-settings-view="providers" data-settings-target="transcription-model-settings" type="button">Choose transcription provider →</button></p></div>
+                </details>

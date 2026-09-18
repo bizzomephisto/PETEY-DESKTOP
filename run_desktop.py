@@ -12,6 +12,7 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from werkzeug.serving import make_server
 
@@ -142,10 +143,12 @@ def quick_window_position(cursor_x, cursor_y, screen_x, screen_y, screen_width, 
 class DesktopBridge:
     """Small native-window API exposed to the local web interface."""
 
-    def __init__(self, gallery=None):
+    def __init__(self, gallery=None, addons_dir=None):
         self.window = None
         self.gallery = gallery
+        self.addons_dir = Path(addons_dir) if addons_dir else None
         self.fullscreen = False
+        self._restart_started = False
 
     def set_always_on_top(self, enabled):
         if self.window is None:
@@ -184,6 +187,47 @@ class DesktopBridge:
 
     def open_media_provider(self):
         return bool(webbrowser.open(MEDIA_PROVIDER_URL))
+
+    def open_addons_folder(self):
+        if self.addons_dir is None:
+            return {"ok": False, "error": "The add-ons folder is unavailable."}
+        self.addons_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(self.addons_dir))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(self.addons_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(self.addons_dir)])
+            return {"ok": True, "path": str(self.addons_dir)}
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not open the add-ons folder: {exc}"}
+
+    def restart_petey(self):
+        """Replace this desktop process so restart cannot leave stale copies."""
+        if self.window is None:
+            return {"ok": False, "error": "Restart is available in the PETEY desktop window."}
+        if self._restart_started:
+            return {"ok": True, "restarting": True}
+        self._restart_started = True
+        try:
+            os.chdir(PROJECT_ROOT)
+            os.execv(
+                sys.executable,
+                [sys.executable, str(Path(__file__).resolve())],
+            )
+            return {"ok": True, "restarting": True}
+        except OSError as exc:
+            self._restart_started = False
+            return {"ok": False, "error": f"Could not restart PETEY: {exc}"}
+
+    def open_discord_url(self, url):
+        parsed = urlsplit(str(url or ""))
+        if (parsed.scheme != "https" or parsed.hostname != "discord.com"
+                or parsed.username or parsed.password or parsed.port not in {None, 443}
+                or parsed.path not in {"/developers/applications", "/oauth2/authorize"}):
+            return False
+        return bool(webbrowser.open(parsed.geturl()))
 
     def open_gallery_item(self, item_id):
         """Open a generated file in the operating system's default media viewer."""
@@ -291,8 +335,12 @@ class LocalServer:
         self.thread.start()
 
     def close(self):
+        discord = self.app.config.get("PETEY_DISCORD")
+        if discord is not None:
+            discord.close()
         self.server.shutdown()
         self.thread.join(timeout=5)
+        self.app.config["PETEY_ADDONS"].close()
         jobs = self.app.config.get("PETEY_MEDIA_JOBS")
         if jobs is not None:
             jobs.close()
@@ -378,7 +426,10 @@ def main():
             return
 
         state = local.app.config["PETEY_STATE"]
-        bridge = DesktopBridge(local.app.config["PETEY_GALLERY"])
+        bridge = DesktopBridge(
+            local.app.config["PETEY_GALLERY"],
+            local.app.config["PETEY_ADDONS"].user_dir,
+        )
         bridge.window = webview.create_window(
             "PETEY",
             local.url,

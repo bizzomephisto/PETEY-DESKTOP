@@ -1,0 +1,31 @@
+{% macro settings_navigation(active) -%}
+<nav class="settings-tabs" aria-label="Settings categories">
+    <label class="settings-search"><span>Find a setting</span><input type="search" data-settings-search placeholder="Search all settings…" aria-label="Find a setting" autocomplete="off"></label>
+    <div class="settings-search-results" aria-live="polite" hidden></div>
+    <div class="settings-category-list">
+        <button class="settings-tab{% if active == 'settings' %} active{% endif %}" data-settings-view="settings" type="button" {% if active == 'settings' %}aria-current="page"{% endif %}><span class="settings-nav-icon" aria-hidden="true">⚙</span><span><strong>Overview</strong></span></button>
+        {% for group in settings_groups %}
+        <div class="settings-nav-group" role="group" aria-label="{{ group }}">
+            <span class="nav-eyebrow">{{ group }}</span>
+            {% for page in settings_pages if page.group == group %}
+            <button class="settings-tab{% if page.id == active %} active{% endif %}" data-settings-view="{{ page.id }}" type="button" {% if page.id == active %}aria-current="page"{% endif %}><span class="settings-nav-icon" aria-hidden="true">{{ page.icon }}</span><span><strong>{{ page.title }}</strong><small>{{ page.summary }}</small></span></button>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+    <button class="text-button settings-help-link" data-settings-view="help" type="button">Help & setup guide →</button>
+</nav>
+{%- endmacro %}
+{% for page in settings_pages %}
+<section id="view-{{ page.id }}" class="tool-view app-view settings-view" data-settings-title="{{ page.title }}" aria-labelledby="settings-title-{{ page.id }}">
+    <header class="tool-header"><div><span class="page-eyebrow">SETTINGS{% if page.group %} / {{ page.group|upper }}{% endif %}</span><h1 id="settings-title-{{ page.id }}" tabindex="-1">{{ page.title }}</h1><p>{{ page.description }}</p></div>{% if page.id == 'personality' %}<span id="personality-status" class="save-status" role="status"></span>{% endif %}</header>
+    {{ settings_navigation(page.id) }}
+    <div class="tool-content">
+        <div class="settings-page-content">
+            {% if page.save_hint %}<p class="settings-save-hint">{{ page.save_hint }}</p>{% endif %}
+            <nav class="settings-section-links" aria-label="On this page" hidden></nav>
+            {% if page.id == 'settings' %}{% include 'settings/overview.html' %}{% else %}{% include 'settings/' ~ page.id ~ '.html' %}{% endif %}
+        </div>
+    </div>
+</section>
+{% endfor %}

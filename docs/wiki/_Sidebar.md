@@ -9,6 +9,7 @@
 - [Media and Gallery](Media-and-Gallery)
 - [Memory, Knowledge, and Privacy](Memory-Knowledge-and-Privacy)
 - [Workspace and Tools](Workspace-and-Tools)
+- [Discord and Add-ons](Discord-and-Add-ons)
 - [Updating PETEY](Updating-PETEY)
 - [Troubleshooting](Troubleshooting)
 - [Development](Development)

@@ -18,6 +18,75 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_discord_panel_credentials_catalog_and_controls(self):
+        bridge = MagicMock()
+        credential = {"has_token": True, "has_saved_token": True, "source": "saved"}
+        bridge.status.return_value = {"phase": "disconnected", "credential": credential}
+        bridge.credential_status.return_value = credential
+        bridge.update_token.return_value = credential
+        bridge.catalog.return_value = {"guilds": [], "channels": [], "identity": {"name": "PETEY"}}
+        bridge.connect.return_value = {"phase": "connecting", "credential": credential}
+        bridge.instruct.return_value = {"phase": "connected", "instructions": [{"status": "queued"}]}
+        bridge.set_paused.return_value = {"phase": "connected", "paused": True}
+        bridge.set_pace.return_value = {"phase": "connected", "pace": "fast"}
+        bridge.set_watched_topics.return_value = {"phase": "connected", "watched_topics": ["linux"]}
+        bridge.set_room_prompt.return_value = {"phase": "connected", "room_prompt": "Custom"}
+        bridge.set_auto_connect.return_value = {"phase": "disconnected", "auto_connect": True}
+        bridge.enhance_room_prompt.return_value = {"prompt": "Enhanced room behavior"}
+        bridge.resolve_admin_proposal.return_value = {"phase": "connected", "admin_proposals": []}
+        bridge.disconnect.return_value = {"phase": "stopping"}
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_desktop_app(state=DesktopState(directory), memory=MagicMock(), discord_bridge=bridge)
+            client = app.test_client()
+            html = client.get('/').get_data(as_text=True)
+            self.assertIn('id="view-discord"', html)
+            self.assertIn('id="discord-topics"', html)
+            self.assertIn('id="discord-room-prompt"', html)
+            self.assertIn('id="discord-auto-connect"', html)
+            self.assertIn('id="discord-enhance-room-prompt"', html)
+            self.assertIn('id="discord-admin-status"', html)
+            self.assertIn('/genimg, /img2img', html)
+            self.assertNotIn('secret-token', html)
+            self.assertEqual(client.get('/api/desktop/discord').json['phase'], 'disconnected')
+            self.assertTrue(client.get('/api/desktop/discord/token').json['credential']['has_token'])
+            self.assertEqual(client.put('/api/desktop/discord/token', json={"token": "secret-token"}).status_code, 200)
+            self.assertEqual(client.get('/api/desktop/discord/catalog?guild_id=222222222222222222').status_code, 200)
+            connected = client.post('/api/desktop/discord/connect', json={
+                "guild_id": "222222222222222222", "channel_id": "333333333333333333",
+                "guild": "Friends", "channel": "#general",
+            })
+            self.assertEqual(connected.json['phase'], 'connecting')
+            self.assertEqual(client.post('/api/desktop/discord/instruct', json={"text": "Start trivia"}).status_code, 200)
+            self.assertTrue(client.post('/api/desktop/discord/pause', json={"paused": True}).json['paused'])
+            self.assertEqual(client.post('/api/desktop/discord/pace', json={"pace": "fast"}).json['pace'], 'fast')
+            self.assertEqual(
+                client.post('/api/desktop/discord/topics', json={"topics": ["linux"]}).json['watched_topics'],
+                ['linux'],
+            )
+            self.assertEqual(
+                client.post('/api/desktop/discord/room-prompt', json={"prompt": "Custom"}).json['room_prompt'],
+                'Custom',
+            )
+            self.assertTrue(client.post(
+                '/api/desktop/discord/auto-connect', json={"enabled": True}
+            ).json['auto_connect'])
+            self.assertEqual(client.post(
+                '/api/desktop/discord/enhance-room-prompt', json={"prompt": "Make this better"}
+            ).json['prompt'], 'Enhanced room behavior')
+            self.assertEqual(client.post(
+                '/api/desktop/discord/admin-approve', json={"id": "proposal-1"}
+            ).status_code, 200)
+            self.assertEqual(client.post(
+                '/api/desktop/discord/admin-reject', json={"id": "proposal-2"}
+            ).status_code, 200)
+            self.assertEqual(client.post('/api/desktop/discord/disconnect', json={}).json['phase'], 'stopping')
+            self.assertEqual(client.put('/api/desktop/discord/token', json={"token": "x"}, headers={"Origin": "https://evil.example"}).status_code, 403)
+            self.assertEqual(client.post('/api/desktop/discord/connect', json={}, headers={"Origin": "https://evil.example"}).status_code, 403)
+            self.assertEqual(client.post('/api/desktop/discord/connect', data='{}').status_code, 400)
+        bridge.update_token.assert_called_once_with('secret-token', clear=False)
+        bridge.catalog.assert_called_once_with('222222222222222222')
+        bridge.connect.assert_called_once_with('222222222222222222', '333333333333333333', 'Friends', '#general')
+
     def test_tools_api_controls_and_tests_filesystem_mcp(self):
         manager = MagicMock()
         off = {"id": "filesystem", "enabled": False, "connected": False, "tools": []}

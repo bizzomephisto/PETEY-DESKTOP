@@ -5,9 +5,67 @@ from pathlib import Path
 from unittest.mock import patch
 
 from petey.desktop_state import DesktopState
+from petey.room_chat import ROOM_PROMPT
 
 
 class DesktopStateTests(unittest.TestCase):
+    def test_discord_bot_token_is_private_persistent_and_supports_environment_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict("os.environ", {"DISCORD_BOT_TOKEN": ""}):
+                state = DesktopState(directory)
+                self.assertEqual(state.discord_bot_token_status["source"], "none")
+                status = state.update_discord_bot_token("bot-secret")
+                self.assertEqual(status["source"], "saved")
+                self.assertNotIn("bot-secret", str(status))
+                self.assertEqual(DesktopState(directory).discord_bot_token, "bot-secret")
+                self.assertEqual(state.update_discord_pace("fast"), "fast")
+                self.assertEqual(DesktopState(directory).discord_pace, "fast")
+                with self.assertRaises(ValueError):
+                    state.update_discord_pace("instant")
+                self.assertEqual(
+                    state.update_discord_watched_topics([" Linux ", "linux", "retro   games"]),
+                    ["Linux", "retro games"],
+                )
+                self.assertEqual(
+                    DesktopState(directory).discord_watched_topics,
+                    ["Linux", "retro games"],
+                )
+                with self.assertRaises(ValueError):
+                    state.update_discord_watched_topics(["x"] * 21)
+                self.assertEqual(
+                    state.update_discord_room_prompt("Custom room behavior"),
+                    "Custom room behavior",
+                )
+                self.assertEqual(
+                    DesktopState(directory).discord_room_prompt,
+                    "Custom room behavior",
+                )
+                self.assertEqual(
+                    state.update_discord_room_prompt(reset=True), ROOM_PROMPT
+                )
+                self.assertTrue(state.update_discord_auto_connect(True))
+                state.update_discord_last_location(
+                    "222222222222222222", "333333333333333333", "Friends", "#general"
+                )
+                reloaded = DesktopState(directory)
+                self.assertTrue(reloaded.discord_auto_connect)
+                self.assertEqual(reloaded.discord_last_location["guild"], "Friends")
+                self.assertEqual(
+                    reloaded.discord_last_location["channel_id"], "333333333333333333"
+                )
+                with self.assertRaises(ValueError):
+                    state.update_discord_auto_connect("yes")
+                with self.assertRaises(ValueError):
+                    state.update_discord_last_location("not-an-id", "333333333333333333")
+                state.update_discord_bot_token(clear=True)
+                self.assertEqual(state.discord_bot_token, "")
+                with self.assertRaises(ValueError):
+                    state.update_discord_bot_token("")
+            with patch.dict("os.environ", {"DISCORD_BOT_TOKEN": "environment-secret"}):
+                state = DesktopState(directory)
+                self.assertEqual(state.discord_bot_token, "environment-secret")
+                self.assertEqual(state.discord_bot_token_status["source"], "environment")
+
     def test_filesystem_tool_defaults_off_and_persists(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -16,6 +74,17 @@ class DesktopStateTests(unittest.TestCase):
             self.assertTrue(DesktopState(directory).tools["filesystem"]["enabled"])
             with self.assertRaises(ValueError):
                 state.update_tool("unknown", True)
+
+    def test_addon_enablement_defaults_and_persists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            self.assertTrue(state.addon_enabled("discord", True))
+            self.assertTrue(state.update_addon_enabled("sample-addon", True))
+            self.assertTrue(DesktopState(directory).addon_enabled("sample-addon"))
+            with self.assertRaises(ValueError):
+                state.update_addon_enabled("Bad ID", True)
+            with self.assertRaises(ValueError):
+                state.update_addon_enabled("sample-addon", "yes")
 
     def test_theme_persists_and_invalid_theme_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

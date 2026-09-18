@@ -1,0 +1,18 @@
+<section class="settings-quick-start" aria-labelledby="settings-quick-title">
+    <h2 id="settings-quick-title">Common tasks</h2>
+    <div class="settings-shortcuts">
+        <button type="button" data-settings-view="providers" data-settings-target="api-key-settings"><span aria-hidden="true">◇</span><strong>Connect an AI service</strong><small>Add or update API keys →</small></button>
+        <button type="button" data-settings-view="personality" data-settings-target="speech-settings-card"><span aria-hidden="true">✧</span><strong>Change PETEY’s voice</strong><small>Voice, delivery & read aloud →</small></button>
+        <button type="button" data-settings-view="microphone" data-settings-target="microphone-settings"><span aria-hidden="true">⌁</span><strong>Set up your microphone</strong><small>Listening mode & audio test →</small></button>
+    </div>
+</section>
+{% for group in settings_groups %}
+<section class="settings-overview-group" aria-labelledby="settings-group-{{ loop.index }}">
+    <h2 id="settings-group-{{ loop.index }}">{{ group }}</h2>
+    <div class="settings-overview-grid">
+        {% for page in settings_pages if page.group == group %}
+        <button class="settings-overview-card" data-settings-view="{{ page.id }}" type="button"><span class="settings-overview-icon" aria-hidden="true">{{ page.icon }}</span><span><strong>{{ page.title }}</strong><small>{{ page.summary }}</small></span><span aria-hidden="true">→</span></button>
+        {% endfor %}
+    </div>
+</section>
+{% endfor %}
