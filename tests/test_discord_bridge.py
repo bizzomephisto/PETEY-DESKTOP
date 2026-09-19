@@ -85,7 +85,15 @@ class DiscordBridgeTests(unittest.TestCase):
             "petey.discord_bridge.RoomActivity",
             side_effect=lambda nick, now, **kwargs: RoomActivity(nick, now - 100, **kwargs),
         ):
-            self.bridge._run("secret-token", {"provider": "local"}, "Be PETEY.")
+            self.bridge._run("secret-token", {"provider": "local"})
+
+    def test_discord_uses_room_prompt_without_desktop_persona(self):
+        self.state.system_prompt = "desktop persona must stay private"
+        self.bridge.room_prompt = "Discord room identity only"
+        self.run_turn()
+        system = self.provider.complete.call_args.args[1]
+        self.assertIn("Discord room identity only", system)
+        self.assertNotIn("desktop persona must stay private", system)
 
     def test_worker_reads_generates_sends_and_closes(self):
         self.run_turn()
@@ -198,14 +206,14 @@ class DiscordBridgeTests(unittest.TestCase):
 
     def test_failure_is_redacted_and_not_retried(self):
         self.transport.connect.side_effect = RuntimeError("secret-token")
-        self.bridge._run("secret-token", {}, "")
+        self.bridge._run("secret-token", {})
         self.assertEqual(self.bridge.phase, "error")
         self.assertNotIn("secret-token", self.bridge.error)
         self.transport.connect.assert_called_once()
 
     def test_discord_errors_are_actionable(self):
         self.transport.connect.side_effect = DiscordError("Missing Send Messages permission.")
-        self.bridge._run("secret-token", {}, "")
+        self.bridge._run("secret-token", {})
         self.assertEqual(self.bridge.error, "Missing Send Messages permission.")
 
     def test_token_is_validated_before_being_saved_and_never_returned(self):

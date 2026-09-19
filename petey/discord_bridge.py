@@ -15,12 +15,13 @@ from petey.discord_transport import DiscordError, DiscordTransport
 
 class DiscordBridge:
     def __init__(self, state, transport_factory=DiscordTransport, provider_factory=AIProvider,
-                 typing_interval=8, media_jobs_getter=None):
+                 typing_interval=8, media_jobs_getter=None, addon_tools_getter=None):
         self.state = state
         self.transport_factory = transport_factory
         self.provider_factory = provider_factory
         self.typing_interval = typing_interval
         self.media_jobs_getter = media_jobs_getter
+        self.addon_tools_getter = addon_tools_getter
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.thread = None
@@ -113,9 +114,9 @@ class DiscordBridge:
             self.instructions.clear()
             self.events.clear()
             self.revision += 1
-            config, personality, token = self.state.ai_provider, self.state.system_prompt, self.state.discord_bot_token
+            config, token = self.state.ai_provider, self.state.discord_bot_token
             self.thread = threading.Thread(
-                target=self._run, args=(token, config, personality), daemon=True,
+                target=self._run, args=(token, config), daemon=True,
                 name="petey-discord",
             )
             self.thread.start()
@@ -427,7 +428,7 @@ class DiscordBridge:
         finally:
             transport.close()
 
-    def _run(self, token, config, personality=""):
+    def _run(self, token, config):
         transport = None
         failed = False
         try:
@@ -459,7 +460,8 @@ class DiscordBridge:
                 priority_delay_cap=2,
             )
             conversation = RoomConversation(
-                self.provider_factory(config), personality, self.room_prompt
+                self.provider_factory(config), self.room_prompt,
+                tool_registry_getter=self.addon_tools_getter,
             )
             next_poll = 0
 

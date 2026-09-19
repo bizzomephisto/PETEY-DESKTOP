@@ -6,6 +6,7 @@
 - [API Keys and Providers](API-Keys-and-Providers)
 - [Chat, Personality, and Roleplay](Chat-Personality-and-Roleplay)
 - [Voice and Microphone](Voice-and-Microphone)
+- [Mobile and Remote Access](Mobile-and-Remote-Access)
 - [Media and Gallery](Media-and-Gallery)
 - [Memory, Knowledge, and Privacy](Memory-Knowledge-and-Privacy)
 - [Workspace and Tools](Workspace-and-Tools)

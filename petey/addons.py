@@ -158,6 +158,17 @@ class AddonManager:
         if addon_id not in self._records:
             raise ValueError("Unknown add-on.")
         self.state.update_addon_enabled(addon_id, enabled)
+        if not enabled:
+            self.state.update_addon_discord_tools(addon_id, False)
+        return self.public_record(self._records[addon_id])
+
+    def set_discord_tools_enabled(self, addon_id: str, enabled) -> dict:
+        record = self._records.get(addon_id)
+        if record is None or record["source"] != "user":
+            raise ValueError("Discord tool access is available for external add-ons only.")
+        if enabled and not self.enabled(addon_id):
+            raise ValueError("Enable this add-on before allowing its tools in Discord.")
+        self.state.update_addon_discord_tools(addon_id, enabled)
         return self.public_record(self._records[addon_id])
 
     def public_record(self, record: dict) -> dict:
@@ -166,6 +177,14 @@ class AddonManager:
             "id": record["id"], "name": record["name"], "version": record["version"],
             "description": record["description"], "source": record["source"],
             "enabled": desired, "loaded": record["loaded"], "error": record["error"],
+            "discord_tools_enabled": (
+                record["source"] == "user"
+                and self.state.addon_discord_tools_enabled(record["id"])
+            ),
+            "has_model_tools": bool(
+                record["loaded"]
+                and callable(getattr(record.get("instance"), "tool_specs", None))
+            ),
             "restart_required": desired != record["loaded"] and not bool(record["error"]),
         }
 
@@ -222,11 +241,13 @@ class AddonManager:
         digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:8]
         return full[:55] + "_" + digest
 
-    def tool_specs(self) -> list[ToolSpec]:
+    def tool_specs(self, *, for_discord: bool = False) -> list[ToolSpec]:
         """Collect model tools from loaded add-ons under collision-safe names."""
         result = []
         for record in self._records.values():
             if not record["loaded"] or record["error"]:
+                continue
+            if for_discord and not self.state.addon_discord_tools_enabled(record["id"]):
                 continue
             provider = getattr(record.get("instance"), "tool_specs", None)
             if not callable(provider):
@@ -248,6 +269,7 @@ class AddonManager:
                     parameters=spec.parameters,
                     handler=spec.handler,
                     available_when=spec.available_when,
+                    required_when=spec.required_when,
                 ))
         return result
 

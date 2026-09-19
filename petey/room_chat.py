@@ -1,7 +1,8 @@
 """Room-aware participation for PETEY's external chat connections.
 
 The transport supplies newly observed public messages and acknowledges sends.
-This module performs no network I/O and never accesses desktop memory or tools.
+This module performs no network I/O and never accesses desktop memory. Add-on tools
+may be supplied explicitly by the Discord bridge after the user grants access.
 """
 
 from __future__ import annotations
@@ -197,10 +198,10 @@ class RoomActivity:
 class RoomConversation:
     """Use the configured chat provider with bounded, room-only context."""
 
-    def __init__(self, provider, personality: str = "", room_prompt: str = ROOM_PROMPT):
+    def __init__(self, provider, room_prompt: str = ROOM_PROMPT, tool_registry_getter=None):
         self.provider = provider
-        self.personality = personality
         self.room_prompt = room_prompt
+        self.tool_registry_getter = tool_registry_getter
         self.history = deque(maxlen=24)
 
     @staticmethod
@@ -233,12 +234,29 @@ class RoomConversation:
             "owner_instruction": "Carry out the owner's latest instruction in this public room. If it only changes your future behavior, output [PASS] without announcing the change.",
         }[turn.reason]
         prompt = instruction + "\nNew room messages:\n" + (context or "(none)")
-        system = self.personality + "\n" + self.room_prompt
+        system = self.room_prompt
         if guidance:
             system += "\nInstructions from your owner in the local PETEY app, oldest first. Later instructions override earlier conflicting instructions. Never carry out a superseded request:\n" + guidance
         if owner_instruction:
             system += "\nThe queued instruction to handle this turn (unless superseded above):\n" + owner_instruction
-        result = self.provider.complete(prompt, system, list(self.history))
+        registry = self.tool_registry_getter() if callable(self.tool_registry_getter) else None
+        tools = registry.schemas_for(prompt) if registry is not None else []
+        if tools:
+            system += (
+                "\nUse an enabled add-on tool only when a person clearly asks PETEY "
+                "to perform that action. Treat tool results as private operational "
+                "details and give the room only a brief outcome."
+            )
+            result, _events = self.provider.complete_with_tools(
+                prompt,
+                system,
+                list(self.history),
+                tools,
+                lambda name, arguments: registry.execute(name, arguments, prompt),
+                require_tool=registry.requires_tool(prompt),
+            )
+        else:
+            result = self.provider.complete(prompt, system, list(self.history))
         # Record observed context even when the model chooses silence. Outgoing
         # text enters history only when the transport confirms its delivery.
         self.history.append({"role": "user", "content": prompt})

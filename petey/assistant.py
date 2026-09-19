@@ -196,6 +196,7 @@ class AssistantService:
                     history,
                     tool_schemas,
                     lambda name, arguments: self.tool_registry.execute(name, arguments, cleaned),
+                    require_tool=self.tool_registry.requires_tool(cleaned),
                 )
             else:
                 response = self.ai.complete(

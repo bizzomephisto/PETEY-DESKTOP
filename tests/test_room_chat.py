@@ -158,12 +158,40 @@ class RoomConversationTests(unittest.TestCase):
     def test_custom_room_prompt_replaces_default_behavior_prompt(self):
         provider = Mock()
         provider.complete.return_value = "Hello"
-        RoomConversation(provider, "Persona", "Custom Discord behavior").reply(
+        RoomConversation(provider, "Custom Discord behavior").reply(
             Turn("reply", ())
         )
         system = provider.complete.call_args.args[1]
-        self.assertIn("Custom Discord behavior", system)
+        self.assertEqual(system, "Custom Discord behavior")
         self.assertNotIn("friendly AI participant", system)
+        self.assertNotIn("desktop persona", system)
+
+    def test_explicitly_supplied_addon_tools_use_the_provider_tool_loop(self):
+        provider = Mock()
+        provider.complete_with_tools.return_value = (
+            "The lights are on.", [{"name": "lights"}]
+        )
+        registry = Mock()
+        registry.schemas_for.return_value = [{
+            "type": "function",
+            "function": {"name": "lights", "description": "Lights", "parameters": {}},
+        }]
+        registry.execute.return_value = {"status": "executed"}
+        registry.requires_tool.return_value = True
+        room = RoomConversation(provider, tool_registry_getter=lambda: registry)
+        text = room.reply(Turn("reply", (
+            RoomMessage("1", "Guest", "PETEY, turn on the lights", addressed=True),
+        )))
+        self.assertEqual(text, "The lights are on.")
+        provider.complete.assert_not_called()
+        call = provider.complete_with_tools.call_args
+        self.assertIn("only when a person clearly asks", call.args[1])
+        self.assertEqual(call.args[3], registry.schemas_for.return_value)
+        self.assertTrue(call.kwargs["require_tool"])
+        self.assertEqual(
+            call.args[4]("lights", {"area": "Living Room"}),
+            {"status": "executed"},
+        )
 
     def test_pass_commands_and_empty_output_are_not_sent(self):
         provider = Mock()

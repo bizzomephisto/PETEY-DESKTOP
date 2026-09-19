@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.18.0 — 2026-09-19
+
+### Mobile and remote access
+
+- Rebuilt the phone layout around chat and visual mode with touch-sized controls,
+  safe-area spacing, a compact essentials-only settings sheet, and a direct
+  fullscreen control.
+- Added saved Petey profile selection to the mobile settings sheet.
+- Added trusted local HTTPS with a reusable private certificate authority for phone
+  microphone access on a local network.
+- Added named Cloudflare Tunnel mode with a fixed loopback origin, custom hostname
+  and port settings, IPv4/IPv6 localhost support, and Linux launcher integration.
+- Added a complete remote-access guide for stable custom-domain tunnels, free
+  temporary TryCloudflare URLs, phone home-screen shortcuts, access protection, and
+  troubleshooting.
+
+### Voice
+
+- Unified Petey profiles so one save and one profile slot contain instructions,
+  traits, communication style, voice, delivery, and speech provider. Loading a
+  profile now activates the complete profile immediately.
+- Added a local wake-name detector so “Petey” and “Hey Petey” can be acknowledged
+  before cloud transcription finishes.
+- Added replaceable wake acknowledgement clips with per-voice and default fallback
+  folders, randomized playback, and built-in spoken fallbacks.
+- Prevented delayed wake detections and active acknowledgement clips from talking
+  over PETEY's spoken reply.
+- Pre-created cue folders for every supported Gemini voice and added native folder
+  access from Microphone settings.
+- Improved mobile audio unlocking, Gemini speech streaming playback, voice-activity
+  timing, and visual-mode push-to-talk placement.
+
+### Add-ons and Discord
+
+- Added a separate **Allow in Discord** permission for each external add-on's model
+  commands. Permissions default off and clear when the add-on is disabled.
+- Added required tool selection for narrowly matched add-on commands, including
+  Gemini and OpenAI-compatible providers.
+- Isolated Discord's room identity from the desktop personality so its saved room
+  prompt is the complete Discord persona.
+
+### Packaging
+
+- Updated release metadata and source packaging for v0.18.0. Source releases still
+  include only PETEY's built-in Discord integration; external add-ons and private
+  configuration remain excluded.
+
 ## v0.17.0 — 2026-09-18
 
 This release combines the feature work completed after v0.14.0. No intermediate

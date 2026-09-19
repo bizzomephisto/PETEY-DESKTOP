@@ -6,8 +6,9 @@ characters, campaigns, worlds, or storylines.
 ## Personality
 
 Open **Settings → Personality & voice** to change PETEY's name, role, tagline,
-behavior, speaking style, and system instructions. Five persona slots can preserve
-a complete personality and voice setup.
+behavior, speaking style, and system instructions. Five Petey profile slots preserve
+the instructions, traits, communication style, voice, delivery, and speech provider
+together. Loading a slot activates the whole profile immediately.
 
 Personas work well for:
 

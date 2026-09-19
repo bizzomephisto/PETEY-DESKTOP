@@ -44,11 +44,14 @@ class ToolRegistryTests(unittest.TestCase):
             parameters={"type": "object", "required": ["text"]},
             handler=lambda arguments: {"text": arguments["text"]},
             available_when=lambda message: message == "allowed",
+            required_when=lambda message: message == "allowed",
         )
         registry = ToolRegistry([tool])
 
         self.assertEqual(registry.schemas_for("blocked"), [])
         self.assertEqual(registry.schemas_for("allowed")[0]["function"]["name"], "echo")
+        self.assertFalse(registry.requires_tool("blocked"))
+        self.assertTrue(registry.requires_tool("allowed"))
         with self.assertRaises(ToolError):
             registry.execute("echo", {"text": "hi"}, "blocked")
         self.assertEqual(

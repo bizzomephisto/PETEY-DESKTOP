@@ -10,7 +10,7 @@ import os
 import queue
 import threading
 from io import BytesIO
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request, send_file, url_for
@@ -33,7 +33,9 @@ from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.mcp_client import FilesystemMCPManager, MCPError
 from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
-from petey.tools import build_desktop_tool_registry
+from petey.voice_cues import VoiceCueLibrary
+from petey.wake_detector import LocalWakeDetector, WakeDetectorError
+from petey.tools import ToolRegistry, build_desktop_tool_registry
 from petey.subscription_plans import estimate_plan
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
@@ -80,8 +82,13 @@ def create_desktop_app(
     mcp_manager: FilesystemMCPManager | None = None,
     discord_bridge: DiscordBridge | None = None,
     addon_manager: AddonManager | None = None,
+    wake_detector: LocalWakeDetector | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    core_assets = ("desktop.css", "desktop.js", "settings.js", "discord.js")
+    app.config["PETEY_ASSET_REVISION"] = str(max(
+        (Path(app.static_folder) / name).stat().st_mtime_ns for name in core_assets
+    ))
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
     app.config["PETEY_STATE"] = state or DesktopState()
     app.config["PETEY_RUNTIME"] = runtime or AsyncRuntime()
@@ -96,6 +103,10 @@ def create_desktop_app(
         app.config["PETEY_STATE"]
     )
     app.config["PETEY_IMAGE_BROWSER"] = ImageBrowser()
+    app.config["PETEY_VOICE_CUES"] = VoiceCueLibrary(app.config["PETEY_STATE"].data_dir)
+    app.config["PETEY_WAKE_DETECTOR"] = wake_detector or LocalWakeDetector(
+        app.config["PETEY_STATE"].data_dir
+    )
     app.config["PETEY_ADDONS"] = addon_manager or AddonManager(app.config["PETEY_STATE"])
     app.config["PETEY_DISCORD"] = discord_bridge
 
@@ -125,7 +136,10 @@ def create_desktop_app(
     if (app.config["PETEY_DISCORD"] is None
             and app.config["PETEY_ADDONS"].enabled("discord")):
         app.config["PETEY_DISCORD"] = DiscordBridge(
-            app.config["PETEY_STATE"], media_jobs_getter=get_media_jobs
+            app.config["PETEY_STATE"], media_jobs_getter=get_media_jobs,
+            addon_tools_getter=lambda: ToolRegistry(
+                app.config["PETEY_ADDONS"].tool_specs(for_discord=True)
+            ),
         )
 
     def gallery_json(item: dict) -> dict:
@@ -154,6 +168,7 @@ def create_desktop_app(
         return render_template(
             "desktop.html",
             app_version=__version__,
+            asset_revision=app.config["PETEY_ASSET_REVISION"],
             theme=app.config["PETEY_STATE"].preferences.get("theme", "midnight"),
             project_url=PROJECT_URL,
             media_provider_url=MEDIA_PROVIDER_URL,
@@ -198,7 +213,16 @@ def create_desktop_app(
         if not isinstance(payload, dict):
             return jsonify({"error": "Add-on settings require a JSON object."}), 400
         try:
-            addon = app.config["PETEY_ADDONS"].set_enabled(addon_id, payload.get("enabled"))
+            if "enabled" in payload:
+                addon = app.config["PETEY_ADDONS"].set_enabled(
+                    addon_id, payload.get("enabled")
+                )
+            elif "discord_tools_enabled" in payload:
+                addon = app.config["PETEY_ADDONS"].set_discord_tools_enabled(
+                    addon_id, payload.get("discord_tools_enabled")
+                )
+            else:
+                raise ValueError("Choose an add-on setting to update.")
             return jsonify({"addon": addon, "restart_required": addon["restart_required"]})
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -683,6 +707,58 @@ def create_desktop_app(
             failures.append(str(exc))
             return jsonify({"error": "Transcription failed — " + " | ".join(failures)}), 502
 
+    @app.post("/api/desktop/voice-input/wake")
+    def desktop_voice_wake_start():
+        current: DesktopState = app.config["PETEY_STATE"]
+        if current.voice_input.get("mode") != "wake_word":
+            return jsonify({"error": "Wake-name mode is not enabled."}), 400
+        try:
+            session_id = app.config["PETEY_WAKE_DETECTOR"].start(
+                str(current.voice_input.get("wake_word") or "Petey")
+            )
+            return jsonify({"session_id": session_id, "local": True})
+        except WakeDetectorError as exc:
+            return jsonify({"error": str(exc)}), 503
+
+    @app.route("/api/desktop/voice-input/wake/<session_id>", methods=["POST", "DELETE"])
+    def desktop_voice_wake_stream(session_id):
+        detector: LocalWakeDetector = app.config["PETEY_WAKE_DETECTOR"]
+        if request.method == "DELETE":
+            detector.stop(session_id)
+            return jsonify({"stopped": True})
+        try:
+            sample_rate = int(request.headers.get("X-Petey-Sample-Rate", "16000"))
+            detected = detector.feed(session_id, request.get_data(cache=False), sample_rate)
+            return jsonify({"detected": detected})
+        except (ValueError, WakeDetectorError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.get("/api/desktop/voice-cues")
+    def desktop_voice_cues():
+        library: VoiceCueLibrary = app.config["PETEY_VOICE_CUES"]
+        catalog = library.catalog(app.config["PETEY_STATE"].speech)
+        source_voice = catalog["source_voice"]
+        return jsonify({
+            **catalog,
+            "clips": [
+                {
+                    "name": path.name,
+                    "url": url_for(
+                        "desktop_voice_cue_file", voice=source_voice, filename=path.name,
+                    ),
+                }
+                for path in catalog["clips"]
+            ],
+        })
+
+    @app.get("/api/desktop/voice-cues/file/<voice>/<filename>")
+    def desktop_voice_cue_file(voice: str, filename: str):
+        try:
+            path = app.config["PETEY_VOICE_CUES"].resolve(voice, filename)
+        except (ValueError, FileNotFoundError):
+            return jsonify({"error": "Voice acknowledgement clip not found."}), 404
+        return send_file(path, conditional=True)
+
     @app.route("/api/desktop/conversations", methods=["GET", "POST"])
     def desktop_conversations():
         current: DesktopState = app.config["PETEY_STATE"]
@@ -987,7 +1063,10 @@ def create_desktop_app(
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
-    @app.route("/api/desktop/personality/slots/<int:slot>", methods=["PUT", "DELETE"])
+    @app.route(
+        "/api/desktop/personality/slots/<int:slot>",
+        methods=["POST", "PUT", "DELETE"],
+    )
     def desktop_personality_slot(slot):
         current: DesktopState = app.config["PETEY_STATE"]
         try:
@@ -996,6 +1075,12 @@ def create_desktop_app(
                 return jsonify(
                     {"removed": removed, "saved_personas": current.saved_personas}
                 )
+            if request.method == "POST":
+                persona, speech = current.activate_persona_slot(slot)
+                return jsonify({
+                    "status": "active", "slot": slot, "persona": persona,
+                    "speech": speech, "saved_personas": current.saved_personas,
+                })
             changes = request.get_json(silent=True) or {}
             if not isinstance(changes, dict):
                 return jsonify({"error": "Personality settings must be an object."}), 400

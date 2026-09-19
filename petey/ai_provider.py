@@ -164,13 +164,15 @@ class AIProvider:
         tools: list[dict],
         execute_tool,
         max_rounds: int = 3,
+        require_tool: bool = False,
     ) -> tuple[str, list[dict]]:
         """Run the selected provider's tool loop with duplicate-call protection."""
         if not tools:
             return self.complete(prompt, system_message, history), []
         if self.provider == "gemini":
             return self._gemini_with_tools(
-                prompt, system_message, history, tools, execute_tool, max_rounds
+                prompt, system_message, history, tools, execute_tool, max_rounds,
+                require_tool,
             )
         if self.provider not in {"openai", "local"}:
             return self.complete(prompt, system_message, history), []
@@ -207,7 +209,7 @@ class AIProvider:
                 "model": model,
                 "messages": messages,
                 "tools": tools,
-                "tool_choice": "auto",
+                "tool_choice": "required" if require_tool and _round == 0 else "auto",
             }
             if not bool(selected.get("thinking_enabled", True)):
                 if self.provider == "local" or model.startswith(("gpt-5", "o1", "o3", "o4")):
@@ -283,6 +285,7 @@ class AIProvider:
         tools: list[dict],
         execute_tool,
         max_rounds: int,
+        require_tool: bool,
     ) -> tuple[str, list[dict]]:
         selected = self._selected()
         api_key = self._api_key()
@@ -320,15 +323,20 @@ class AIProvider:
         executed = {}
         for _round in range(max(1, min(5, int(max_rounds)))):
             try:
+                request_payload = {
+                    "systemInstruction": {"parts": [{"text": system_message}]},
+                    "contents": contents,
+                    "tools": [{"functionDeclarations": declarations}],
+                    "generationConfig": generation_config,
+                }
+                if require_tool and _round == 0:
+                    request_payload["toolConfig"] = {
+                        "functionCallingConfig": {"mode": "ANY"}
+                    }
                 response = HTTP_SESSION.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                     headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-                    json={
-                        "systemInstruction": {"parts": [{"text": system_message}]},
-                        "contents": contents,
-                        "tools": [{"functionDeclarations": declarations}],
-                        "generationConfig": generation_config,
-                    },
+                    json=request_payload,
                     timeout=120,
                 )
                 response.raise_for_status()

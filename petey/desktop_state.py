@@ -159,6 +159,19 @@ class DesktopState:
         elif not isinstance(settings["addons"].get("discord", True), bool):
             settings["addons"]["discord"] = True
             changed = True
+        if not isinstance(settings.get("addon_discord_tools"), dict):
+            settings["addon_discord_tools"] = {}
+            changed = True
+        else:
+            normalized_discord_tools = {
+                str(addon_id): enabled
+                for addon_id, enabled in settings["addon_discord_tools"].items()
+                if re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", str(addon_id))
+                and isinstance(enabled, bool)
+            }
+            if normalized_discord_tools != settings["addon_discord_tools"]:
+                settings["addon_discord_tools"] = normalized_discord_tools
+                changed = True
         if not isinstance(settings.get("discord"), dict):
             settings["discord"] = {
                 "bot_token": "", "pace": "auto", "watched_topics": [],
@@ -270,8 +283,9 @@ class DesktopState:
                 continue
             saved_speech = saved_persona.get("speech")
             if not isinstance(saved_speech, dict):
-                continue
-            if saved_speech.get("provider") == "deapi":
+                saved_persona["speech"] = copy.deepcopy(settings["speech"])
+                changed = True
+            elif saved_speech.get("provider") == "deapi":
                 saved_speech["provider"] = "automatic"
                 changed = True
         legacy_gemini_voice_input = (
@@ -696,6 +710,23 @@ class DesktopState:
             self._write_json(self.settings_path, self.settings)
         return self.addon_enabled(addon_id)
 
+    def addon_discord_tools_enabled(self, addon_id: str) -> bool:
+        value = self.settings.get("addon_discord_tools", {}).get(str(addon_id))
+        return value if isinstance(value, bool) else False
+
+    def update_addon_discord_tools(self, addon_id: str, enabled) -> bool:
+        addon_id = str(addon_id or "")
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id):
+            raise ValueError("Choose a valid add-on.")
+        if not isinstance(enabled, bool):
+            raise ValueError("Discord tool access must be true or false.")
+        with self._lock:
+            permissions = dict(self.settings.get("addon_discord_tools") or {})
+            permissions[addon_id] = enabled
+            self.settings["addon_discord_tools"] = permissions
+            self._write_json(self.settings_path, self.settings)
+        return self.addon_discord_tools_enabled(addon_id)
+
     def update_ai_provider(self, changes: dict) -> dict:
         provider = str(changes.get("provider") or self.ai_provider.get("provider", "gemini"))
         if provider not in {"gemini", "openai", "local"}:
@@ -960,6 +991,19 @@ class DesktopState:
             self.settings["saved_personas"] = slots
             self._write_json(self.settings_path, self.settings)
         return copy.deepcopy(persona)
+
+    def activate_persona_slot(self, slot: int) -> tuple[dict, dict]:
+        index = self._persona_slot_index(slot)
+        saved = self.saved_personas[index]
+        if not isinstance(saved, dict):
+            raise ValueError("That Petey profile slot is empty.")
+        persona = self._validated_persona(self.persona, saved)
+        speech = self._validated_speech(self.speech, saved.get("speech") or {})
+        with self._lock:
+            self.settings["persona"] = persona
+            self.settings["speech"] = speech
+            self._write_json(self.settings_path, self.settings)
+        return self.persona, self.speech
 
     def clear_persona_slot(self, slot: int) -> bool:
         index = self._persona_slot_index(slot)

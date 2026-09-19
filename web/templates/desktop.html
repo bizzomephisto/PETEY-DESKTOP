@@ -2,10 +2,10 @@
 <html lang="en" data-theme="{{ theme }}">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>PETEY</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='desktop.css') }}">
-    {% for addon in addon_views %}{% if addon.stylesheet %}<link rel="stylesheet" href="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.stylesheet) }}">{% endif %}{% endfor %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='desktop.css', v=asset_revision) }}">
+    {% for addon in addon_views %}{% if addon.stylesheet %}<link rel="stylesheet" href="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.stylesheet, v=asset_revision) }}">{% endif %}{% endfor %}
 </head>
 <body>
     <main class="app-shell">
@@ -40,6 +40,10 @@
         <section id="view-chat" class="chat-panel app-view active-view">
             <header class="chat-header">
                 <div><h1>PETEY</h1><p id="status">Starting up…</p></div>
+                <div class="mobile-chat-actions" aria-label="Mobile chat controls">
+                    <button id="mobile-visual-mode" type="button" title="Open visual mode">Visual</button>
+                    <button id="mobile-settings-toggle" type="button" title="Mobile settings" aria-expanded="false">⚙</button>
+                </div>
                 <div class="chat-header-actions">
                     <select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style" hidden><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option></select>
                     <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
@@ -59,9 +63,38 @@
 
             <div id="visual-chat" class="visual-chat" hidden>
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
+                <div class="mobile-visual-actions">
+                    <button id="mobile-show-chat" type="button">Chat</button>
+                    <button id="mobile-visual-fullscreen" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
+                    <button id="mobile-visual-settings" type="button" aria-label="Open mobile settings">⚙</button>
+                </div>
                 <div id="visual-caption" class="visual-caption" aria-live="polite"></div>
                 <div class="visual-chat-identity"><strong>PETEY</strong><span id="visual-chat-state">Present</span></div>
+                <div class="visual-voice-control">
+                    <button id="visual-voice-input-button" class="visual-voice-input-button" type="button" aria-label="Hold to talk to Petey" hidden>
+                        <span aria-hidden="true">🎙</span>
+                        <strong id="visual-voice-input-label">Hold to talk</strong>
+                    </button>
+                    <form id="visual-dictation-form" class="visual-dictation-form" hidden>
+                        <label for="visual-dictation-input">Use the microphone on your phone keyboard</label>
+                        <div>
+                            <input id="visual-dictation-input" type="text" autocomplete="off" enterkeyhint="send" placeholder="Dictate or type a message…">
+                            <button class="visual-dictation-send" type="submit">Send</button>
+                            <button id="visual-dictation-cancel" class="visual-dictation-cancel" type="button" aria-label="Close keyboard input">×</button>
+                        </div>
+                    </form>
+                </div>
             </div>
+
+            <aside id="mobile-settings-panel" class="mobile-settings-panel" hidden aria-label="Mobile settings">
+                <div class="mobile-settings-heading"><div><strong>Mobile settings</strong><span>Only the essentials.</span></div><button id="mobile-settings-close" type="button" aria-label="Close settings">×</button></div>
+                <label><span>Petey profile</span><select id="mobile-persona"><option value="current">Loading profiles…</option></select></label>
+                <label><span>Voice</span><select id="mobile-voice"><option value="">Loading voices…</option></select></label>
+                <label><span>Voice method</span><select id="mobile-voice-method"><option value="always_on">Open mic</option><option value="wake_word">Wait for “Petey”</option><option value="push_to_talk">Push to talk</option></select></label>
+                <label><span>Animation</span><select id="mobile-animation"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option></select></label>
+                <button id="mobile-settings-save" class="primary-button" type="button">Save</button>
+                <p id="mobile-settings-status" class="hint" role="status"></p>
+            </aside>
 
             <form id="composer" class="composer">
                 <div id="attachment-chip" class="attachment-chip" hidden></div>
@@ -328,9 +361,9 @@
         </div>
     </dialog>
     <script>window.PETEY_ADDON_VIEWS = {{ addon_view_ids|tojson }};</script>
-    {% if discord_enabled %}<script src="{{ url_for('static', filename='discord.js') }}"></script>{% endif %}
-    {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script) }}"></script>{% endif %}{% endfor %}
-    <script src="{{ url_for('static', filename='settings.js') }}"></script>
-    <script src="{{ url_for('static', filename='desktop.js') }}"></script>
+    {% if discord_enabled %}<script src="{{ url_for('static', filename='discord.js', v=asset_revision) }}"></script>{% endif %}
+    {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=asset_revision) }}"></script>{% endif %}{% endfor %}
+    <script src="{{ url_for('static', filename='settings.js', v=asset_revision) }}"></script>
+    <script src="{{ url_for('static', filename='desktop.js', v=asset_revision) }}"></script>
 </body>
 </html>

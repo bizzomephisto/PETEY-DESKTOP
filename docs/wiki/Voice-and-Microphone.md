@@ -4,10 +4,13 @@ Speech output and microphone transcription use separate settings from chat.
 
 ## Spoken replies
 
-1. Open **Settings → Models & API keys → Spoken replies**.
-2. Choose Automatic, Gemini, OpenAI, or Disabled and save the speech provider.
-3. Open **Personality & voice** to choose PETEY's voice, delivery directions, and
-   whether new replies should play automatically.
+1. Open **Settings → Personality & voice**.
+2. Choose Automatic, Gemini, OpenAI, or Disabled, then choose PETEY's voice,
+   delivery directions, and whether new replies should play automatically.
+3. Select **Save Petey profile**. Instructions, traits, communication style, voice,
+   and speech provider save together.
+4. Use **Models & API keys → Speech models** only when you want to change the model
+   used by Gemini or OpenAI speech.
 4. Use the Speak control on an individual reply whenever you want manual playback.
 
 Automatic speech tries Gemini and can fall back to OpenAI when configured. The
@@ -23,6 +26,29 @@ Open **Settings → Microphone** to choose an input device and listening mode:
 
 Allow microphone access when your system asks. Space can be used for push-to-talk
 when the feature is active and focus is not inside a text field.
+
+### Wake acknowledgements
+
+In wake-name mode, PETEY runs a small local keyword model against the microphone
+stream. It can acknowledge “Petey” or “Hey Petey” without waiting for cloud
+transcription or starting the browser's separate speech recognizer. The first use
+downloads about 17 MB of model files; later sessions load them from the local PETEY
+data folder. Cloud transcription still handles the actual request and remains the
+fallback if local detection is unavailable.
+
+Open **Settings → Microphone → Open cue folder** to customize acknowledgements. Put
+short audio files directly in the folder named for the current speech voice, such as
+`voice-cues/Kore/` or `voice-cues/marin/`.
+
+PETEY creates `default/` plus a ready-to-fill folder for every supported Gemini
+voice. An OpenAI voice folder is created when that voice is selected. Folder names
+match the voice names shown in **Personality & voice**.
+
+PETEY randomly chooses WAV, MP3, OGG, OPUS, M4A, AAC, FLAC, or WEBM files from the
+current voice folder. If that folder has no clips, it checks `voice-cues/default/`.
+If both are empty, the browser speaks a built-in “Yeah?”, “What's up?”, or “Mm-hmm?”
+acknowledgement. The desktop reloads clips when its window regains focus; a remote
+browser can be reloaded after files are added.
 
 ## Transcription
 

@@ -17,6 +17,7 @@ class ToolSpec:
     parameters: dict
     handler: Callable[[dict], dict]
     available_when: Callable[[str], bool] = lambda _message: True
+    required_when: Callable[[str], bool] = lambda _message: False
 
     def schema(self) -> dict:
         return {
@@ -44,6 +45,12 @@ class ToolRegistry:
 
     def schemas_for(self, user_message: str) -> list[dict]:
         return [tool.schema() for tool in self._tools.values() if tool.available_when(user_message)]
+
+    def requires_tool(self, user_message: str) -> bool:
+        return any(
+            tool.available_when(user_message) and tool.required_when(user_message)
+            for tool in self._tools.values()
+        )
 
     def execute(self, name: str, arguments: dict, user_message: str) -> dict:
         tool = self._tools.get(str(name or ""))

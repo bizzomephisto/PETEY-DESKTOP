@@ -15,6 +15,11 @@
                         </div>
                         <p id="voice-input-note" class="hint">Audio stays off until microphone input is enabled.</p>
                         <div class="inline-actions"><button id="save-voice-input" class="primary-button" type="button">Save microphone settings</button><span id="voice-input-settings-status" class="wide-status"></span></div>
+                        <div class="wake-cue-settings">
+                            <div><strong>Wake acknowledgements</strong><p>When PETEY hears his wake name, he immediately plays a random clip for the current voice. Add WAV, MP3, OGG, OPUS, M4A, AAC, FLAC, or WEBM files to the voice folder.</p><code id="voice-cues-directory">Loading folder…</code></div>
+                            <button id="open-voice-cues-folder" class="secondary-button" type="button">Open cue folder</button>
+                            <span id="voice-cues-status" class="wide-status"></span>
+                        </div>
                         <p class="hint">Voice activity is detected on this machine. Completed utterance clips use low-cost media transcription first and Gemini only as a fallback; recordings are not added to Petey's gallery or memory.</p>
 
                     <p class="hint">Need a different transcription service? <button class="text-button" data-settings-view="providers" data-settings-target="transcription-model-settings" type="button">Choose transcription provider →</button></p></div>

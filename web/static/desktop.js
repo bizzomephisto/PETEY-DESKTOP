@@ -5,6 +5,7 @@ const attachmentInput = document.getElementById('attachment');
 const attachmentChip = document.getElementById('attachment-chip');
 const sendButton = document.getElementById('send');
 const statusText = document.getElementById('status');
+const mobileLayoutQuery = window.matchMedia('(max-width: 760px)');
 let personName = 'User';
 let personaPresets = {};
 let savedPersonas = [];
@@ -30,9 +31,20 @@ let microphoneCaptureStartedAt = 0;
 let voiceInputRunning = false;
 let voiceInputBusy = false;
 let voiceInputPlaybackBlocked = false;
+let wakeCueConfiguration = {voice: 'default', clips: [], fallback_phrases: ['Yeah?', "What's up?", 'Mm-hmm?']};
+let wakeCueAudios = [];
+let wakeCueAudio = null;
+let wakeCuePlaying = false;
+let lastWakeCueIndex = -1;
 let microphoneTestActive = false;
 let pushToTalkHeld = false;
 let wakeWordArmedUntil = 0;
+let wakeCueAcknowledgedUntil = 0;
+let wakeDetectorSessionId = '';
+let wakeDetectorStarting = false;
+let wakeDetectorBusy = false;
+let wakeDetectorChunks = [];
+let wakeDetectorSampleCount = 0;
 let keyboardPushToTalkActive = false;
 let visualAudioEnergy = 0;
 let lastPeteyCaption = '';
@@ -64,6 +76,8 @@ let toolsLoaded = false;
 let activeChatAudio = null;
 let activeSpeechButton = null;
 let activeSpeechCancel = null;
+let speechPlaybackContext = null;
+let speechUnlockAudio = null;
 let neuralAnimationFrame = null;
 let neuralDraw = null;
 
@@ -202,7 +216,12 @@ async function loadDesktop() {
         applyPreferences();
         renderConversations();
         await loadConversationMessages();
+        if (mobileLayoutQuery.matches) {
+            const emptyCopy = document.querySelector('#empty-state p');
+            if (emptyCopy) emptyCopy.textContent = 'Start a conversation.';
+        }
         configureVoiceInputUI();
+        await loadWakeCues();
         if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
             window.setTimeout(() => startContinuousVoiceInput(), 250);
         }
@@ -394,6 +413,9 @@ async function readChatStream(response, onEvent) {
 
 composer.addEventListener('submit', async event => {
     event.preventDefault();
+    if (speechConfiguration?.auto_speak && speechConfiguration?.provider !== 'disabled') {
+        primeSpeechPlayback();
+    }
     const text = messageInput.value.trim();
     const file = attachmentInput.files[0];
     if (sendButton.disabled || (!text && !file)) return;
@@ -422,6 +444,10 @@ composer.addEventListener('submit', async event => {
     sendButton.disabled = true;
     statusText.textContent = 'Petey is preparing a reply…';
     let partialText = '';
+    let spokenPrefix = '';
+    let autoSpeechChain = Promise.resolve();
+    const autoSpeak = speechConfiguration?.provider !== 'disabled'
+        && Boolean(speechConfiguration?.auto_speak);
     try {
         const response = await fetch('/api/desktop/chat', {method: 'POST', body});
         if (!response.ok) {
@@ -435,14 +461,25 @@ composer.addEventListener('submit', async event => {
             typing.classList.remove('typing');
             typing.querySelector('.bubble').textContent = partialText;
             statusText.textContent = 'Petey is replying…';
+            if (autoSpeak && !spokenPrefix) {
+                const segment = firstStreamingSpeechSegment(partialText);
+                if (segment) {
+                    spokenPrefix = segment;
+                    autoSpeechChain = autoSpeechChain.then(() => speakChatText(segment));
+                }
+            }
             if (follow) messages.scrollTop = messages.scrollHeight;
         });
         typing.remove();
         addMessage('assistant', payload.text || '', {
             toolEvents: payload.tool_events || [],
         });
-        if (speechConfiguration?.provider !== 'disabled' && speechConfiguration?.auto_speak && payload.text) {
-            speakChatText(payload.text);
+        if (autoSpeak && payload.text) {
+            const remainder = spokenPrefix && payload.text.startsWith(spokenPrefix)
+                ? payload.text.slice(spokenPrefix.length).trim() : payload.text;
+            if (!spokenPrefix || remainder) {
+                autoSpeechChain = autoSpeechChain.then(() => speakChatText(remainder));
+            }
         }
         if (temporary) temporaryHistory.push({role: 'assistant', content: payload.text || ''});
         statusText.textContent = temporary ? 'Temporary · nothing saved' : `Ready for ${personName}`;
@@ -460,6 +497,15 @@ composer.addEventListener('submit', async event => {
         messageInput.focus();
     }
 });
+
+function firstStreamingSpeechSegment(text) {
+    if (text.length < 28) return '';
+    const sentence = text.match(/^([\s\S]{28,}?[.!?]["')\]]?)(?:\s|$)/);
+    if (sentence) return sentence[1].trim();
+    if (text.length < 180) return '';
+    const boundary = text.lastIndexOf(' ', 170);
+    return text.slice(0, boundary >= 100 ? boundary : 170).trim();
+}
 
 loadDesktop();
 
@@ -497,6 +543,7 @@ function applyPreferences() {
     styleSelect.hidden = !visualMode;
     styleSelect.value = preferences.visual_style || 'neural_core';
     document.getElementById('visual-fullscreen').hidden = !visualMode;
+    document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
     if (visualMode) ensureNeuralVisualizationRunning();
 }
 
@@ -604,6 +651,8 @@ function finishVisualCaption() {
 async function toggleVisualFullscreen() {
     if (!preferences.visual_mode) return;
     const visual = document.getElementById('visual-chat');
+    const fullscreenTarget = mobileLayoutQuery.matches
+        ? document.getElementById('view-chat') : visual;
     if (document.fullscreenElement) {
         await document.exitFullscreen();
         return;
@@ -612,11 +661,12 @@ async function toggleVisualFullscreen() {
         const result = await window.pywebview.api.toggle_fullscreen();
         nativeVisualFullscreen = Boolean(result?.fullscreen);
         document.body.classList.toggle('native-visual-fullscreen', nativeVisualFullscreen);
+        syncFullscreenControls();
         return;
     }
     try {
-        if (!visual.requestFullscreen) throw new Error('Fullscreen API unavailable');
-        await visual.requestFullscreen();
+        if (!fullscreenTarget.requestFullscreen) throw new Error('Fullscreen API unavailable');
+        await fullscreenTarget.requestFullscreen();
     } catch (_error) {
         if (!window.pywebview?.api?.toggle_fullscreen) {
             setVoiceInputStatus('Full screen is unavailable in this browser.');
@@ -625,13 +675,185 @@ async function toggleVisualFullscreen() {
         const result = await window.pywebview.api.toggle_fullscreen();
         nativeVisualFullscreen = Boolean(result?.fullscreen);
         document.body.classList.toggle('native-visual-fullscreen', nativeVisualFullscreen);
+        syncFullscreenControls();
     }
 }
 
 document.getElementById('visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
-document.addEventListener('fullscreenchange', () => {
-    document.getElementById('visual-fullscreen').textContent = document.fullscreenElement
+document.getElementById('mobile-visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
+function syncFullscreenControls() {
+    const active = Boolean(document.fullscreenElement || nativeVisualFullscreen);
+    document.getElementById('visual-fullscreen').textContent = active
         ? 'Exit full screen' : '⛶ Full screen';
+    const mobileButton = document.getElementById('mobile-visual-fullscreen');
+    mobileButton.textContent = active ? '×' : '⛶';
+    mobileButton.title = active ? 'Exit fullscreen' : 'Enter fullscreen';
+    mobileButton.setAttribute('aria-label', mobileButton.title);
+}
+document.addEventListener('fullscreenchange', () => {
+    syncFullscreenControls();
+});
+
+const mobileSettingsPanel = document.getElementById('mobile-settings-panel');
+const mobileSettingsToggle = document.getElementById('mobile-settings-toggle');
+const mobilePersonaSelect = document.getElementById('mobile-persona');
+const mobileVoiceSelect = document.getElementById('mobile-voice');
+const mobileVoiceMethod = document.getElementById('mobile-voice-method');
+let mobileSpeechCatalogLoaded = false;
+
+function syncMobileSettings() {
+    const method = ['always_on', 'wake_word', 'push_to_talk'].includes(voiceInputConfiguration.mode)
+        ? voiceInputConfiguration.mode : 'push_to_talk';
+    mobileVoiceMethod.value = method;
+    document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
+}
+
+function fillMobileVoiceChoices(configuration = speechConfiguration) {
+    const provider = configuration?.provider || 'automatic';
+    const gemini = provider === 'automatic' || provider === 'gemini';
+    const choices = gemini ? geminiSpeechVoices : provider === 'openai' ? openaiSpeechVoices : [];
+    const selected = gemini
+        ? configuration?.gemini_voice : configuration?.openai_voice;
+    mobileVoiceSelect.innerHTML = '';
+    if (!choices.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = provider === 'disabled' ? 'Speech is disabled on desktop' : 'No voices available';
+        mobileVoiceSelect.append(option);
+        mobileVoiceSelect.disabled = true;
+        return;
+    }
+    mobileVoiceSelect.disabled = false;
+    choices.forEach(voice => {
+        const value = typeof voice === 'string' ? voice : voice.name;
+        const description = typeof voice === 'string' ? '' : voice.description;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = description ? `${value} — ${description}` : value[0].toUpperCase() + value.slice(1);
+        mobileVoiceSelect.append(option);
+    });
+    mobileVoiceSelect.value = selected || mobileVoiceSelect.options[0]?.value || '';
+}
+
+function selectedMobileProfile() {
+    const match = mobilePersonaSelect.value.match(/^slot:(\d)$/);
+    return match ? savedPersonas[Number(match[1]) - 1] || null : null;
+}
+
+async function loadMobileProfiles() {
+    const payload = await apiJson('/api/desktop/personality');
+    savedPersonas = payload.saved_personas || [];
+    mobilePersonaSelect.innerHTML = '';
+    const current = document.createElement('option');
+    current.value = 'current';
+    current.textContent = `Current — ${payload.persona?.name || 'Petey'}`;
+    mobilePersonaSelect.append(current);
+    savedPersonas.forEach((profile, index) => {
+        if (!profile) return;
+        const option = document.createElement('option');
+        option.value = `slot:${index + 1}`;
+        option.textContent = `${index + 1}. ${profile.name || `Profile ${index + 1}`}`;
+        mobilePersonaSelect.append(option);
+    });
+    mobilePersonaSelect.value = 'current';
+    mobilePersonaSelect.disabled = mobilePersonaSelect.options.length === 1;
+}
+
+async function loadMobileSpeechCatalog() {
+    if (mobileSpeechCatalogLoaded) {
+        fillMobileVoiceChoices();
+        return;
+    }
+    const payload = await apiJson('/api/desktop/speech');
+    speechConfiguration = payload.configuration;
+    geminiSpeechVoices = payload.gemini_voices || [];
+    openaiSpeechVoices = payload.openai_voices || [];
+    mobileSpeechCatalogLoaded = true;
+    fillMobileVoiceChoices();
+}
+
+async function openMobileSettings() {
+    syncMobileSettings();
+    mobileSettingsPanel.hidden = false;
+    mobileSettingsToggle.setAttribute('aria-expanded', 'true');
+    try {
+        await Promise.all([loadMobileSpeechCatalog(), loadMobileProfiles()]);
+        fillMobileVoiceChoices();
+    } catch (error) {
+        setFeedback(document.getElementById('mobile-settings-status'), error.message, 'error');
+    }
+}
+
+function closeMobileSettings() {
+    mobileSettingsPanel.hidden = true;
+    mobileSettingsToggle.setAttribute('aria-expanded', 'false');
+}
+
+mobileSettingsToggle.addEventListener('click', () => {
+    if (mobileSettingsPanel.hidden) openMobileSettings();
+    else closeMobileSettings();
+});
+document.getElementById('mobile-visual-settings').addEventListener('click', openMobileSettings);
+document.getElementById('mobile-settings-close').addEventListener('click', closeMobileSettings);
+mobilePersonaSelect.addEventListener('change', () => {
+    fillMobileVoiceChoices(selectedMobileProfile()?.speech || speechConfiguration);
+});
+document.getElementById('mobile-visual-mode').addEventListener('click', async () => {
+    await savePreferences({visual_mode: true});
+});
+document.getElementById('mobile-show-chat').addEventListener('click', async () => {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    closeMobileSettings();
+    await savePreferences({visual_mode: false});
+});
+document.getElementById('mobile-settings-save').addEventListener('click', async () => {
+    const button = document.getElementById('mobile-settings-save');
+    const feedback = document.getElementById('mobile-settings-status');
+    button.disabled = true;
+    setFeedback(feedback, 'Saving…');
+    try {
+        const selectedProfile = selectedMobileProfile();
+        if (selectedProfile) {
+            const slot = Number(mobilePersonaSelect.value.split(':')[1]);
+            const profilePayload = await apiJson(`/api/desktop/personality/slots/${slot}`, {
+                method: 'POST',
+            });
+            speechConfiguration = profilePayload.speech;
+            savedPersonas = profilePayload.saved_personas || savedPersonas;
+        }
+        const speechUpdate = {};
+        if (!mobileVoiceSelect.disabled && mobileVoiceSelect.value) {
+            const provider = speechConfiguration?.provider || 'automatic';
+            speechUpdate[provider === 'openai' ? 'openai_voice' : 'gemini_voice'] = mobileVoiceSelect.value;
+        }
+        if (Object.keys(speechUpdate).length) {
+            const speechPayload = await apiJson('/api/desktop/speech', {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(speechUpdate),
+            });
+            speechConfiguration = speechPayload.configuration;
+            await loadWakeCues();
+        }
+        const voicePayload = await apiJson('/api/desktop/voice-input', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mode: mobileVoiceMethod.value}),
+        });
+        await stopVoiceInput();
+        voiceInputConfiguration = {...voiceInputConfiguration, ...voicePayload.configuration};
+        configureVoiceInputUI();
+        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            await startContinuousVoiceInput();
+        }
+        await savePreferences({
+            visual_style: document.getElementById('mobile-animation').value,
+        });
+        setFeedback(feedback, 'Saved.', 'success');
+        window.setTimeout(closeMobileSettings, 500);
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
+    }
 });
 document.addEventListener('keydown', event => {
     if (event.key === 'F11' && preferences.visual_mode) {
@@ -714,6 +936,12 @@ function renderAddons(payload) {
             restart.textContent = 'Restart PETEY to apply this change.';
             copy.append(restart);
         }
+        const controls = document.createElement('div');
+        controls.className = 'addon-controls';
+        const enabledLabel = document.createElement('label');
+        enabledLabel.className = 'addon-toggle';
+        const enabledText = document.createElement('span');
+        enabledText.textContent = 'Enabled';
         const toggle = document.createElement('input');
         toggle.type = 'checkbox';
         toggle.role = 'switch';
@@ -741,7 +969,48 @@ function renderAddons(payload) {
                 document.getElementById('addons-status').textContent = error.message;
             } finally { toggle.disabled = false; }
         });
-        row.append(copy, toggle);
+        enabledLabel.append(enabledText, toggle);
+        controls.append(enabledLabel);
+        if (addon.source === 'user') {
+            const discordLabel = document.createElement('label');
+            discordLabel.className = 'addon-toggle addon-discord-toggle';
+            const discordCopy = document.createElement('span');
+            const discordTitle = document.createElement('strong');
+            discordTitle.textContent = 'Allow in Discord';
+            const discordHint = document.createElement('small');
+            discordHint.textContent = addon.has_model_tools
+                ? 'Discord users can ask PETEY to run this add-on’s commands.'
+                : 'Applies when this add-on provides model commands.';
+            discordCopy.append(discordTitle, discordHint);
+            const discordToggle = document.createElement('input');
+            discordToggle.type = 'checkbox';
+            discordToggle.role = 'switch';
+            discordToggle.checked = Boolean(addon.discord_tools_enabled);
+            // An enabled add-on with an error must still allow an existing
+            // Discord permission to be revoked.
+            discordToggle.disabled = !addon.enabled
+                || Boolean(addon.error && !addon.discord_tools_enabled);
+            discordToggle.setAttribute('aria-label', `Allow ${addon.name} commands in Discord`);
+            discordToggle.addEventListener('change', async () => {
+                discordToggle.disabled = true;
+                try {
+                    await apiJson(`/api/desktop/addons/${encodeURIComponent(addon.id)}`, {
+                        method: 'PUT', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({discord_tools_enabled: discordToggle.checked}),
+                    });
+                    document.getElementById('addons-status').textContent = discordToggle.checked
+                        ? `${addon.name} commands are now available to Discord PETEY.`
+                        : `${addon.name} commands are blocked from Discord PETEY.`;
+                    await loadAddons(true);
+                } catch (error) {
+                    discordToggle.checked = !discordToggle.checked;
+                    document.getElementById('addons-status').textContent = error.message;
+                } finally { discordToggle.disabled = false; }
+            });
+            discordLabel.append(discordCopy, discordToggle);
+            controls.append(discordLabel);
+        }
+        row.append(copy, controls);
         list.append(row);
     }
     if (!(payload.addons || []).length) list.innerHTML = '<p class="muted">No add-ons are installed.</p>';
@@ -789,6 +1058,7 @@ document.getElementById('restart-petey').addEventListener('click', async event =
 });
 
 function showView(view) {
+    if (mobileLayoutQuery.matches && view !== 'chat') view = 'chat';
     if (!document.getElementById(`view-${view}`)) return;
     document.querySelectorAll('.nav-button').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
@@ -1094,6 +1364,10 @@ document.getElementById('test-ai-provider').addEventListener('click', async () =
 });
 
 const voiceInputButton = document.getElementById('voice-input-button');
+const visualVoiceInputButton = document.getElementById('visual-voice-input-button');
+const visualVoiceInputLabel = document.getElementById('visual-voice-input-label');
+const visualDictationForm = document.getElementById('visual-dictation-form');
+const visualDictationInput = document.getElementById('visual-dictation-input');
 const voiceInputModeSelect = document.getElementById('voice-input-mode');
 const voiceInputProviderSelect = document.getElementById('voice-input-provider');
 
@@ -1104,9 +1378,24 @@ function setVoiceInputStatus(message) {
 function configureVoiceInputUI() {
     const mode = voiceInputConfiguration?.mode || 'disabled';
     voiceInputButton.hidden = mode === 'disabled';
-    voiceInputButton.classList.toggle('listening', voiceInputRunning && !microphoneCapturing);
-    voiceInputButton.classList.toggle('recording', microphoneCapturing);
-    voiceInputButton.classList.toggle('processing', voiceInputBusy);
+    visualVoiceInputButton.hidden = mode !== 'push_to_talk';
+    if (mode !== 'push_to_talk') visualDictationForm.hidden = true;
+    [voiceInputButton, visualVoiceInputButton].forEach(button => {
+        button.classList.toggle('listening', voiceInputRunning && !microphoneCapturing);
+        button.classList.toggle('recording', microphoneCapturing);
+        button.classList.toggle('processing', voiceInputBusy);
+        button.disabled = voiceInputBusy;
+    });
+    visualVoiceInputLabel.textContent = voiceInputBusy
+        ? 'Transcribing…'
+        : microphoneCapturing
+            ? 'Release to send'
+            : navigator.mediaDevices?.getUserMedia
+                ? 'Hold to talk'
+                : 'Keyboard mic';
+    visualVoiceInputButton.setAttribute('aria-label', navigator.mediaDevices?.getUserMedia
+        ? 'Hold to talk to Petey'
+        : 'Open keyboard dictation');
     voiceInputButton.title = {
         push_to_talk: 'Hold to talk to Petey',
         always_on: voiceInputRunning ? 'Microphone is listening; click to stop' : 'Click to start microphone',
@@ -1182,6 +1471,20 @@ async function loadVoiceInputSettings() {
         setFeedback(feedback, error.message, 'error');
     }
 }
+
+document.getElementById('open-voice-cues-folder').addEventListener('click', async () => {
+    const status = document.getElementById('voice-cues-status');
+    await loadWakeCues(true);
+    if (window.pywebview?.api?.open_voice_cues_folder) {
+        const result = await window.pywebview.api.open_voice_cues_folder();
+        status.textContent = result.ok
+            ? `Opened ${result.path}. PETEY reloads clips when this window regains focus.`
+            : result.error;
+    } else {
+        status.textContent = `Add clips on the PETEY computer under ${wakeCueConfiguration.directory}, then reload this page.`;
+    }
+});
+window.addEventListener('focus', () => loadWakeCues());
 
 voiceInputModeSelect.addEventListener('change', configureVoiceInputSettings);
 voiceInputProviderSelect.addEventListener('change', configureVoiceInputSettings);
@@ -1292,6 +1595,10 @@ function handleMicrophoneAudio(event) {
         document.getElementById('voice-input-test-status').textContent = rms > .006
             ? 'Input detected — microphone is working.' : 'Listening… speak into the microphone.';
     }
+    if (voiceInputRunning && voiceInputConfiguration.mode === 'wake_word'
+        && !voiceInputPlaybackBlocked) {
+        queueLocalWakeAudio(samples);
+    }
     if (!voiceInputRunning || voiceInputBusy || voiceInputPlaybackBlocked) return;
     const mode = voiceInputConfiguration.mode;
     if (mode === 'push_to_talk') {
@@ -1316,8 +1623,8 @@ function handleMicrophoneAudio(event) {
         return;
     }
     microphoneCapture.push(new Float32Array(samples));
-    if (rms >= threshold) microphoneLastVoiceAt = now;
-    if ((now - microphoneLastVoiceAt > 950 && now - microphoneCaptureStartedAt > 450)
+    if (rms >= threshold * .55) microphoneLastVoiceAt = now;
+    if ((now - microphoneLastVoiceAt > 375 && now - microphoneCaptureStartedAt > 300)
         || now - microphoneCaptureStartedAt > 30000) {
         finishVoiceCapture();
     }
@@ -1405,6 +1712,7 @@ function handleVoiceTranscript(transcript) {
         const escaped = wakeWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const match = transcript.match(new RegExp(`\\b${escaped}\\b[\\s,.:;!?—-]*(.*)$`, 'i'));
         if (match) {
+            if (Date.now() >= wakeCueAcknowledgedUntil) playWakeAcknowledgement();
             command = match[1].trim();
             wakeWordArmedUntil = Date.now() + 8000;
             if (!command) {
@@ -1425,11 +1733,186 @@ function handleVoiceTranscript(transcript) {
     else setVoiceInputStatus('Transcript added to the message box; Petey is still replying.');
 }
 
+async function loadWakeCues(showStatus = false) {
+    const status = document.getElementById('voice-cues-status');
+    try {
+        const payload = await apiJson('/api/desktop/voice-cues');
+        wakeCueConfiguration = payload;
+        wakeCueAudios = (payload.clips || []).map(clip => {
+            const audio = new Audio(clip.url);
+            audio.preload = 'auto';
+            audio.load();
+            return audio;
+        });
+        document.getElementById('voice-cues-directory').textContent = payload.directory;
+        if (showStatus) {
+            const source = payload.source_voice === payload.voice
+                ? payload.voice : `${payload.source_voice} fallback`;
+            status.textContent = wakeCueAudios.length
+                ? `${wakeCueAudios.length} acknowledgement clip${wakeCueAudios.length === 1 ? '' : 's'} loaded from ${source}.`
+                : 'Using the built-in spoken acknowledgements until audio files are added.';
+        }
+    } catch (error) {
+        if (showStatus) status.textContent = error.message;
+    }
+}
+
+function setWakeCuePlaybackActive(active, preserveCapture = false) {
+    wakeCuePlaying = Boolean(active);
+    voiceInputPlaybackBlocked = wakeCuePlaying || Boolean(activeSpeechCancel || activeChatAudio);
+    if (active && !preserveCapture && microphoneCapturing && voiceInputConfiguration.mode !== 'push_to_talk') {
+        finishVoiceCapture(true);
+    }
+    if (!active && microphoneCapturing) microphoneLastVoiceAt = performance.now();
+}
+
+function finishWakeCuePlayback() {
+    wakeCueAudio = null;
+    setWakeCuePlaybackActive(false);
+}
+
+function stopWakeAcknowledgement() {
+    const audio = wakeCueAudio;
+    wakeCueAudio = null;
+    if (audio) {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.currentTime = 0;
+    }
+    if (wakeCuePlaying) window.speechSynthesis?.cancel?.();
+    setWakeCuePlaybackActive(false);
+}
+
+function speakFallbackWakeCue() {
+    const phrases = wakeCueConfiguration.fallback_phrases || ['Yeah?'];
+    const phrase = phrases[Math.floor(Math.random() * phrases.length)] || 'Yeah?';
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+        finishWakeCuePlayback();
+        return;
+    }
+    const utterance = new window.SpeechSynthesisUtterance(phrase);
+    utterance.rate = 1.08;
+    utterance.pitch = .92;
+    utterance.onend = finishWakeCuePlayback;
+    utterance.onerror = finishWakeCuePlayback;
+    window.speechSynthesis.speak(utterance);
+}
+
+function playWakeAcknowledgement(preserveCapture = false) {
+    if (wakeCuePlaying || voiceInputPlaybackBlocked || activeSpeechCancel || activeChatAudio) return;
+    setWakeCuePlaybackActive(true, preserveCapture);
+    if (!wakeCueAudios.length) {
+        speakFallbackWakeCue();
+        return;
+    }
+    let index = Math.floor(Math.random() * wakeCueAudios.length);
+    if (wakeCueAudios.length > 1 && index === lastWakeCueIndex) {
+        index = (index + 1) % wakeCueAudios.length;
+    }
+    lastWakeCueIndex = index;
+    wakeCueAudio = wakeCueAudios[index];
+    wakeCueAudio.currentTime = 0;
+    wakeCueAudio.onended = finishWakeCuePlayback;
+    const useFallback = () => {
+        if (!wakeCueAudio) return;
+        wakeCueAudio = null;
+        speakFallbackWakeCue();
+    };
+    wakeCueAudio.onerror = useFallback;
+    wakeCueAudio.play().catch(useFallback);
+}
+
+function queueLocalWakeAudio(samples) {
+    if (!wakeDetectorSessionId) return;
+    wakeDetectorChunks.push(new Float32Array(samples));
+    wakeDetectorSampleCount += samples.length;
+    while (wakeDetectorSampleCount > 32000 && wakeDetectorChunks.length > 1) {
+        wakeDetectorSampleCount -= wakeDetectorChunks.shift().length;
+    }
+    if (wakeDetectorSampleCount >= 2048 && !wakeDetectorBusy) flushLocalWakeAudio();
+}
+
+async function flushLocalWakeAudio() {
+    if (!wakeDetectorSessionId || wakeDetectorBusy || !wakeDetectorChunks.length) return;
+    const sessionId = wakeDetectorSessionId;
+    const chunks = wakeDetectorChunks;
+    const sampleCount = wakeDetectorSampleCount;
+    wakeDetectorChunks = [];
+    wakeDetectorSampleCount = 0;
+    const pcm = new Int16Array(sampleCount);
+    let offset = 0;
+    for (const chunk of chunks) {
+        for (let index = 0; index < chunk.length; index += 1) {
+            const sample = Math.max(-1, Math.min(1, chunk[index]));
+            pcm[offset] = sample < 0 ? sample * 32768 : sample * 32767;
+            offset += 1;
+        }
+    }
+    wakeDetectorBusy = true;
+    try {
+        const response = await fetch(`/api/desktop/voice-input/wake/${encodeURIComponent(sessionId)}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/octet-stream',
+                'X-Petey-Sample-Rate': String(microphoneContext?.sampleRate || 16000),
+            },
+            body: pcm.buffer,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Local wake detector stopped.');
+        if (payload.detected && Date.now() >= wakeCueAcknowledgedUntil
+            && !voiceInputPlaybackBlocked && !activeSpeechCancel && !activeChatAudio) {
+            wakeWordArmedUntil = Date.now() + 8000;
+            wakeCueAcknowledgedUntil = Date.now() + 8000;
+            setVoiceInputStatus(`Heard “${voiceInputConfiguration.wake_word || 'Petey'}” · listening for your request…`);
+            playWakeAcknowledgement(true);
+        }
+    } catch (_error) {
+        if (wakeDetectorSessionId === sessionId) wakeDetectorSessionId = '';
+    } finally {
+        wakeDetectorBusy = false;
+        if (wakeDetectorSampleCount >= 2048 && wakeDetectorSessionId) flushLocalWakeAudio();
+    }
+}
+
+async function startLocalWakeDetector() {
+    if (wakeDetectorStarting || wakeDetectorSessionId
+        || voiceInputConfiguration.mode !== 'wake_word') return;
+    wakeDetectorStarting = true;
+    try {
+        const payload = await apiJson('/api/desktop/voice-input/wake', {method: 'POST'});
+        if (voiceInputRunning && voiceInputConfiguration.mode === 'wake_word') {
+            wakeDetectorSessionId = payload.session_id || '';
+            if (wakeDetectorSessionId) {
+                setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}” · local wake detector ready`);
+            }
+        }
+    } catch (_error) {
+        setVoiceInputStatus('Local wake detector unavailable · using transcription fallback');
+    } finally {
+        wakeDetectorStarting = false;
+    }
+}
+
+function stopLocalWakeDetector() {
+    const sessionId = wakeDetectorSessionId;
+    wakeDetectorSessionId = '';
+    wakeDetectorChunks = [];
+    wakeDetectorSampleCount = 0;
+    if (sessionId) {
+        fetch(`/api/desktop/voice-input/wake/${encodeURIComponent(sessionId)}`, {
+            method: 'DELETE', keepalive: true,
+        }).catch(() => {});
+    }
+}
+
 async function startContinuousVoiceInput() {
     if (!['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) return;
     try {
         await ensureMicrophone();
         voiceInputRunning = true;
+        startLocalWakeDetector();
         configureVoiceInputUI();
     } catch (error) {
         voiceInputRunning = false;
@@ -1440,6 +1923,7 @@ async function startContinuousVoiceInput() {
 
 async function stopVoiceInput() {
     voiceInputRunning = false;
+    stopLocalWakeDetector();
     pushToTalkHeld = false;
     microphoneTestActive = false;
     if (microphoneCapturing) await finishVoiceCapture(true);
@@ -1482,7 +1966,8 @@ document.getElementById('test-voice-input').addEventListener('click', async () =
 navigator.mediaDevices?.addEventListener?.('devicechange', refreshMicrophoneDevices);
 
 function setVoicePlaybackActive(active) {
-    voiceInputPlaybackBlocked = Boolean(active);
+    if (active && wakeCuePlaying) stopWakeAcknowledgement();
+    voiceInputPlaybackBlocked = Boolean(active || wakeCuePlaying);
     if (!active) finishVisualCaption();
     if (active && microphoneCapturing && voiceInputConfiguration.mode !== 'push_to_talk') {
         finishVoiceCapture(true);
@@ -1498,15 +1983,33 @@ voiceInputButton.addEventListener('click', async () => {
 async function beginPushToTalk(event) {
     if (voiceInputConfiguration.mode !== 'push_to_talk' || voiceInputBusy) return;
     event.preventDefault();
+    primeSpeechPlayback();
+    if (!navigator.mediaDevices?.getUserMedia) {
+        visualVoiceInputButton.hidden = true;
+        visualDictationForm.hidden = false;
+        visualDictationInput.focus();
+        setVoiceInputStatus('Use the microphone on your phone keyboard, then choose Send.');
+        return;
+    }
     pushToTalkHeld = true;
+    const sourceButton = event.currentTarget instanceof Element ? event.currentTarget : voiceInputButton;
+    if (Number.isInteger(event.pointerId)) {
+        try { sourceButton.setPointerCapture?.(event.pointerId); } catch (_error) { /* Pointer already released. */ }
+    }
     try {
         await ensureMicrophone();
         if (!pushToTalkHeld) return;
         voiceInputRunning = true;
         beginVoiceCapture();
-        if (Number.isInteger(event.pointerId)) voiceInputButton.setPointerCapture?.(event.pointerId);
     } catch (error) {
-        setVoiceInputStatus(`Microphone unavailable: ${error.message}`);
+        pushToTalkHeld = false;
+        if (!window.isSecureContext) {
+            setVoiceInputStatus('Microphone blocked: the phone does not trust this HTTPS certificate yet.');
+        } else if (error?.name === 'NotAllowedError') {
+            setVoiceInputStatus('Microphone blocked: allow it for this PETEY site and for your browser app, then try again.');
+        } else {
+            setVoiceInputStatus(`Microphone unavailable: ${error.message}`);
+        }
     }
 }
 
@@ -1523,6 +2026,9 @@ async function endPushToTalk(event) {
 voiceInputButton.addEventListener('pointerdown', beginPushToTalk);
 voiceInputButton.addEventListener('pointerup', endPushToTalk);
 voiceInputButton.addEventListener('pointercancel', endPushToTalk);
+visualVoiceInputButton.addEventListener('pointerdown', beginPushToTalk);
+visualVoiceInputButton.addEventListener('pointerup', endPushToTalk);
+visualVoiceInputButton.addEventListener('pointercancel', endPushToTalk);
 voiceInputButton.addEventListener('keydown', event => {
     if (event.repeat || ![' ', 'Enter'].includes(event.key)) return;
     beginPushToTalk(event);
@@ -1530,6 +2036,32 @@ voiceInputButton.addEventListener('keydown', event => {
 voiceInputButton.addEventListener('keyup', event => {
     if (![' ', 'Enter'].includes(event.key)) return;
     endPushToTalk(event);
+});
+visualVoiceInputButton.addEventListener('keydown', event => {
+    if (event.repeat || ![' ', 'Enter'].includes(event.key)) return;
+    beginPushToTalk(event);
+});
+visualVoiceInputButton.addEventListener('keyup', event => {
+    if (![' ', 'Enter'].includes(event.key)) return;
+    endPushToTalk(event);
+});
+visualDictationForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const transcript = visualDictationInput.value.trim();
+    if (!transcript) {
+        visualDictationInput.focus();
+        return;
+    }
+    visualDictationInput.value = '';
+    visualDictationForm.hidden = true;
+    visualVoiceInputButton.hidden = false;
+    handleVoiceTranscript(transcript);
+});
+document.getElementById('visual-dictation-cancel').addEventListener('click', () => {
+    visualDictationInput.value = '';
+    visualDictationForm.hidden = true;
+    visualVoiceInputButton.hidden = false;
+    visualVoiceInputButton.focus();
 });
 
 document.addEventListener('keydown', event => {
@@ -1665,27 +2197,6 @@ async function loadSpeechSettings() {
 }
 
 speechProviderSelect.addEventListener('change', configureSpeechSettings);
-document.getElementById('save-speech-settings').addEventListener('click', async () => {
-    const feedback = document.getElementById('speech-settings-status');
-    const button = document.getElementById('save-speech-settings');
-    button.disabled = true;
-    try {
-        const payload = await apiJson('/api/desktop/speech', {
-            method: 'PUT', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(readSpeechForm()),
-        });
-        speechConfiguration = payload.configuration;
-        speechSettingsLoaded = true;
-        mediaCatalogLoaded = false;
-        mediaModelsCache.delete('txt2audio');
-        configureSpeechSettings();
-        setFeedback(feedback, speechConfiguration.provider === 'disabled' ? 'Speech generation disabled.' : 'Speech settings saved.', 'success');
-    } catch (error) {
-        setFeedback(feedback, error.message, 'error');
-    } finally {
-        button.disabled = false;
-    }
-});
 
 function resetSpeechButton(button) {
     if (!button) return;
@@ -1694,7 +2205,45 @@ function resetSpeechButton(button) {
     button.classList.remove('speaking');
 }
 
+function getSpeechPlaybackContext() {
+    if (!speechPlaybackContext || speechPlaybackContext.state === 'closed') {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) throw new Error('Audio playback is not supported by this browser.');
+        try {
+            speechPlaybackContext = new AudioContextClass({sampleRate: 24000});
+        } catch (_error) {
+            speechPlaybackContext = new AudioContextClass();
+        }
+    }
+    return speechPlaybackContext;
+}
+
+function primeSpeechPlayback() {
+    if (speechConfiguration?.provider === 'disabled') return;
+    try {
+        const context = getSpeechPlaybackContext();
+        context.resume().catch(() => {});
+        const buffer = context.createBuffer(1, 1, context.sampleRate);
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.start();
+
+        if (!speechUnlockAudio) {
+            const silent = wavBlob([new Float32Array(160)], 16000);
+            const url = URL.createObjectURL(silent);
+            speechUnlockAudio = new Audio(url);
+            speechUnlockAudio.volume = 0;
+            speechUnlockAudio.addEventListener('ended', () => URL.revokeObjectURL(url), {once: true});
+        }
+        speechUnlockAudio.play().catch(() => {});
+    } catch (_error) {
+        // The visible speech action will report a useful error if playback is unavailable.
+    }
+}
+
 async function speakChatText(text, button = null) {
+    primeSpeechPlayback();
     if (button?.classList.contains('speaking') && activeSpeechCancel) {
         activeSpeechCancel();
         activeSpeechCancel = null;
@@ -1744,15 +2293,30 @@ async function speakChatText(text, button = null) {
             if (job.status === 'completed' || job.status === 'failed') break;
             await new Promise(resolve => window.setTimeout(resolve, 1000));
             job = (await apiJson(`/api/desktop/media/jobs/${encodeURIComponent(job.id)}`)).job;
+            const elapsed = attempt + 1;
+            const phase = job.status === 'queued' ? 'Voice queued' : 'Generating voice';
+            if (button) button.textContent = `${phase} · ${elapsed}s`;
+            statusText.textContent = `Speech: ${phase.toLowerCase()} with ${speechConfiguration?.provider || 'automatic'}…`;
         }
         if (job.status === 'failed') throw new Error(job.error || 'Speech generation failed.');
         if (job.status !== 'completed') throw new Error('Speech generation timed out.');
         const source = job.result?.result_url
             || `/api/desktop/media/jobs/${encodeURIComponent(job.id)}/file`;
-        const audio = new Audio(source);
-        activeChatAudio = audio;
+        const response = await fetch(source);
+        if (!response.ok) throw new Error(`Could not load generated speech (${response.status}).`);
+        const encodedAudio = await response.arrayBuffer();
+        const context = getSpeechPlaybackContext();
+        await context.resume();
+        if (context.state !== 'running') {
+            throw new Error('Chrome paused audio playback. Press the microphone once and try again.');
+        }
+        const audio = await context.decodeAudioData(encodedAudio.slice(0));
+        const sourceNode = context.createBufferSource();
+        sourceNode.buffer = audio;
+        sourceNode.connect(context.destination);
+        activeChatAudio = sourceNode;
         activeSpeechCancel = () => {
-            audio.pause();
+            try { sourceNode.stop(); } catch (_error) { /* already stopped */ }
             activeChatAudio = null;
             setVoicePlaybackActive(false);
         };
@@ -1761,16 +2325,20 @@ async function speakChatText(text, button = null) {
             button.textContent = 'Stop';
             button.classList.add('speaking');
         }
-        audio.addEventListener('ended', () => {
-            if (activeChatAudio === audio) activeChatAudio = null;
+        let resolvePlayback;
+        const playbackFinished = new Promise(resolve => { resolvePlayback = resolve; });
+        sourceNode.addEventListener('ended', () => {
+            if (activeChatAudio === sourceNode) activeChatAudio = null;
             activeSpeechCancel = null;
             setVoicePlaybackActive(false);
             if (activeSpeechButton === button) activeSpeechButton = null;
             resetSpeechButton(button);
+            resolvePlayback();
         }, {once: true});
         startVisualCaption(text);
         setVoicePlaybackActive(true);
-        await audio.play();
+        sourceNode.start();
+        await playbackFinished;
     } catch (error) {
         if (activeSpeechCancel) activeSpeechCancel();
         setVoicePlaybackActive(false);
@@ -1782,9 +2350,7 @@ async function speakChatText(text, button = null) {
 }
 
 async function playGeminiSpeechStream(text, button) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) throw new Error('Streaming audio is not supported by this desktop backend.');
-    const context = new AudioContextClass({sampleRate: 24000});
+    const context = getSpeechPlaybackContext();
     const controller = new AbortController();
     const scheduled = new Set();
     let nextStart = 0;
@@ -1802,7 +2368,6 @@ async function playGeminiSpeechStream(text, button) {
         });
         scheduled.clear();
         streamFinished = true;
-        context.close().catch(() => {});
         setVoicePlaybackActive(false);
         resolvePlayback();
     };
@@ -1811,6 +2376,9 @@ async function playGeminiSpeechStream(text, button) {
         button.classList.add('speaking');
     }
     await context.resume();
+    if (context.state !== 'running') {
+        throw new Error('Chrome paused audio playback. Press the microphone once and try again.');
+    }
     const response = await fetch('/api/desktop/chat/speech/stream', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -1879,7 +2447,6 @@ async function playGeminiSpeechStream(text, button) {
     if (!receivedAudio) throw new Error('Gemini finished without returning audio.');
     finishIfReady();
     await playbackFinished;
-    await context.close().catch(() => {});
     activeSpeechCancel = null;
     if (activeSpeechButton === button) activeSpeechButton = null;
     resetSpeechButton(button);
@@ -2012,8 +2579,15 @@ function renderSavedPersonaSlots() {
         title.textContent = persona?.name || `Slot ${index + 1}`;
         title.title = title.textContent;
         const description = document.createElement('small');
+        const provider = persona?.speech?.provider || '';
+        const providerName = {
+            automatic: 'Automatic', gemini: 'Gemini', openai: 'OpenAI', disabled: 'No speech',
+        }[provider] || '';
+        const voice = provider === 'openai'
+            ? persona?.speech?.openai_voice : persona?.speech?.gemini_voice;
         description.textContent = persona
-            ? (persona.role_tag || `Saved in slot ${index + 1}`)
+            ? [persona.role_tag, providerName, provider === 'disabled' ? '' : voice]
+                .filter(Boolean).join(' · ')
             : 'Empty';
         description.title = description.textContent;
         const actions = document.createElement('div');
@@ -2022,14 +2596,7 @@ function renderSavedPersonaSlots() {
         load.type = 'button';
         load.textContent = 'Load';
         load.disabled = !persona;
-        load.addEventListener('click', () => {
-            fillPersona({...persona, preset_key: ''});
-            setFeedback(
-                document.getElementById('personality-status'),
-                `Loaded personality and voice from slot ${index + 1} — save personality to activate them.`,
-                'success',
-            );
-        });
+        load.addEventListener('click', () => activatePersonaSlot(index + 1, load));
         const save = document.createElement('button');
         save.type = 'button';
         save.textContent = persona ? 'Replace' : 'Save';
@@ -2061,9 +2628,28 @@ async function savePersonaSlot(slot, replacing) {
         });
         savedPersonas = result.saved_personas || [];
         renderSavedPersonaSlots();
-        setFeedback(feedback, `Saved the current personality and voice to slot ${slot}.`, 'success');
+        setFeedback(feedback, `Saved the complete Petey profile to slot ${slot}.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
+    }
+}
+
+async function activatePersonaSlot(slot, button) {
+    const feedback = document.getElementById('personality-status');
+    button.disabled = true;
+    try {
+        const result = await apiJson(`/api/desktop/personality/slots/${slot}`, {method: 'POST'});
+        speechConfiguration = result.speech;
+        fillPersona({...result.persona, speech: result.speech, preset_key: ''});
+        speechSettingsLoaded = true;
+        mediaCatalogLoaded = false;
+        mediaModelsCache.delete('txt2audio');
+        await loadWakeCues(false);
+        setFeedback(feedback, `Petey profile ${slot} is now active.`, 'success');
+    } catch (error) {
+        setFeedback(feedback, error.message, 'error');
+    } finally {
+        button.disabled = false;
     }
 }
 
@@ -2134,7 +2720,8 @@ document.getElementById('save-personality').addEventListener('click', async () =
         if (result.speech) fillSpeechForm(result.speech);
         mediaCatalogLoaded = false;
         mediaModelsCache.delete('txt2audio');
-        setFeedback(feedback, 'Saved — new chats and Petey’s voice use this persona immediately.', 'success');
+        await loadWakeCues(false);
+        setFeedback(feedback, 'Petey profile saved — instructions, style, and voice are active.', 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
     } finally {
@@ -4037,8 +4624,7 @@ document.getElementById('test-filesystem-tool').addEventListener('click', async 
 document.getElementById('open-tools-workspace').addEventListener('click', () => showView('workspace'));
 
 for (const [id, endpoint, statusId, read] of [
-    ['save-speech-provider', '/api/desktop/speech', 'speech-provider-save-status', () => ({
-        provider: speechProviderSelect.value,
+    ['save-speech-models', '/api/desktop/speech', 'speech-model-save-status', () => ({
         gemini_model: document.getElementById('speech-gemini-model').value,
         openai_model: document.getElementById('speech-openai-model').value,
     })],
@@ -4054,13 +4640,13 @@ for (const [id, endpoint, statusId, read] of [
         const feedback = document.getElementById(statusId);
         try {
             const payload = await apiJson(endpoint, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(read())});
-            if (id === 'save-speech-provider') {
+            if (id === 'save-speech-models') {
                 speechConfiguration = payload.configuration;
                 mediaCatalogLoaded = false; mediaModelsCache.delete('txt2audio');
             } else {
                 voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
             }
-            setFeedback(feedback, 'Provider settings saved.', 'success');
+            setFeedback(feedback, id === 'save-speech-models' ? 'Speech models saved.' : 'Provider settings saved.', 'success');
         } catch (error) { setFeedback(feedback, error.message, 'error'); }
         finally { button.disabled = false; }
     });
@@ -4068,8 +4654,12 @@ for (const [id, endpoint, statusId, read] of [
 
 const requestedView = window.location.hash.replace('#', '');
 const knownViews = [...document.querySelectorAll('.app-view[id]')].map(page => page.id.replace('view-', ''));
-if (knownViews.includes(requestedView)) showView(requestedView);
+if (mobileLayoutQuery.matches) showView('chat');
+else if (knownViews.includes(requestedView)) showView(requestedView);
 window.addEventListener('hashchange', () => {
     const view = window.location.hash.slice(1) || 'chat';
     if (knownViews.includes(view) && !document.getElementById(`view-${view}`).classList.contains('active-view')) showView(view);
+});
+mobileLayoutQuery.addEventListener('change', event => {
+    if (event.matches) showView('chat');
 });

@@ -79,12 +79,19 @@ class DesktopStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertTrue(state.addon_enabled("discord", True))
+            self.assertFalse(state.addon_discord_tools_enabled("sample-addon"))
             self.assertTrue(state.update_addon_enabled("sample-addon", True))
+            self.assertTrue(state.update_addon_discord_tools("sample-addon", True))
             self.assertTrue(DesktopState(directory).addon_enabled("sample-addon"))
+            self.assertTrue(
+                DesktopState(directory).addon_discord_tools_enabled("sample-addon")
+            )
             with self.assertRaises(ValueError):
                 state.update_addon_enabled("Bad ID", True)
             with self.assertRaises(ValueError):
                 state.update_addon_enabled("sample-addon", "yes")
+            with self.assertRaises(ValueError):
+                state.update_addon_discord_tools("sample-addon", "yes")
 
     def test_theme_persists_and_invalid_theme_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -187,9 +194,12 @@ class DesktopStateTests(unittest.TestCase):
                 5,
                 {
                     "name": "Coder Petey", "system_prompt": "You are a coding partner.",
+                    "traits": ["Precise", "Patient"],
+                    "sliders": {"tone": 35, "verbosity": 72, "formality": 60},
                     "speech": {
                         "provider": "gemini", "gemini_voice": "Sulafat",
                         "gemini_model": "gemini-3.1-flash-tts-preview",
+                        "style": "Calm and deliberate.",
                     },
                 },
             )
@@ -200,8 +210,16 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(reloaded.saved_personas[4]["name"], "Coder Petey")
             self.assertEqual(reloaded.saved_personas[4]["speech"]["gemini_voice"], "Sulafat")
             self.assertNotEqual(reloaded.persona["name"], "Coder Petey")
+            persona, speech = reloaded.activate_persona_slot(5)
+            self.assertEqual(persona["traits"], ["Precise", "Patient"])
+            self.assertEqual(persona["sliders"]["verbosity"], 72)
+            self.assertEqual(speech["provider"], "gemini")
+            self.assertEqual(speech["gemini_voice"], "Sulafat")
+            self.assertEqual(speech["style"], "Calm and deliberate.")
             self.assertTrue(reloaded.clear_persona_slot(5))
             self.assertIsNone(reloaded.saved_personas[4])
+            with self.assertRaisesRegex(ValueError, "empty"):
+                reloaded.activate_persona_slot(5)
             with self.assertRaises(ValueError):
                 reloaded.save_persona_slot(6, {"system_prompt": "Invalid slot"})
 
@@ -336,12 +354,16 @@ class DesktopStateTests(unittest.TestCase):
                 "name": "Legacy", "system_prompt": "You are Legacy.",
                 "speech": {"provider": "deapi", "deapi_voice": "af_bella"},
             }
+            settings["saved_personas"][1] = {
+                "name": "Older Legacy", "system_prompt": "You are Older Legacy.",
+            }
             state.settings_path.write_text(json.dumps(settings), encoding="utf-8")
 
             migrated = DesktopState(directory)
 
             self.assertEqual(migrated.speech["provider"], "automatic")
             self.assertEqual(migrated.saved_personas[0]["speech"]["provider"], "automatic")
+            self.assertEqual(migrated.saved_personas[1]["speech"], migrated.speech)
 
     def test_microphone_modes_are_persisted_and_validated(self):
         with tempfile.TemporaryDirectory() as directory:

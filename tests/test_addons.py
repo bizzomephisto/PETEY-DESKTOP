@@ -111,6 +111,17 @@ class AddonManagerTests(unittest.TestCase):
             self.assertTrue(response.json["restart_required"])
             self.assertTrue(DesktopState(directory).addon_enabled("sample-addon"))
 
+            discord_access = app.test_client().put(
+                "/api/desktop/addons/sample-addon",
+                json={"discord_tools_enabled": True},
+            )
+            self.assertEqual(discord_access.status_code, 200)
+            self.assertTrue(discord_access.json["addon"]["discord_tools_enabled"])
+            self.assertTrue(discord_access.json["restart_required"])
+            self.assertTrue(
+                DesktopState(directory).addon_discord_tools_enabled("sample-addon")
+            )
+
     def test_loaded_addon_tools_are_namespaced_and_callable(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -130,6 +141,15 @@ def setup(context): return Addon()
             specs = manager.tool_specs()
             self.assertEqual([spec.name for spec in specs], ["addon_sample_addon__forecast"])
             self.assertEqual(specs[0].handler({}), {"weather": "sunny"})
+            self.assertEqual(manager.tool_specs(for_discord=True), [])
+            manager.set_discord_tools_enabled("sample-addon", True)
+            discord_specs = manager.tool_specs(for_discord=True)
+            self.assertEqual(
+                [spec.name for spec in discord_specs],
+                ["addon_sample_addon__forecast"],
+            )
+            manager.set_enabled("sample-addon", False)
+            self.assertFalse(state.addon_discord_tools_enabled("sample-addon"))
 
 
 if __name__ == "__main__":

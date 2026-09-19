@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from flask import Flask
@@ -10,7 +11,28 @@ from petey.quick_window import move_x11_window_frame, screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
-    def test_lan_access_requires_private_link_then_uses_strict_cookie(self):
+    def test_cloudflare_mode_continues_into_the_local_desktop_flow(self):
+        server = MagicMock()
+        server.url = "http://127.0.0.1:43909"
+        with (
+            patch("run_desktop.sys.argv", [
+                "run_desktop.py", "--cloudflare", "--browser",
+                "--cloudflare-hostname", "meetpetey.com", "--port", "43909",
+            ]),
+            patch("run_desktop.LocalServer", return_value=server) as local_server,
+            patch("run_desktop.run_in_browser") as open_local,
+            patch("builtins.input") as terminal_pause,
+        ):
+            run_desktop.main()
+
+        open_local.assert_called_once_with(server.url)
+        terminal_pause.assert_not_called()
+        server.close.assert_called_once_with()
+        self.assertEqual(
+            local_server.call_args.kwargs["mirror_hosts"], ("::1",)
+        )
+
+    def test_lan_access_requires_private_link_then_uses_mobile_safe_cookie(self):
         app = Flask(__name__)
         app.add_url_rule("/", "home", lambda: "PETEY")
         run_desktop.protect_lan_app(app, "private-token")
@@ -24,12 +46,65 @@ class DesktopLauncherTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 302)
         self.assertEqual(accepted.headers["Location"], "/")
         self.assertIn("HttpOnly", accepted.headers["Set-Cookie"])
-        self.assertIn("SameSite=Strict", accepted.headers["Set-Cookie"])
+        self.assertIn("SameSite=Lax", accepted.headers["Set-Cookie"])
+        self.assertIn("Path=/", accepted.headers["Set-Cookie"])
         self.assertEqual(client.get("/").get_data(as_text=True), "PETEY")
 
     def test_network_server_requires_access_token(self):
         with self.assertRaisesRegex(ValueError, "access token"):
             run_desktop.LocalServer(host="0.0.0.0", port=8765)
+
+    def test_https_lan_cookie_and_private_url_use_secure_transport(self):
+        app = Flask(__name__)
+        app.add_url_rule("/", "home", lambda: "PETEY")
+        run_desktop.protect_lan_app(app, "private-token", secure_cookie=True)
+        response = app.test_client().get("/?access_token=private-token")
+        self.assertIn("Secure", response.headers["Set-Cookie"])
+
+        server = run_desktop.LocalServer.__new__(run_desktop.LocalServer)
+        server.scheme = "https"
+        server.access_token = "private-token"
+        server.advertised_host = "192.168.1.42"
+        server.server = SimpleNamespace(server_port=8765)
+        self.assertEqual(
+            server.phone_url,
+            "https://192.168.1.42:8765/?access_token=private-token",
+        )
+
+    def test_certificate_setup_serves_only_public_certificate_with_token(self):
+        with TemporaryDirectory() as directory:
+            certificate = Path(directory) / "petey-local-ca.crt"
+            certificate.write_bytes(b"PUBLIC CERTIFICATE")
+            app = run_desktop.certificate_setup_app(certificate, "private-token")
+            client = app.test_client()
+
+            self.assertEqual(client.get("/").status_code, 401)
+            page = client.get("/?access_token=private-token")
+            self.assertIn("Trust PETEY", page.get_data(as_text=True))
+            downloaded = client.get(
+                "/petey-local-ca.crt?access_token=private-token"
+            )
+            self.assertEqual(downloaded.status_code, 200)
+            self.assertEqual(downloaded.data, b"PUBLIC CERTIFICATE")
+            self.assertIn("attachment", downloaded.headers["Content-Disposition"])
+            downloaded.close()
+
+    @unittest.skipUnless(run_desktop.shutil.which("openssl"), "OpenSSL is unavailable")
+    def test_lan_certificates_reuse_ca_and_cover_current_ip(self):
+        with TemporaryDirectory() as directory:
+            first = run_desktop.ensure_lan_certificates("192.168.1.42", directory)
+            second = run_desktop.ensure_lan_certificates("192.168.1.43", directory)
+
+            self.assertTrue(first.ca_created)
+            self.assertFalse(second.ca_created)
+            self.assertEqual(first.ca_certificate.read_bytes(), second.ca_certificate.read_bytes())
+            self.assertEqual(second.server_key.stat().st_mode & 0o777, 0o600)
+            details = run_desktop.subprocess.run(
+                [run_desktop.shutil.which("openssl"), "x509", "-in",
+                 str(second.server_certificate), "-noout", "-text"],
+                check=True, capture_output=True, text=True,
+            ).stdout
+            self.assertIn("IP Address:192.168.1.43", details)
 
     def test_lan_ip_address_prefers_routed_non_loopback_address(self):
         probe = MagicMock()
@@ -89,6 +164,19 @@ class DesktopLauncherTests(unittest.TestCase):
             self.assertIn("StartupWMClass=petey-desktop", contents)
             self.assertIn("[Desktop Action QuickPetey]", contents)
             self.assertIn("--quick", contents)
+
+    def test_linux_shortcut_can_launch_cloudflare_mode(self):
+        with TemporaryDirectory() as directory, patch(
+            "run_desktop.sys.platform", "linux"
+        ):
+            launcher = run_desktop.install_linux_desktop_shortcut(
+                directory, cloudflare=True
+            )
+            main_exec = next(
+                line for line in launcher.read_text(encoding="utf-8").splitlines()
+                if line.startswith("Exec=")
+            )
+            self.assertTrue(main_exec.endswith(" --cloudflare"))
             self.assertTrue(launcher.stat().st_mode & 0o100)
 
     def test_cosmic_hotkey_installer_preserves_custom_shortcuts(self):
@@ -163,6 +251,16 @@ class DesktopLauncherTests(unittest.TestCase):
         ) as opened, patch("run_desktop.sys.platform", "linux"):
             path = Path(directory) / "addons"
             result = run_desktop.DesktopBridge(addons_dir=path).open_addons_folder()
+            self.assertTrue(result["ok"])
+            self.assertTrue(path.is_dir())
+            opened.assert_called_once_with(["xdg-open", str(path)])
+
+    def test_desktop_bridge_opens_voice_cues_folder(self):
+        with TemporaryDirectory() as directory, patch(
+            "run_desktop.subprocess.Popen"
+        ) as opened, patch("run_desktop.sys.platform", "linux"):
+            path = Path(directory) / "voice-cues"
+            result = run_desktop.DesktopBridge(voice_cues_dir=path).open_voice_cues_folder()
             self.assertTrue(result["ok"])
             self.assertTrue(path.is_dir())
             opened.assert_called_once_with(["xdg-open", str(path)])

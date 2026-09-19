@@ -103,8 +103,8 @@ The editable **Room prompt** on the Discord screen defines PETEY's group-chat
 behavior, response style, game rules, silence behavior, and public-chat boundaries.
 It is stored locally with the Discord settings. Saving it updates the active bridge
 for the next model reply; reconnecting is unnecessary. **Restore default** replaces
-the customized text with PETEY's built-in room prompt. The selected Personality is
-still applied before this room-specific prompt.
+the customized text with PETEY's built-in room prompt. Discord uses this prompt as
+its complete identity and behavior prompt; the desktop Personality is not included.
 
 **AI enhance** sends the current draft to the selected chat model and replaces the
 editor text with its suggested revision. Review the draft and choose **Save room

@@ -12,6 +12,13 @@ user permissions as PETEY. Install only code you trust. PETEY discovers manifest
 without importing disabled add-ons. Enabling or disabling an add-on takes effect on
 the next restart.
 
+Model commands contributed by an external add-on are available in desktop chat when
+the add-on is loaded. They are blocked from Discord by default. The user must enable
+**Allow in Discord** separately for each add-on. That permission takes effect
+immediately, includes only that add-on's namespaced `ToolSpec` objects, and is cleared
+when the add-on is disabled. The add-on remains responsible for its own approval or
+trust policy for consequential commands.
+
 ## Install an add-on
 
 1. Open **Add-ons** in PETEY and choose **Open add-ons folder**.
@@ -149,6 +156,27 @@ An add-on can expose model tools by returning an object whose `tool_specs()` met
 returns `petey.tools.registry.ToolSpec` objects. PETEY namespaces every contributed
 name as `addon_<id>__<tool>` to prevent collisions. `available_when` should narrowly
 match user intent so a paid, private, or mutating tool is not offered unnecessarily.
+Discord PETEY receives these tools only when the user turns on **Allow in Discord**
+for this specific add-on. Other desktop tools and the filesystem MCP are not included
+by that permission.
+
+For a narrowly matched request where an optional model decision would create a false
+denial, a `ToolSpec` may set `required_when`. PETEY then requires one tool call on the
+first provider round and returns to automatic tool selection for the final response:
+
+```python
+ToolSpec(
+    name="get_live_status",
+    description="Read current status.",
+    parameters={"type": "object", "properties": {}},
+    handler=read_status,
+    available_when=lambda message: "status" in message.casefold(),
+    required_when=lambda message: "status" in message.casefold(),
+)
+```
+
+Keep `required_when` at its default `False` for tools that are broadly available or
+consequential. Its predicate should be at least as narrow as `available_when`.
 
 Local stdio MCP add-ons can reuse `petey.mcp_client.MCPStdioClient`:
 

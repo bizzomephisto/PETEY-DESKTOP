@@ -36,6 +36,7 @@ local memory, voice, media creation, and work inside folders you approve.
 - [API Keys and Providers](API-Keys-and-Providers)
 - [Chat, Personality, and Roleplay](Chat-Personality-and-Roleplay)
 - [Voice and Microphone](Voice-and-Microphone)
+- [Mobile and Remote Access](Mobile-and-Remote-Access)
 - [Media and Gallery](Media-and-Gallery)
 - [Memory, Knowledge, and Privacy](Memory-Knowledge-and-Privacy)
 - [Workspace and Tools](Workspace-and-Tools)
@@ -43,6 +44,6 @@ local memory, voice, media creation, and work inside folders you approve.
 - [Troubleshooting](Troubleshooting)
 - [Development](Development)
 
-PETEY currently reports version **0.17.0**. See the
+PETEY currently reports version **0.18.0**. See the
 [repository](https://github.com/bizzomephisto/PETEY-DESKTOP) for source code and
 the latest changes.

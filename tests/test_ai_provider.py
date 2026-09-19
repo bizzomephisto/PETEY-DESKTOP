@@ -154,7 +154,8 @@ class AIProviderTests(unittest.TestCase):
             side_effect=[tool_response, final_response],
         ) as post:
             text, events = provider.complete_with_tools(
-                "Generate an image", "You are Petey", [], tools, executor
+                "Generate an image", "You are Petey", [], tools, executor,
+                require_tool=True,
             )
 
         self.assertEqual(text, "I queued your image.")
@@ -162,6 +163,8 @@ class AIProviderTests(unittest.TestCase):
         executor.assert_called_once_with("generate_image", {"prompt": "a friendly robot"})
         self.assertEqual(post.call_count, 2)
         self.assertEqual(post.call_args_list[0].kwargs["json"]["tools"], tools)
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["tool_choice"], "required")
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["tool_choice"], "auto")
         followup_messages = post.call_args_list[1].kwargs["json"]["messages"]
         self.assertEqual(followup_messages[-1]["role"], "tool")
         self.assertEqual(followup_messages[-1]["tool_call_id"], "call-1")
@@ -201,7 +204,8 @@ class AIProviderTests(unittest.TestCase):
             side_effect=[tool_response, final_response],
         ) as post:
             text, events = provider.complete_with_tools(
-                "Read the note", "You are Petey", [], tools, executor
+                "Read the note", "You are Petey", [], tools, executor,
+                require_tool=True,
             )
 
         self.assertEqual(text, "The note says hello.")
@@ -211,6 +215,11 @@ class AIProviderTests(unittest.TestCase):
         )
         declaration = post.call_args_list[0].kwargs["json"]["tools"][0]["functionDeclarations"][0]
         self.assertEqual(declaration["name"], "mcp_filesystem__read_text_file")
+        self.assertEqual(
+            post.call_args_list[0].kwargs["json"]["toolConfig"]["functionCallingConfig"]["mode"],
+            "ANY",
+        )
+        self.assertNotIn("toolConfig", post.call_args_list[1].kwargs["json"])
         followup = post.call_args_list[1].kwargs["json"]["contents"][-1]
         self.assertEqual(followup["parts"][0]["functionResponse"]["response"], {"result": "hello"})
 

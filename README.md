@@ -1,6 +1,6 @@
 # PETEY
 
-Current release: **v0.17.0** · [Release notes](CHANGELOG.md)
+Current release: **v0.18.0** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
@@ -25,7 +25,8 @@ and an approval-gated project workspace.
 PETEY can be shaped into an original character, narrator, companion, game master,
 or collaborative writing partner—not just a general-purpose assistant. Customize
 the character's name, role, tagline, behavior, speaking style, and voice, then save
-the complete character-and-voice setup in one of five persona slots.
+the complete instructions, traits, communication style, voice, and speech provider
+in one of five Petey profile slots.
 
 - Keep separate chats for different characters, campaigns, worlds, or storylines.
 - Add lore, character sheets, setting notes, and campaign documents to the local
@@ -47,12 +48,13 @@ speed, and hardware setup.
 - Gemini, OpenAI, LM Studio, Ollama, and other OpenAI-compatible chat providers
 - Local SQLite conversation memory with configurable local or hosted embeddings
 - Temporary chats that do not read or write memory
-- Built-in personality templates, editable system prompts, and five persona-and-voice slots
+- Built-in personality templates, editable system prompts, and five complete Petey profile slots
 - RAG uploads, retrieval testing, vector rebuilding, and local database controls
 - Parallel image, video, music, speech, background-removal, and upscale jobs
 - Streaming Gemini text to speech with OpenAI fallback, named voices, and delivery direction
 - Per-reply Speak controls and optional automatic playback for new chat responses
 - Push-to-talk, always-on microphone, and wake-name input with deAPI transcription and Gemini fallback
+- Immediate, replaceable wake-name acknowledgement clips organized by speech voice
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
 - Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
 - Build Your Plan preview from $5 in $5 steps, with rollover balance, capability mix, and live usage estimates
@@ -88,6 +90,7 @@ interface with your phone while PETEY is running.
 - A Gemini API key if you want image inspection, Gemini speech, or transcription fallback
 - A deAPI key if you want media generation or low-cost microphone transcription
 - Node.js with `npx` if you want to enable the Filesystem tool
+- OpenSSL if you want trusted HTTPS phone access and live phone microphone capture
 
 Manage keys and service models in **Settings → Models & API keys**. Gemini,
 OpenAI, local-server, and deAPI keys can be saved independently of the active chat
@@ -141,6 +144,10 @@ The Window button opens COSMIC Screenshot so you can select the window. Run
 
 ### Open PETEY on your phone
 
+For a complete walkthrough covering local Wi-Fi, a permanent Cloudflare domain,
+and a free temporary Cloudflare address, see
+**[Mobile and remote access](docs/wiki/Mobile-and-Remote-Access.md)**.
+
 Connect the phone and computer to the same trusted network, then run:
 
 ```bash
@@ -153,10 +160,77 @@ and removed from the address bar. Keep the URL private: it grants access to PETE
 until the server stops or the browser cookie expires. Use `--port 9000` to choose a
 different port if necessary.
 
+The phone layout is intentionally focused: text chat, the visual
+animation, and a compact settings sheet. Mobile settings expose only the saved
+Petey profile, current speech voice, microphone method (open mic, wait for “Petey”, or push to talk),
+and animation style; fullscreen is a direct control on the visual page. Provider, media, workspace, add-on, and advanced
+settings remain on PETEY Desktop.
+
+For a real fullscreen hold-to-talk button without the phone keyboard, use trusted
+HTTPS:
+
+```bash
+python run_desktop.py --lan-https
+```
+
+On the first run, PETEY generates a private local certificate authority and prints
+an HTTP setup link. Open it on the phone, download the public PETEY certificate,
+and follow the page's iPhone/iPad or Android trust instructions. Return to the
+computer and press Enter; PETEY switches the same port to HTTPS and prints the
+private HTTPS link. Allow microphone access when the phone browser asks. Later
+`--lan-https` launches reuse the trusted authority and go directly to HTTPS.
+
+To install the certificate on another phone or show the setup page again, run:
+
+```bash
+python run_desktop.py --lan-https --install-lan-certificate
+```
+
+The CA private key remains mode `0600` under PETEY's application-data `lan-tls/`
+folder and is never served to the network. Keep that folder private: a device that
+trusts this CA will trust certificates created with its private key.
+
 If the phone cannot connect, allow the selected TCP port through the computer's
-firewall and confirm the Wi-Fi does not isolate wireless clients. Phone microphone
-capture may be unavailable because mobile browsers generally require HTTPS for
-microphone APIs; text chat, settings, and the other web controls remain available.
+firewall and confirm the Wi-Fi does not isolate wireless clients. In Visual mode,
+trusted HTTPS enables the fullscreen hold-to-talk control. Plain HTTP falls back
+to a message field that can use the phone keyboard's speech-to-text microphone.
+
+To reach PETEY through an existing named Cloudflare Tunnel, set its public
+hostname and local origin port in `.env`:
+
+```dotenv
+PETEY_CLOUDFLARE_HOSTNAME=petey.example.com
+PETEY_CLOUDFLARE_PORT=8765
+```
+
+In the Cloudflare tunnel route, point that hostname to
+`http://localhost:8765`. Then run:
+
+```bash
+python run_desktop.py --cloudflare
+```
+
+PETEY opens its normal desktop window, listens only on the configured loopback port, and leaves the existing
+`cloudflared` service in charge of the tunnel. Cloudflare supplies the public HTTPS
+certificate, while the local origin remains inaccessible from the LAN. Open the
+stable hostname directly; named-tunnel mode does not add PETEY's LAN private-link
+token or session cookie. Configure a Cloudflare Access policy when the hostname
+should require an identity login.
+
+To make the installed PETEY application launcher start this Cloudflare mode, run:
+
+```bash
+python run_desktop.py --install-shortcut --cloudflare
+```
+
+The launcher reads the same `PETEY_CLOUDFLARE_HOSTNAME` and
+`PETEY_CLOUDFLARE_PORT` values whenever it starts.
+
+For a free temporary address without a Cloudflare account or domain, start PETEY
+and `cloudflared` in two terminals as described in
+**[Mobile and remote access](docs/wiki/Mobile-and-Remote-Access.md#free-temporary-cloudflare-address)**.
+The generated `trycloudflare.com` URL changes each time and should be treated as a
+private access link.
 
 Application artwork is available under `assets/icons/` as a transparent PNG
 master, Linux PNG, Windows ICO, and macOS ICNS file.

@@ -14,7 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 FORBIDDEN_ROOTS = {"blender_mcp", "examples", "peteyai", "peteyvenv"}
-RELEASE_TIMESTAMP = (2026, 9, 18, 0, 0, 0)
+RELEASE_TIMESTAMP = (2026, 9, 19, 0, 0, 0)
 
 
 def release_files() -> list[Path]:

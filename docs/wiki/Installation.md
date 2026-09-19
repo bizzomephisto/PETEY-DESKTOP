@@ -52,4 +52,7 @@ PETEY normally binds its web server to `127.0.0.1` on an available port. The
 explicit `python run_desktop.py --lan` mode instead binds to the local network on
 port `8765` and requires the randomly generated private link printed at startup.
 
+See [Mobile and Remote Access](Mobile-and-Remote-Access) to use PETEY on a phone
+over local Wi-Fi, a stable Cloudflare hostname, or a free temporary Cloudflare URL.
+
 Next: [Getting Started](Getting-Started).

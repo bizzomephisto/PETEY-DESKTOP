@@ -15,13 +15,15 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from flask import Response, redirect, request
+from flask import Flask, Response, redirect, request, send_file
 from werkzeug.serving import make_server
 
 from web.desktop_app import create_desktop_app
+from petey.desktop_state import default_data_dir
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
@@ -30,6 +32,7 @@ ICON_DIRECTORY = PROJECT_ROOT / "assets" / "icons"
 DESKTOP_APP_ID = "petey-desktop"
 QUICK_WINDOW_WIDTH = 430
 QUICK_WINDOW_HEIGHT = 390
+LAN_TLS_DIRECTORY = "lan-tls"
 
 
 def application_icon_path(platform: str | None = None) -> Path:
@@ -47,7 +50,9 @@ def _desktop_exec_argument(value: str | Path) -> str:
     return f'"{escaped}"'
 
 
-def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
+def install_linux_desktop_shortcut(
+    data_home: str | Path | None = None, *, cloudflare: bool = False,
+) -> Path:
     """Install a per-user Linux launcher and stable icon copy."""
     if sys.platform != "linux":
         raise RuntimeError("Desktop shortcut installation is currently available on Linux.")
@@ -61,6 +66,7 @@ def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
     installed_icon = icon_directory / "petey-desktop.png"
     shutil.copy2(application_icon_path("linux"), installed_icon)
     launcher = application_directory / "petey-desktop.desktop"
+    launch_mode = " --cloudflare" if cloudflare else ""
     launcher.write_text(
         "\n".join(
             [
@@ -68,7 +74,7 @@ def install_linux_desktop_shortcut(data_home: str | Path | None = None) -> Path:
                 "Type=Application",
                 "Name=PETEY",
                 f"Comment=Personal AI assistant · v{__version__}",
-                f"Exec={_desktop_exec_argument(sys.executable)} {_desktop_exec_argument(Path(__file__).resolve())}",
+                f"Exec={_desktop_exec_argument(sys.executable)} {_desktop_exec_argument(Path(__file__).resolve())}{launch_mode}",
                 f"Path={PROJECT_ROOT}",
                 f"Icon={installed_icon}",
                 "Terminal=false",
@@ -148,10 +154,11 @@ def quick_window_position(cursor_x, cursor_y, screen_x, screen_y, screen_width, 
 class DesktopBridge:
     """Small native-window API exposed to the local web interface."""
 
-    def __init__(self, gallery=None, addons_dir=None):
+    def __init__(self, gallery=None, addons_dir=None, voice_cues_dir=None):
         self.window = None
         self.gallery = gallery
         self.addons_dir = Path(addons_dir) if addons_dir else None
+        self.voice_cues_dir = Path(voice_cues_dir) if voice_cues_dir else None
         self.fullscreen = False
         self._restart_started = False
 
@@ -207,6 +214,21 @@ class DesktopBridge:
             return {"ok": True, "path": str(self.addons_dir)}
         except OSError as exc:
             return {"ok": False, "error": f"Could not open the add-ons folder: {exc}"}
+
+    def open_voice_cues_folder(self):
+        if self.voice_cues_dir is None:
+            return {"ok": False, "error": "The voice acknowledgement folder is unavailable."}
+        self.voice_cues_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(self.voice_cues_dir))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(self.voice_cues_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(self.voice_cues_dir)])
+            return {"ok": True, "path": str(self.voice_cues_dir)}
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not open the voice acknowledgement folder: {exc}"}
 
     def restart_petey(self):
         """Replace this desktop process so restart cannot leave stale copies."""
@@ -354,7 +376,169 @@ def lan_ip_address() -> str:
     return "127.0.0.1"
 
 
-def protect_lan_app(app, access_token: str):
+@dataclass(frozen=True)
+class LanCertificates:
+    ca_certificate: Path
+    server_certificate: Path
+    server_key: Path
+    ca_created: bool
+
+
+def _run_openssl(*arguments: str) -> None:
+    executable = shutil.which("openssl")
+    if not executable:
+        raise RuntimeError(
+            "Trusted phone access needs OpenSSL. Install the openssl package and try again."
+        )
+    try:
+        subprocess.run(
+            [executable, *arguments], check=True, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = str(exc.stderr or exc.stdout or exc).strip().splitlines()[-1]
+        raise RuntimeError(f"Could not create PETEY's LAN certificate: {detail}") from exc
+
+
+def ensure_lan_certificates(address: str, data_directory: str | Path | None = None) -> LanCertificates:
+    """Create a private local CA once and a fresh server certificate for this LAN IP."""
+    try:
+        parsed_address = ipaddress.ip_address(address)
+    except ValueError as exc:
+        raise RuntimeError("PETEY could not determine a valid LAN IP address.") from exc
+    if parsed_address.is_loopback or parsed_address.is_unspecified:
+        raise RuntimeError("PETEY could not find a LAN address for trusted phone access.")
+
+    directory = Path(data_directory or default_data_dir()) / LAN_TLS_DIRECTORY
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
+    ca_key = directory / "petey-local-ca.key"
+    ca_certificate = directory / "petey-local-ca.crt"
+    server_key = directory / "petey-lan.key"
+    server_request = directory / "petey-lan.csr"
+    server_certificate = directory / "petey-lan.crt"
+    extensions = directory / "petey-lan.ext"
+    serial = directory / "petey-local-ca.srl"
+
+    ca_created = not (ca_key.is_file() and ca_certificate.is_file())
+    if ca_created:
+        for path in (ca_key, ca_certificate, serial):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        _run_openssl(
+            "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:3072",
+            "-out", str(ca_key),
+        )
+        _run_openssl(
+            "req", "-x509", "-new", "-key", str(ca_key), "-sha256", "-days", "3650",
+            "-subj", "/CN=PETEY Local CA",
+            "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+            "-out", str(ca_certificate),
+        )
+
+    extensions.write_text(
+        "\n".join([
+            "basicConstraints=critical,CA:FALSE",
+            "keyUsage=critical,digitalSignature,keyEncipherment",
+            "extendedKeyUsage=serverAuth",
+            f"subjectAltName=IP:{address},DNS:localhost",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    _run_openssl(
+        "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+        "-out", str(server_key),
+    )
+    _run_openssl(
+        "req", "-new", "-key", str(server_key), "-subj", "/CN=PETEY LAN",
+        "-out", str(server_request),
+    )
+    _run_openssl(
+        "x509", "-req", "-in", str(server_request), "-CA", str(ca_certificate),
+        "-CAkey", str(ca_key), "-CAcreateserial", "-out", str(server_certificate),
+        "-days", "365", "-sha256", "-extfile", str(extensions),
+    )
+    for path in (ca_key, server_key):
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    for path in (server_request, extensions):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    return LanCertificates(ca_certificate, server_certificate, server_key, ca_created)
+
+
+def certificate_setup_app(ca_certificate: Path, access_token: str) -> Flask:
+    """Serve only the public CA certificate and phone installation instructions."""
+    app = Flask("petey-lan-certificate-setup")
+
+    def authorized() -> bool:
+        supplied = request.args.get("access_token", "")
+        return bool(supplied and hmac.compare_digest(supplied, access_token))
+
+    @app.get("/")
+    def instructions():
+        if not authorized():
+            return Response("Use the private setup link printed by PETEY.", status=401)
+        download = "/petey-local-ca.crt?" + urlencode({"access_token": access_token})
+        return Response(
+            f"""<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'>
+<title>PETEY trusted microphone setup</title><style>
+body{{margin:0;background:#09070e;color:#f4f0ff;font:16px system-ui,sans-serif}}
+main{{max-width:680px;margin:auto;padding:32px 22px 60px}}h1{{font-size:28px}}h2{{margin-top:30px;font-size:18px}}
+p,li{{color:#c8bed8;line-height:1.55}}a{{display:inline-block;margin:10px 0;padding:13px 17px;border-radius:10px;background:#7650dc;color:white;text-decoration:none;font-weight:700}}
+.note{{padding:14px;border:1px solid #3b3150;border-radius:10px;background:#15101f}}
+</style></head><body><main><h1>Trust PETEY on this phone</h1>
+<p>Install PETEY's public local certificate once. Its private key never leaves your computer.</p>
+<a href='{download}' download='petey-local-ca.crt'>Download PETEY certificate</a>
+<h2>iPhone or iPad</h2><ol><li>Download and allow the configuration profile.</li><li>Open Settings → Profile Downloaded and install it.</li><li>Open Settings → General → About → Certificate Trust Settings and enable full trust for PETEY Local CA.</li></ol>
+<h2>Android</h2><ol><li>Download the certificate.</li><li>Open Settings → Security &amp; privacy → More security settings → Install a certificate → CA certificate.</li><li>Select the downloaded PETEY certificate. Menu names vary by phone.</li></ol>
+<p class=note>When installation is complete, return to the computer and press Enter. PETEY will switch this port to HTTPS.</p>
+</main></body></html>""",
+            content_type="text/html; charset=utf-8",
+        )
+
+    @app.get("/petey-local-ca.crt")
+    def download_certificate():
+        if not authorized():
+            return Response("Use the private setup link printed by PETEY.", status=401)
+        return send_file(
+            ca_certificate,
+            mimetype="application/x-x509-ca-cert",
+            as_attachment=True,
+            download_name="petey-local-ca.crt",
+            max_age=0,
+        )
+
+    return app
+
+
+class CertificateSetupServer:
+    def __init__(self, host: str, port: int, ca_certificate: Path, access_token: str):
+        self.app = certificate_setup_app(ca_certificate, access_token)
+        self.server = make_server(host, port, self.app, threaded=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, name="petey-certificate-setup", daemon=True,
+        )
+
+    def start(self):
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.thread.join(timeout=5)
+
+
+def protect_lan_app(app, access_token: str, secure_cookie: bool = False):
     """Require a secret URL once, then retain access in a strict browser cookie."""
     cookie_name = "petey_lan_session"
 
@@ -368,7 +552,12 @@ def protect_lan_app(app, access_token: str):
                 access_token,
                 max_age=12 * 60 * 60,
                 httponly=True,
-                samesite="Strict",
+                # A phone commonly opens this link from a messaging app or QR
+                # scanner. SameSite=Strict can suppress the new cookie for the
+                # redirect that immediately follows that cross-site navigation.
+                samesite="Lax",
+                path="/",
+                secure=secure_cookie,
             )
             return response
         saved = request.cookies.get(cookie_name, "")
@@ -382,39 +571,66 @@ def protect_lan_app(app, access_token: str):
 
 
 class LocalServer:
-    def __init__(self, host="127.0.0.1", port=0, access_token=None):
+    def __init__(
+        self, host="127.0.0.1", port=0, access_token=None, ssl_context=None,
+        advertised_host=None, mirror_hosts=(),
+    ):
         if host not in {"127.0.0.1", "localhost", "::1"} and not access_token:
             raise ValueError("Network access requires an access token.")
+        if any(item not in {"127.0.0.1", "::1"} for item in mirror_hosts):
+            raise ValueError("Mirror servers must use a loopback address.")
         self.host = host
         self.access_token = access_token
+        self.scheme = "https" if ssl_context else "http"
+        self.advertised_host = advertised_host
         self.app = create_desktop_app()
         if access_token:
-            protect_lan_app(self.app, access_token)
-        self.server = make_server(host, port, self.app, threaded=True)
-        self.thread = threading.Thread(
-            target=self.server.serve_forever, name="petey-local-web", daemon=True
-        )
+            protect_lan_app(self.app, access_token, secure_cookie=bool(ssl_context))
+        self.server = make_server(host, port, self.app, threaded=True, ssl_context=ssl_context)
+        self.servers = [self.server]
+        for mirror_host in mirror_hosts:
+            try:
+                self.servers.append(make_server(
+                    mirror_host, self.server.server_port, self.app,
+                    threaded=True, ssl_context=ssl_context,
+                ))
+            except OSError:
+                # IPv6 is optional on supported systems. Keep the primary
+                # loopback listener when this address family is unavailable.
+                continue
+        self.threads = [
+            threading.Thread(
+                target=server.serve_forever,
+                name=f"petey-local-web-{index}", daemon=True,
+            )
+            for index, server in enumerate(self.servers)
+        ]
+        self.thread = self.threads[0]
 
     @property
     def url(self):
-        return f"http://127.0.0.1:{self.server.server_port}"
+        return f"{self.scheme}://127.0.0.1:{self.server.server_port}"
 
     @property
     def phone_url(self):
         if not self.access_token:
             return ""
         query = urlencode({"access_token": self.access_token})
-        return f"http://{lan_ip_address()}:{self.server.server_port}/?{query}"
+        host = self.advertised_host or lan_ip_address()
+        return f"{self.scheme}://{host}:{self.server.server_port}/?{query}"
 
     def start(self):
-        self.thread.start()
+        for thread in self.threads:
+            thread.start()
 
     def close(self):
         discord = self.app.config.get("PETEY_DISCORD")
         if discord is not None:
             discord.close()
-        self.server.shutdown()
-        self.thread.join(timeout=5)
+        for server in self.servers:
+            server.shutdown()
+        for thread in self.threads:
+            thread.join(timeout=5)
         self.app.config["PETEY_ADDONS"].close()
         jobs = self.app.config.get("PETEY_MEDIA_JOBS")
         if jobs is not None:
@@ -436,10 +652,30 @@ def main():
         help="Share PETEY with a phone on this local network using a private link",
     )
     parser.add_argument(
+        "--lan-https",
+        action="store_true",
+        help="Share PETEY over trusted HTTPS so a phone can use live microphone capture",
+    )
+    parser.add_argument(
+        "--cloudflare",
+        action="store_true",
+        help="Serve PETEY through an existing named Cloudflare Tunnel",
+    )
+    parser.add_argument(
+        "--cloudflare-hostname",
+        default=os.getenv("PETEY_CLOUDFLARE_HOSTNAME", ""),
+        help="Public hostname routed by the named tunnel (or PETEY_CLOUDFLARE_HOSTNAME)",
+    )
+    parser.add_argument(
+        "--install-lan-certificate",
+        action="store_true",
+        help="Show the phone certificate installation page again (requires --lan-https)",
+    )
+    parser.add_argument(
         "--port",
         type=int,
-        default=8765,
-        help="TCP port used with --lan (default: 8765)",
+        default=None,
+        help="TCP port used with --lan, --lan-https, or --cloudflare (default: 8765)",
     )
     parser.add_argument(
         "--install-shortcut",
@@ -458,14 +694,32 @@ def main():
     )
     args = parser.parse_args()
 
-    if not 1 <= args.port <= 65535:
+    cloudflare_port = os.getenv("PETEY_CLOUDFLARE_PORT", "8765") if args.cloudflare else "8765"
+    try:
+        port = args.port if args.port is not None else int(cloudflare_port)
+    except ValueError:
+        parser.error("PETEY_CLOUDFLARE_PORT must be a TCP port number")
+    if not 1 <= port <= 65535:
         parser.error("--port must be between 1 and 65535")
-    if args.lan and args.quick:
-        parser.error("--lan and --quick cannot be used together")
+    if sum(bool(mode) for mode in (args.lan, args.lan_https, args.cloudflare)) > 1:
+        parser.error("Choose only one of --lan, --lan-https, or --cloudflare.")
+    if (args.lan or args.lan_https or args.cloudflare) and args.quick:
+        parser.error("Network access and --quick cannot be used together")
+    if args.install_lan_certificate and not args.lan_https:
+        parser.error("--install-lan-certificate requires --lan-https")
+    cloudflare_hostname = str(args.cloudflare_hostname or "").strip().lower()
+    if args.cloudflare and not re.fullmatch(
+        r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}",
+        cloudflare_hostname,
+    ):
+        parser.error(
+            "--cloudflare needs a valid --cloudflare-hostname or "
+            "PETEY_CLOUDFLARE_HOSTNAME"
+        )
 
     if args.install_shortcut:
         try:
-            launcher = install_linux_desktop_shortcut()
+            launcher = install_linux_desktop_shortcut(cloudflare=args.cloudflare)
         except RuntimeError as exc:
             parser.error(str(exc))
         print(f"[DESKTOP] Installed launcher: {launcher}")
@@ -484,16 +738,53 @@ def main():
         # Wayland clients cannot place a popup at an exact global cursor position.
         os.environ["QT_QPA_PLATFORM"] = "xcb"
 
-    access_token = secrets.token_urlsafe(24) if args.lan else None
+    network_enabled = args.lan or args.lan_https or args.cloudflare
+    lan_enabled = args.lan or args.lan_https
+    access_token = secrets.token_urlsafe(24) if lan_enabled else None
+    advertised_host = lan_ip_address() if lan_enabled else None
+    ssl_context = None
+    certificates = None
+    if args.lan_https:
+        try:
+            certificates = ensure_lan_certificates(advertised_host)
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        if args.lan_https and (certificates.ca_created or args.install_lan_certificate):
+            setup = CertificateSetupServer(
+                "0.0.0.0", port, certificates.ca_certificate, access_token,
+            )
+            setup.start()
+            setup_query = urlencode({"access_token": access_token})
+            setup_url = f"http://{advertised_host}:{port}/?{setup_query}"
+            print("[DESKTOP] First, install PETEY's public certificate on your phone:")
+            print(setup_url)
+            print(f"[DESKTOP] Certificate file: {certificates.ca_certificate}")
+            try:
+                input("After the phone trusts PETEY Local CA, press Enter to start HTTPS.\n")
+            except KeyboardInterrupt:
+                print("\n[DESKTOP] Certificate setup stopped.")
+                return
+            finally:
+                setup.close()
+        ssl_context = (
+            str(certificates.server_certificate), str(certificates.server_key),
+        )
     local = LocalServer(
-        host="0.0.0.0" if args.lan else "127.0.0.1",
-        port=args.port if args.lan else 0,
+        host="0.0.0.0" if lan_enabled else "127.0.0.1",
+        port=port if network_enabled else 0,
         access_token=access_token,
+        ssl_context=ssl_context,
+        advertised_host=advertised_host,
+        mirror_hosts=("::1",) if args.cloudflare else (),
     )
     local.start()
     print(f"[DESKTOP] Petey is running locally at {local.url}")
     try:
-        if args.lan:
+        if args.cloudflare:
+            print(f"[DESKTOP] Named tunnel origin: http://localhost:{port}")
+            print(f"[DESKTOP] Open PETEY from anywhere:\nhttps://{cloudflare_hostname}")
+
+        if lan_enabled:
             print(f"[DESKTOP] Open this private link on your phone:\n{local.phone_url}")
             print("[DESKTOP] Keep the link private. It grants access to this PETEY session.")
             input("Press Enter to stop phone access.\n")
@@ -531,6 +822,7 @@ def main():
         bridge = DesktopBridge(
             local.app.config["PETEY_GALLERY"],
             local.app.config["PETEY_ADDONS"].user_dir,
+            local.app.config["PETEY_VOICE_CUES"].root,
         )
         bridge.window = webview.create_window(
             "PETEY",

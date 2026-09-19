@@ -521,19 +521,27 @@ class DesktopAppTests(unittest.TestCase):
                 "/api/desktop/personality/slots/2",
                 json={
                     "name": "Writer Petey", "system_prompt": "You are a writing partner.",
+                    "traits": ["Imaginative"],
+                    "sliders": {"tone": 66, "verbosity": 81},
                     "speech": {
                         "provider": "gemini", "gemini_voice": "Kore",
                         "gemini_model": "gemini-3.1-flash-tts-preview",
+                        "style": "Expressive and warm.",
                     },
                 },
             )
             current = client.get("/api/desktop/personality")
+            activated = client.post("/api/desktop/personality/slots/2")
             cleared = client.delete("/api/desktop/personality/slots/2")
 
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["persona"]["name"], "Writer Petey")
             self.assertEqual(current.get_json()["saved_personas"][1]["name"], "Writer Petey")
             self.assertEqual(current.get_json()["saved_personas"][1]["speech"]["gemini_voice"], "Kore")
+            self.assertEqual(activated.get_json()["persona"]["traits"], ["Imaginative"])
+            self.assertEqual(activated.get_json()["persona"]["sliders"]["verbosity"], 81)
+            self.assertEqual(activated.get_json()["speech"]["provider"], "gemini")
+            self.assertEqual(activated.get_json()["speech"]["style"], "Expressive and warm.")
             self.assertTrue(cleared.get_json()["removed"])
             self.assertIsNone(cleared.get_json()["saved_personas"][1])
 
@@ -712,6 +720,58 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(response.get_json()["transcript"], "Petey hello")
             self.assertEqual(transcribe.call_args.args[1], "audio/x-wav")
             self.assertEqual(transcribe.call_args.kwargs["vocabulary"], ["Petey"])
+
+    def test_wake_acknowledgement_catalog_uses_current_voice_then_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_speech({"provider": "gemini", "gemini_voice": "Kore"})
+            app = create_desktop_app(state=state, memory=MagicMock())
+            client = app.test_client()
+
+            empty = client.get("/api/desktop/voice-cues").get_json()
+            self.assertEqual(empty["voice"], "Kore")
+            self.assertEqual(empty["source_voice"], "default")
+            self.assertEqual(empty["clips"], [])
+            self.assertTrue(Path(empty["directory"]).is_dir())
+
+            clip = Path(empty["directory"]) / "yeah.wav"
+            clip.write_bytes(b"RIFF-canned-yeah")
+            loaded = client.get("/api/desktop/voice-cues").get_json()
+            self.assertEqual(loaded["source_voice"], "Kore")
+            self.assertEqual(loaded["clips"][0]["name"], "yeah.wav")
+            response = client.get(loaded["clips"][0]["url"])
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data, b"RIFF-canned-yeah")
+            response.close()
+
+    def test_local_wake_stream_starts_feeds_and_stops(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_voice_input({"mode": "wake_word", "wake_word": "Petey"})
+            detector = MagicMock()
+            detector.start.return_value = "wake-session"
+            detector.feed.return_value = True
+            app = create_desktop_app(
+                state=state, memory=MagicMock(), wake_detector=detector
+            )
+            client = app.test_client()
+
+            started = client.post("/api/desktop/voice-input/wake")
+            detected = client.post(
+                "/api/desktop/voice-input/wake/wake-session",
+                data=b"\x00\x00" * 2048,
+                headers={"X-Petey-Sample-Rate": "16000"},
+            )
+            stopped = client.delete("/api/desktop/voice-input/wake/wake-session")
+
+            self.assertEqual(started.get_json()["session_id"], "wake-session")
+            detector.start.assert_called_once_with("Petey")
+            detector.feed.assert_called_once_with(
+                "wake-session", b"\x00\x00" * 2048, 16000
+            )
+            self.assertTrue(detected.get_json()["detected"])
+            self.assertTrue(stopped.get_json()["stopped"])
+            detector.stop.assert_called_once_with("wake-session")
 
     def test_microphone_uses_deapi_then_falls_back_to_gemini(self):
         with tempfile.TemporaryDirectory() as directory:
