@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.18.2 — 2026-09-19
+
+### Wake-name conversation
+
+- Delayed canned wake acknowledgements briefly and cancel them when speech
+  continues, so “Petey” followed by a pause gets a response while commands such
+  as “Petey, turn off the lights” proceed without an interruption.
+
 ## v0.18.1 — 2026-09-19
 
 ### Voice profile fixes

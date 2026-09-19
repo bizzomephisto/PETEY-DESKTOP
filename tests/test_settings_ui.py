@@ -123,3 +123,16 @@ class SettingsUITests(unittest.TestCase):
             '&& !voiceInputPlaybackBlocked && !activeSpeechCancel && !activeChatAudio',
             javascript,
         )
+
+    def test_wake_acknowledgement_waits_for_a_pause_after_the_name(self):
+        javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn('scheduleWakeAcknowledgement(audioSentAt + 100);', javascript)
+        self.assertIn('wakeCuePendingTimer && rms >= threshold * .55', javascript)
+        command_start = javascript.index('command = match[1].trim()')
+        submit_start = javascript.index('const existing = messageInput.value.trim()', command_start)
+        self.assertIn(
+            'cancelPendingWakeAcknowledgement();',
+            javascript[command_start:submit_start],
+        )

@@ -40,6 +40,8 @@ let microphoneTestActive = false;
 let pushToTalkHeld = false;
 let wakeWordArmedUntil = 0;
 let wakeCueAcknowledgedUntil = 0;
+let wakeCuePendingTimer = null;
+let wakeCuePendingAfter = 0;
 let wakeDetectorSessionId = '';
 let wakeDetectorStarting = false;
 let wakeDetectorBusy = false;
@@ -1591,6 +1593,13 @@ function handleMicrophoneAudio(event) {
     let energy = 0;
     for (let index = 0; index < samples.length; index += 1) energy += samples[index] * samples[index];
     const rms = Math.sqrt(energy / samples.length);
+    const threshold = {high: .006, normal: .012, low: .025}[
+        voiceInputConfiguration.sensitivity || 'normal'
+    ];
+    if (wakeCuePendingTimer && rms >= threshold * .55
+        && performance.now() > wakeCuePendingAfter) {
+        cancelPendingWakeAcknowledgement();
+    }
     visualAudioEnergy = Math.max(visualAudioEnergy, Math.min(1, rms * 35));
     document.getElementById('voice-input-meter').style.width = `${Math.min(100, Math.max(1, rms * 900))}%`;
     if (microphoneTestActive) {
@@ -1608,9 +1617,6 @@ function handleMicrophoneAudio(event) {
         return;
     }
     const now = performance.now();
-    const threshold = {high: .006, normal: .012, low: .025}[
-        voiceInputConfiguration.sensitivity || 'normal'
-    ];
     if (!microphoneCapturing) {
         microphonePreRoll.push(new Float32Array(samples));
         const preRollLimit = Math.max(2, Math.ceil((microphoneContext.sampleRate * .35) / samples.length));
@@ -1714,13 +1720,16 @@ function handleVoiceTranscript(transcript) {
         const escaped = wakeWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const match = transcript.match(new RegExp(`\\b${escaped}\\b[\\s,.:;!?—-]*(.*)$`, 'i'));
         if (match) {
-            if (Date.now() >= wakeCueAcknowledgedUntil) playWakeAcknowledgement();
             command = match[1].trim();
             wakeWordArmedUntil = Date.now() + 8000;
             if (!command) {
+                if (Date.now() >= wakeCueAcknowledgedUntil) {
+                    scheduleWakeAcknowledgement(performance.now(), 0);
+                }
                 setVoiceInputStatus(`Heard “${wakeWord}” · listening for your request…`);
                 return;
             }
+            cancelPendingWakeAcknowledgement();
         } else if (Date.now() < wakeWordArmedUntil) {
             wakeWordArmedUntil = 0;
         } else {
@@ -1786,6 +1795,7 @@ function finishWakeCuePlayback() {
 }
 
 function stopWakeAcknowledgement() {
+    cancelPendingWakeAcknowledgement();
     const audio = wakeCueAudio;
     wakeCueAudio = null;
     if (audio) {
@@ -1796,6 +1806,27 @@ function stopWakeAcknowledgement() {
     }
     if (wakeCuePlaying) window.speechSynthesis?.cancel?.();
     setWakeCuePlaybackActive(false);
+}
+
+function cancelPendingWakeAcknowledgement() {
+    if (wakeCuePendingTimer) window.clearTimeout(wakeCuePendingTimer);
+    wakeCuePendingTimer = null;
+    wakeCuePendingAfter = 0;
+}
+
+function scheduleWakeAcknowledgement(continuedSpeechAfter, delay = 425) {
+    cancelPendingWakeAcknowledgement();
+    wakeCuePendingAfter = Number(continuedSpeechAfter || performance.now());
+    wakeCuePendingTimer = window.setTimeout(() => {
+        wakeCuePendingTimer = null;
+        if (microphoneLastVoiceAt > wakeCuePendingAfter
+            || Date.now() < wakeCueAcknowledgedUntil) {
+            wakeCuePendingAfter = 0;
+            return;
+        }
+        wakeCuePendingAfter = 0;
+        playWakeAcknowledgement(true);
+    }, delay);
 }
 
 function speakFallbackWakeCue() {
@@ -1814,7 +1845,9 @@ function speakFallbackWakeCue() {
 }
 
 function playWakeAcknowledgement(preserveCapture = false) {
+    cancelPendingWakeAcknowledgement();
     if (wakeCuePlaying || voiceInputPlaybackBlocked || activeSpeechCancel || activeChatAudio) return;
+    wakeCueAcknowledgedUntil = Date.now() + 8000;
     setWakeCuePlaybackActive(true, preserveCapture);
     if (!wakeCueAudios.length) {
         speakFallbackWakeCue();
@@ -1852,6 +1885,7 @@ async function flushLocalWakeAudio() {
     const sessionId = wakeDetectorSessionId;
     const chunks = wakeDetectorChunks;
     const sampleCount = wakeDetectorSampleCount;
+    const audioSentAt = performance.now();
     wakeDetectorChunks = [];
     wakeDetectorSampleCount = 0;
     const pcm = new Int16Array(sampleCount);
@@ -1876,11 +1910,11 @@ async function flushLocalWakeAudio() {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || 'Local wake detector stopped.');
         if (payload.detected && Date.now() >= wakeCueAcknowledgedUntil
+            && !wakeCuePendingTimer
             && !voiceInputPlaybackBlocked && !activeSpeechCancel && !activeChatAudio) {
             wakeWordArmedUntil = Date.now() + 8000;
-            wakeCueAcknowledgedUntil = Date.now() + 8000;
             setVoiceInputStatus(`Heard “${voiceInputConfiguration.wake_word || 'Petey'}” · listening for your request…`);
-            playWakeAcknowledgement(true);
+            scheduleWakeAcknowledgement(audioSentAt + 100);
         }
     } catch (_error) {
         if (wakeDetectorSessionId === sessionId) wakeDetectorSessionId = '';
@@ -1910,6 +1944,7 @@ async function startLocalWakeDetector() {
 }
 
 function stopLocalWakeDetector() {
+    cancelPendingWakeAcknowledgement();
     const sessionId = wakeDetectorSessionId;
     wakeDetectorSessionId = '';
     wakeDetectorChunks = [];

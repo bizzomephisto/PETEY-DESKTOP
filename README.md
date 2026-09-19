@@ -1,6 +1,6 @@
 # PETEY
 
-Current release: **v0.18.1** · [Release notes](CHANGELOG.md)
+Current release: **v0.18.2** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
