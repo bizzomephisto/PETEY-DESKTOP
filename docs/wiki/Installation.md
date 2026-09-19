@@ -48,6 +48,8 @@ For development or when a native window backend is unavailable:
 python run_desktop.py --browser
 ```
 
-PETEY binds its local web server to `127.0.0.1` on an available port.
+PETEY normally binds its web server to `127.0.0.1` on an available port. The
+explicit `python run_desktop.py --lan` mode instead binds to the local network on
+port `8765` and requires the randomly generated private link printed at startup.
 
 Next: [Getting Started](Getting-Started).

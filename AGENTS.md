@@ -15,7 +15,7 @@ Start here; read only task-relevant implementation/tests. This is a navigation c
 
 ## Runtime/data flow
 
-`run_desktop.LocalServer` -> `create_desktop_app()` -> threaded Werkzeug on `127.0.0.1`, ephemeral port -> pywebview (or browser). `DesktopBridge` handles native folder dialogs, window flags/fullscreen, gallery open/save, project/provider links.
+`run_desktop.LocalServer` -> `create_desktop_app()` -> threaded Werkzeug on `127.0.0.1`, ephemeral port -> pywebview (or browser). Explicit `--lan` mode binds `0.0.0.0:8765`, prints a random private-link token, exchanges it for an HttpOnly SameSite cookie, and never weakens the normal loopback default. `DesktopBridge` handles native folder dialogs, window flags/fullscreen, gallery open/save, project/provider links.
 
 UI `web/templates/desktop.html` + `web/static/desktop.js` + `desktop.css` -> `/api/desktop/*` in `web/desktop_app.py` (composition root, validation, errors, service injection).
 
@@ -81,7 +81,7 @@ Help: sidebar `view-help` includes `web/templates/desktop_help.html`; setup link
 - Filesystem MCP receives only approved Workspace roots. Keep the model-facing allowlist read-only and bounded; never pass through server write, move, delete, or arbitrary command tools. Enabling the connector must be an explicit user action.
 - Disabled user add-ons must not be imported. Add-on enable/disable remains restart-gated; external paths and served assets stay inside the discovered folder. Register core routes before external `setup()`, keep add-on endpoints under `/api/addons/<id>/`, and close add-ons before shared runtimes/workers.
 - `AsyncRuntime.call` uses a fresh event loop per request and closes the shared deAPI session. Media model/balance reads must create and close a request-local client for both saved and environment keys: the first Media visit requests them concurrently. Preserve session/loop ownership and job-worker shutdown; don't casually move blocking/provider calls between threads/loops.
-- Keep Flask loopback-only. Upload cap currently 25 MiB; workspace text-file cap 2 MiB. Preserve API error handling and bounded inputs.
+- Keep Flask loopback-only by default. Network binding must remain explicit and token-gated; never print an unprotected LAN URL. Upload cap currently 25 MiB; workspace text-file cap 2 MiB. Preserve API error handling and bounded inputs.
 
 ## Extend + validate
 

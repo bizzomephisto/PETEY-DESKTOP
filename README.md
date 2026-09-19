@@ -75,9 +75,10 @@ The GitHub release includes only PETEY's built-in Discord integration. Third-par
 and locally developed add-ons are installed separately in PETEY's application-data
 folder and are not bundled with the source release.
 
-PETEY runs a loopback-only Flask server inside a pywebview desktop window. If a
-native backend is unavailable, the launcher can open the same interface in your
-browser.
+PETEY normally runs a loopback-only Flask server inside a pywebview desktop
+window. If a native backend is unavailable, the launcher can open the same
+interface in your browser. An explicit, private-link LAN mode can share the
+interface with your phone while PETEY is running.
 
 ## Requirements
 
@@ -137,6 +138,25 @@ Enter to send, hold Space while the empty message box is focused to talk, use
 the Screen or Window buttons to attach a capture, and press Escape to close it.
 The Window button opens COSMIC Screenshot so you can select the window. Run
 `python run_desktop.py --quick` directly to use a different shortcut manager.
+
+### Open PETEY on your phone
+
+Connect the phone and computer to the same trusted network, then run:
+
+```bash
+python run_desktop.py --lan
+```
+
+PETEY prints a private URL using the computer's LAN address and port `8765`.
+Open that complete URL on the phone. The secret is exchanged for a browser cookie
+and removed from the address bar. Keep the URL private: it grants access to PETEY
+until the server stops or the browser cookie expires. Use `--port 9000` to choose a
+different port if necessary.
+
+If the phone cannot connect, allow the selected TCP port through the computer's
+firewall and confirm the Wi-Fi does not isolate wireless clients. Phone microphone
+capture may be unavailable because mobile browsers generally require HTTPS for
+microphone APIs; text chat, settings, and the other web controls remain available.
 
 Application artwork is available under `assets/icons/` as a transparent PNG
 master, Linux PNG, Windows ICO, and macOS ICNS file.

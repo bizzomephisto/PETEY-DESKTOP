@@ -3,11 +3,41 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
+from flask import Flask
+
 import run_desktop
 from petey.quick_window import move_x11_window_frame, screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
+    def test_lan_access_requires_private_link_then_uses_strict_cookie(self):
+        app = Flask(__name__)
+        app.add_url_rule("/", "home", lambda: "PETEY")
+        run_desktop.protect_lan_app(app, "private-token")
+        client = app.test_client()
+
+        denied = client.get("/")
+        self.assertEqual(denied.status_code, 401)
+        self.assertNotIn("private-token", denied.get_data(as_text=True))
+
+        accepted = client.get("/?access_token=private-token")
+        self.assertEqual(accepted.status_code, 302)
+        self.assertEqual(accepted.headers["Location"], "/")
+        self.assertIn("HttpOnly", accepted.headers["Set-Cookie"])
+        self.assertIn("SameSite=Strict", accepted.headers["Set-Cookie"])
+        self.assertEqual(client.get("/").get_data(as_text=True), "PETEY")
+
+    def test_network_server_requires_access_token(self):
+        with self.assertRaisesRegex(ValueError, "access token"):
+            run_desktop.LocalServer(host="0.0.0.0", port=8765)
+
+    def test_lan_ip_address_prefers_routed_non_loopback_address(self):
+        probe = MagicMock()
+        probe.getsockname.return_value = ("192.168.1.42", 43210)
+        with patch("run_desktop.socket.socket", return_value=probe):
+            self.assertEqual(run_desktop.lan_ip_address(), "192.168.1.42")
+        probe.close.assert_called_once()
+
     def test_desktop_bridge_opens_only_expected_discord_pages(self):
         bridge = run_desktop.DesktopBridge()
         with patch("run_desktop.webbrowser.open", return_value=True) as opened:

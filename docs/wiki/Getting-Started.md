@@ -49,3 +49,19 @@ start at $5 and move in $5 steps; with light use, one $5 contribution could last
 several months. Saving stores a
 planning preview on the device. Checkout and shared provider access require the
 future hosted PETEY Cloud gateway and are clearly marked as unavailable.
+
+## Open PETEY on a phone
+
+Put the phone and computer on the same trusted network and start a dedicated LAN
+session from the PETEY project folder:
+
+```bash
+python run_desktop.py --lan
+```
+
+Open the complete private link printed in the terminal. PETEY listens on port
+`8765` by default; use `--port 9000` to choose another. Keep the link private
+because it grants access to the running session. If it does not open, allow the
+port through the computer firewall and check that the Wi-Fi router does not use
+client isolation. Mobile microphone capture may require HTTPS and can be
+unavailable in this local HTTP mode.

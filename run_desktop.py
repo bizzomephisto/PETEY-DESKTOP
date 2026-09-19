@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import importlib.util
+import ipaddress
 import os
 import re
+import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import webbrowser
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
+from flask import Response, redirect, request
 from werkzeug.serving import make_server
 
 from web.desktop_app import create_desktop_app
@@ -319,10 +324,73 @@ def run_in_browser(url, reason=None):
     input("Press Enter to stop Petey.\n")
 
 
+def lan_ip_address() -> str:
+    """Return the most useful IPv4 address for another device on this LAN."""
+    candidates = []
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # UDP connect selects a route without sending application data.
+            probe.connect(("192.0.2.1", 9))
+            candidates.append(probe.getsockname()[0])
+        finally:
+            probe.close()
+    except OSError:
+        pass
+    try:
+        candidates.extend(
+            address[4][0]
+            for address in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+        )
+    except OSError:
+        pass
+    for candidate in candidates:
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if address.version == 4 and not address.is_loopback and not address.is_unspecified:
+            return candidate
+    return "127.0.0.1"
+
+
+def protect_lan_app(app, access_token: str):
+    """Require a secret URL once, then retain access in a strict browser cookie."""
+    cookie_name = "petey_lan_session"
+
+    @app.before_request
+    def require_lan_session():
+        supplied = request.args.get("access_token", "")
+        if supplied and hmac.compare_digest(supplied, access_token):
+            response = redirect(request.path or "/")
+            response.set_cookie(
+                cookie_name,
+                access_token,
+                max_age=12 * 60 * 60,
+                httponly=True,
+                samesite="Strict",
+            )
+            return response
+        saved = request.cookies.get(cookie_name, "")
+        if saved and hmac.compare_digest(saved, access_token):
+            return None
+        return Response(
+            "PETEY phone access requires the private link printed on the computer.",
+            status=401,
+            content_type="text/plain; charset=utf-8",
+        )
+
+
 class LocalServer:
-    def __init__(self):
+    def __init__(self, host="127.0.0.1", port=0, access_token=None):
+        if host not in {"127.0.0.1", "localhost", "::1"} and not access_token:
+            raise ValueError("Network access requires an access token.")
+        self.host = host
+        self.access_token = access_token
         self.app = create_desktop_app()
-        self.server = make_server("127.0.0.1", 0, self.app, threaded=True)
+        if access_token:
+            protect_lan_app(self.app, access_token)
+        self.server = make_server(host, port, self.app, threaded=True)
         self.thread = threading.Thread(
             target=self.server.serve_forever, name="petey-local-web", daemon=True
         )
@@ -330,6 +398,13 @@ class LocalServer:
     @property
     def url(self):
         return f"http://127.0.0.1:{self.server.server_port}"
+
+    @property
+    def phone_url(self):
+        if not self.access_token:
+            return ""
+        query = urlencode({"access_token": self.access_token})
+        return f"http://{lan_ip_address()}:{self.server.server_port}/?{query}"
 
     def start(self):
         self.thread.start()
@@ -356,6 +431,17 @@ def main():
         help="Open the local interface in a browser for development",
     )
     parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="Share PETEY with a phone on this local network using a private link",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="TCP port used with --lan (default: 8765)",
+    )
+    parser.add_argument(
         "--install-shortcut",
         action="store_true",
         help="Install PETEY in the current Linux user's application menu",
@@ -371,6 +457,11 @@ def main():
         help="Open the compact PETEY window at the mouse cursor",
     )
     args = parser.parse_args()
+
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if args.lan and args.quick:
+        parser.error("--lan and --quick cannot be used together")
 
     if args.install_shortcut:
         try:
@@ -393,10 +484,21 @@ def main():
         # Wayland clients cannot place a popup at an exact global cursor position.
         os.environ["QT_QPA_PLATFORM"] = "xcb"
 
-    local = LocalServer()
+    access_token = secrets.token_urlsafe(24) if args.lan else None
+    local = LocalServer(
+        host="0.0.0.0" if args.lan else "127.0.0.1",
+        port=args.port if args.lan else 0,
+        access_token=access_token,
+    )
     local.start()
     print(f"[DESKTOP] Petey is running locally at {local.url}")
     try:
+        if args.lan:
+            print(f"[DESKTOP] Open this private link on your phone:\n{local.phone_url}")
+            print("[DESKTOP] Keep the link private. It grants access to this PETEY session.")
+            input("Press Enter to stop phone access.\n")
+            return
+
         if args.quick:
             from petey.quick_window import run_quick_window
 
