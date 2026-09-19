@@ -820,8 +820,10 @@ document.getElementById('mobile-settings-save').addEventListener('click', async 
             });
             speechConfiguration = profilePayload.speech;
             savedPersonas = profilePayload.saved_personas || savedPersonas;
+            applyWakeCueConfiguration(profilePayload.voice_cues);
         }
-        const speechUpdate = {};
+        const speechUpdate = speechConfiguration?.provider === 'disabled'
+            ? {} : {auto_speak: true};
         if (!mobileVoiceSelect.disabled && mobileVoiceSelect.value) {
             const provider = speechConfiguration?.provider || 'automatic';
             speechUpdate[provider === 'openai' ? 'openai_voice' : 'gemini_voice'] = mobileVoiceSelect.value;
@@ -832,7 +834,7 @@ document.getElementById('mobile-settings-save').addEventListener('click', async 
                 body: JSON.stringify(speechUpdate),
             });
             speechConfiguration = speechPayload.configuration;
-            await loadWakeCues();
+            applyWakeCueConfiguration(speechPayload.voice_cues);
         }
         const voicePayload = await apiJson('/api/desktop/voice-input', {
             method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1733,25 +1735,37 @@ function handleVoiceTranscript(transcript) {
     else setVoiceInputStatus('Transcript added to the message box; Petey is still replying.');
 }
 
+function applyWakeCueConfiguration(payload, showStatus = false) {
+    if (!payload) return;
+    const status = document.getElementById('voice-cues-status');
+    stopWakeAcknowledgement();
+    wakeCueAudios.forEach(audio => {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+    });
+    wakeCueConfiguration = payload;
+    wakeCueAudios = (payload.clips || []).map(clip => {
+        const audio = new Audio(clip.url);
+        audio.preload = 'auto';
+        audio.load();
+        return audio;
+    });
+    document.getElementById('voice-cues-directory').textContent = payload.directory;
+    if (showStatus) {
+        const source = payload.source_voice === payload.voice
+            ? payload.voice : `${payload.source_voice} fallback`;
+        status.textContent = wakeCueAudios.length
+            ? `${wakeCueAudios.length} acknowledgement clip${wakeCueAudios.length === 1 ? '' : 's'} loaded from ${source}.`
+            : 'Using the built-in spoken acknowledgements until audio files are added.';
+    }
+}
+
 async function loadWakeCues(showStatus = false) {
     const status = document.getElementById('voice-cues-status');
     try {
         const payload = await apiJson('/api/desktop/voice-cues');
-        wakeCueConfiguration = payload;
-        wakeCueAudios = (payload.clips || []).map(clip => {
-            const audio = new Audio(clip.url);
-            audio.preload = 'auto';
-            audio.load();
-            return audio;
-        });
-        document.getElementById('voice-cues-directory').textContent = payload.directory;
-        if (showStatus) {
-            const source = payload.source_voice === payload.voice
-                ? payload.voice : `${payload.source_voice} fallback`;
-            status.textContent = wakeCueAudios.length
-                ? `${wakeCueAudios.length} acknowledgement clip${wakeCueAudios.length === 1 ? '' : 's'} loaded from ${source}.`
-                : 'Using the built-in spoken acknowledgements until audio files are added.';
-        }
+        applyWakeCueConfiguration(payload, showStatus);
     } catch (error) {
         if (showStatus) status.textContent = error.message;
     }
@@ -2644,7 +2658,7 @@ async function activatePersonaSlot(slot, button) {
         speechSettingsLoaded = true;
         mediaCatalogLoaded = false;
         mediaModelsCache.delete('txt2audio');
-        await loadWakeCues(false);
+        applyWakeCueConfiguration(result.voice_cues);
         setFeedback(feedback, `Petey profile ${slot} is now active.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -2720,7 +2734,7 @@ document.getElementById('save-personality').addEventListener('click', async () =
         if (result.speech) fillSpeechForm(result.speech);
         mediaCatalogLoaded = false;
         mediaModelsCache.delete('txt2audio');
-        await loadWakeCues(false);
+        applyWakeCueConfiguration(result.voice_cues);
         setFeedback(feedback, 'Petey profile saved — instructions, style, and voice are active.', 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');

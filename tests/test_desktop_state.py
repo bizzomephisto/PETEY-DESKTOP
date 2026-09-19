@@ -190,6 +190,7 @@ class DesktopStateTests(unittest.TestCase):
     def test_five_persona_slots_can_be_saved_loaded_and_cleared(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
+            state.update_speech({"auto_speak": True})
             saved = state.save_persona_slot(
                 5,
                 {
@@ -200,6 +201,7 @@ class DesktopStateTests(unittest.TestCase):
                         "provider": "gemini", "gemini_voice": "Sulafat",
                         "gemini_model": "gemini-3.1-flash-tts-preview",
                         "style": "Calm and deliberate.",
+                        "auto_speak": False,
                     },
                 },
             )
@@ -216,6 +218,7 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(speech["provider"], "gemini")
             self.assertEqual(speech["gemini_voice"], "Sulafat")
             self.assertEqual(speech["style"], "Calm and deliberate.")
+            self.assertTrue(speech["auto_speak"])
             self.assertTrue(reloaded.clear_persona_slot(5))
             self.assertIsNone(reloaded.saved_personas[4])
             with self.assertRaisesRegex(ValueError, "empty"):

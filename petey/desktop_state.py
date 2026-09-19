@@ -998,7 +998,14 @@ class DesktopState:
         if not isinstance(saved, dict):
             raise ValueError("That Petey profile slot is empty.")
         persona = self._validated_persona(self.persona, saved)
+        # Whether replies play automatically belongs to the current chat/device
+        # session. Loading a character profile must not unexpectedly make a
+        # working voice fall silent because the slot was saved while auto-speak
+        # happened to be off.
+        auto_speak = bool(self.speech.get("auto_speak", False))
         speech = self._validated_speech(self.speech, saved.get("speech") or {})
+        if speech.get("provider") != "disabled":
+            speech["auto_speak"] = auto_speak
         with self._lock:
             self.settings["persona"] = persona
             self.settings["speech"] = speech

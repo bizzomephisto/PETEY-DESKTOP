@@ -509,6 +509,7 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["persona"]["name"], "Desktop Petey")
             self.assertEqual(saved.get_json()["speech"]["gemini_voice"], "Sulafat")
+            self.assertEqual(saved.get_json()["voice_cues"]["voice"], "Sulafat")
             self.assertTrue(state.speech["auto_speak"])
 
     def test_personality_slots_can_be_saved_and_cleared(self):
@@ -541,6 +542,7 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(activated.get_json()["persona"]["traits"], ["Imaginative"])
             self.assertEqual(activated.get_json()["persona"]["sliders"]["verbosity"], 81)
             self.assertEqual(activated.get_json()["speech"]["provider"], "gemini")
+            self.assertEqual(activated.get_json()["voice_cues"]["voice"], "Kore")
             self.assertEqual(activated.get_json()["speech"]["style"], "Expressive and warm.")
             self.assertTrue(cleared.get_json()["removed"])
             self.assertIsNone(cleared.get_json()["saved_personas"][1])
@@ -738,6 +740,7 @@ class DesktopAppTests(unittest.TestCase):
             clip.write_bytes(b"RIFF-canned-yeah")
             loaded = client.get("/api/desktop/voice-cues").get_json()
             self.assertEqual(loaded["source_voice"], "Kore")
+            self.assertIn("?v=", loaded["clips"][0]["url"])
             self.assertEqual(loaded["clips"][0]["name"], "yeah.wav")
             response = client.get(loaded["clips"][0]["url"])
             self.assertEqual(response.status_code, 200)

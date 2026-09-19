@@ -89,6 +89,26 @@ def create_desktop_app(
     app.config["PETEY_ASSET_REVISION"] = str(max(
         (Path(app.static_folder) / name).stat().st_mtime_ns for name in core_assets
     ))
+
+    def voice_cue_payload() -> dict:
+        library: VoiceCueLibrary = app.config["PETEY_VOICE_CUES"]
+        catalog = library.catalog(app.config["PETEY_STATE"].speech)
+        source_voice = catalog["source_voice"]
+        return {
+            **catalog,
+            "clips": [
+                {
+                    "name": path.name,
+                    "url": url_for(
+                        "desktop_voice_cue_file",
+                        voice=source_voice,
+                        filename=path.name,
+                        v=path.stat().st_mtime_ns,
+                    ),
+                }
+                for path in catalog["clips"]
+            ],
+        }
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
     app.config["PETEY_STATE"] = state or DesktopState()
     app.config["PETEY_RUNTIME"] = runtime or AsyncRuntime()
@@ -735,21 +755,7 @@ def create_desktop_app(
 
     @app.get("/api/desktop/voice-cues")
     def desktop_voice_cues():
-        library: VoiceCueLibrary = app.config["PETEY_VOICE_CUES"]
-        catalog = library.catalog(app.config["PETEY_STATE"].speech)
-        source_voice = catalog["source_voice"]
-        return jsonify({
-            **catalog,
-            "clips": [
-                {
-                    "name": path.name,
-                    "url": url_for(
-                        "desktop_voice_cue_file", voice=source_voice, filename=path.name,
-                    ),
-                }
-                for path in catalog["clips"]
-            ],
-        })
+        return jsonify(voice_cue_payload())
 
     @app.get("/api/desktop/voice-cues/file/<voice>/<filename>")
     def desktop_voice_cue_file(voice: str, filename: str):
@@ -908,6 +914,7 @@ def create_desktop_app(
         openai = current.ai_provider.get("openai", {})
         return jsonify({
             "configuration": current.speech,
+            "voice_cues": voice_cue_payload(),
             "gemini_has_api_key": bool(
                 gemini.get("api_key") or os.getenv("GEMINI_API_KEY")
             ),
@@ -1059,7 +1066,10 @@ def create_desktop_app(
             if not isinstance(changes, dict):
                 return jsonify({"error": "Personality settings must be an object."}), 400
             persona, speech = current.update_persona_with_speech(changes)
-            return jsonify({"status": "saved", "persona": persona, "speech": speech})
+            return jsonify({
+                "status": "saved", "persona": persona, "speech": speech,
+                "voice_cues": voice_cue_payload(),
+            })
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -1080,6 +1090,7 @@ def create_desktop_app(
                 return jsonify({
                     "status": "active", "slot": slot, "persona": persona,
                     "speech": speech, "saved_personas": current.saved_personas,
+                    "voice_cues": voice_cue_payload(),
                 })
             changes = request.get_json(silent=True) or {}
             if not isinstance(changes, dict):

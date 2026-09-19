@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.18.1 — 2026-09-19
+
+### Voice profile fixes
+
+- Kept automatic spoken replies as a device behavior when switching saved Petey
+  profiles, so a profile saved with auto-speak off cannot unexpectedly silence
+  another active voice.
+- Mobile voice settings now enable spoken replies when saving an enabled voice.
+- Applied each profile's wake acknowledgement catalog together with its voice,
+  stopping stale clips and cache-busting replaced files so the current voice
+  folder takes effect immediately.
+
 ## v0.18.0 — 2026-09-19
 
 ### Mobile and remote access
