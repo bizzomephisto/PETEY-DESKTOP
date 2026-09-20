@@ -77,6 +77,15 @@ The GitHub release includes only PETEY's built-in Discord integration. Third-par
 and locally developed add-ons are installed separately in PETEY's application-data
 folder and are not bundled with the source release.
 
+### Official external add-ons
+
+- [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT) — inspect exposed Home Assistant entities, teach PETEY household names, and control devices through review or trust mode.
+- [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE) — give the active persona an editable pixel home with autonomous, directed, and build modes.
+
+Each add-on repository provides a ready-to-install release archive. Install them
+through PETEY's **Add-ons** screen; they remain independently versioned and are not
+included in PETEY Desktop source archives.
+
 PETEY normally runs a loopback-only Flask server inside a pywebview desktop
 window. If a native backend is unavailable, the launcher can open the same
 interface in your browser. An explicit, private-link LAN mode can share the

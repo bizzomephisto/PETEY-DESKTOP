@@ -13,6 +13,11 @@ integration. Third-party add-ons remain separate folders installed by the user.
 `scripts/package_release.py` enforces this boundary by rejecting `examples/`, known
 legacy add-on roots, external `petey-addon.json` files, `.env`, and symlinks.
 
+Official external add-ons are released independently:
+
+- [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT)
+- [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE)
+
 Add-ons run inside PETEY's process with the same filesystem, network, settings, and
 user permissions as PETEY. Install only code you trust. PETEY discovers manifests
 without importing disabled add-ons. Enabling or disabling an add-on takes effect on

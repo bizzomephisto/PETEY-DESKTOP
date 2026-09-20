@@ -30,4 +30,12 @@ Discord is the only add-on built into the PETEY source release. Home Assistant,
 Blender, and every other external integration are installed separately and are not
 included in PETEY's GitHub archive.
 
+Official external add-ons:
+
+- [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT)
+- [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE)
+
+Download the add-on archive from its repository's latest release, extract its one
+add-on folder into PETEY's add-ons directory, enable it, and restart PETEY.
+
 Developers can read the repository's [add-on authoring contract](../addons.md).

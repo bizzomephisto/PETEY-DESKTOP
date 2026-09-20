@@ -15,6 +15,15 @@ source of truth.
 - Local development examples may exist in the ignored `examples/addons/` folder;
   they are reference workspaces rather than release contents.
 
+## Official external add-ons
+
+- [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT) connects PETEY to Home Assistant's official Assist MCP endpoint.
+- [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE) provides an original editable pixel home driven by PETEY's active persona.
+
+These projects use PETEY add-on API version `1` and publish their own installable
+archives. Their source, releases, issues, and version histories stay in their own
+repositories.
+
 ## Runtime locations
 
 External add-ons are installed as one folder each under:
@@ -74,4 +83,3 @@ When changing the host contract:
    approvals, secret redaction, and cleanup.
 5. Run focused tests, the full suite for runtime changes, and `git diff --check`.
 6. Build a release package and confirm no external add-on manifest entered it.
-
