@@ -90,9 +90,10 @@ def create_desktop_app(
         (Path(app.static_folder) / name).stat().st_mtime_ns for name in core_assets
     ))
 
-    def voice_cue_payload() -> dict:
+    def voice_cue_payload(speech: dict | None = None) -> dict:
         library: VoiceCueLibrary = app.config["PETEY_VOICE_CUES"]
-        catalog = library.catalog(app.config["PETEY_STATE"].speech)
+        current: DesktopState = app.config["PETEY_STATE"]
+        catalog = library.catalog(speech or current.conversation_speech)
         source_voice = catalog["source_voice"]
         return {
             **catalog,
@@ -210,9 +211,11 @@ def create_desktop_app(
                 "person_name": current.display_name,
                 "conversation_id": current.conversation_id,
                 "conversations": current.conversations,
+                "conversation_persona": current.conversation_persona,
+                "persona_options": current.conversation_persona_options,
                 "preferences": current.preferences,
                 "plan_preview": current.plan_preview,
-                "speech": current.speech,
+                "speech": current.conversation_speech,
                 "voice_input": current.voice_input,
                 "installation_id": current.installation_id,
                 "workspaces": current.workspaces,
@@ -578,7 +581,7 @@ def create_desktop_app(
             addon_manager=app.config["PETEY_ADDONS"],
         )
         service = AssistantService(
-            current.system_prompt,
+            current.conversation_system_prompt,
             current.ai_provider,
             app.config["PETEY_MEMORY"],
             tool_registry=tools,
@@ -770,18 +773,31 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         if request.method == "POST":
             payload = request.get_json(silent=True) or {}
-            conversation = current.create_conversation(payload.get("title", "New chat"))
+            try:
+                conversation = current.create_conversation(
+                    payload.get("title", "New chat"), payload.get("persona_slot")
+                )
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
             return jsonify(
                 {
                     "conversation": conversation,
                     "conversation_id": current.conversation_id,
                     "conversations": current.conversations,
+                    "conversation_persona": current.conversation_persona,
+                    "persona_options": current.conversation_persona_options,
+                    "speech": current.conversation_speech,
+                    "voice_cues": voice_cue_payload(current.conversation_speech),
                 }
             ), 201
         return jsonify(
             {
                 "conversation_id": current.conversation_id,
                 "conversations": current.conversations,
+                "conversation_persona": current.conversation_persona,
+                "persona_options": current.conversation_persona_options,
+                "speech": current.conversation_speech,
+                "voice_cues": voice_cue_payload(current.conversation_speech),
             }
         )
 
@@ -790,7 +806,14 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         try:
             conversation = current.select_conversation(conversation_id)
-            return jsonify({"conversation": conversation, "conversation_id": current.conversation_id})
+            return jsonify({
+                "conversation": conversation,
+                "conversation_id": current.conversation_id,
+                "conversation_persona": current.conversation_persona,
+                "persona_options": current.conversation_persona_options,
+                "speech": current.conversation_speech,
+                "voice_cues": voice_cue_payload(current.conversation_speech),
+            })
         except KeyError as exc:
             return jsonify({"error": str(exc).strip("'")}), 404
 
@@ -799,13 +822,34 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         payload = request.get_json(silent=True) or {}
         try:
-            conversation = current.rename_conversation(
-                conversation_id, payload.get("title", "")
-            )
+            if not isinstance(payload, dict) or not ({"title", "persona_slot"} & payload.keys()):
+                return jsonify({"error": "Provide a chat name or persona assignment."}), 400
+            conversation = None
+            if "title" in payload:
+                conversation = current.rename_conversation(
+                    conversation_id, payload.get("title", "")
+                )
+            if "persona_slot" in payload:
+                conversation = current.assign_conversation_persona(
+                    conversation_id, payload.get("persona_slot")
+                )
             return jsonify({
                 "conversation": conversation,
                 "conversation_id": current.conversation_id,
                 "conversations": current.conversations,
+                "conversation_persona": (
+                    current.conversation_persona
+                    if conversation_id == current.conversation_id else None
+                ),
+                "persona_options": current.conversation_persona_options,
+                "speech": (
+                    current.conversation_speech
+                    if conversation_id == current.conversation_id else None
+                ),
+                "voice_cues": (
+                    voice_cue_payload(current.conversation_speech)
+                    if conversation_id == current.conversation_id else None
+                ),
             })
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -828,6 +872,10 @@ def create_desktop_app(
                 "deleted_messages": removed_messages,
                 "conversation_id": active_id,
                 "conversations": current.conversations,
+                "conversation_persona": current.conversation_persona,
+                "persona_options": current.conversation_persona_options,
+                "speech": current.conversation_speech,
+                "voice_cues": voice_cue_payload(current.conversation_speech),
             }
         )
 
@@ -914,7 +962,7 @@ def create_desktop_app(
         openai = current.ai_provider.get("openai", {})
         return jsonify({
             "configuration": current.speech,
-            "voice_cues": voice_cue_payload(),
+            "voice_cues": voice_cue_payload(current.speech),
             "gemini_has_api_key": bool(
                 gemini.get("api_key") or os.getenv("GEMINI_API_KEY")
             ),
@@ -941,7 +989,7 @@ def create_desktop_app(
             return jsonify({"error": "There is no reply to speak."}), 400
         if len(text) > 32000:
             return jsonify({"error": "This reply is too long to speak."}), 400
-        speech = current.speech
+        speech = current.conversation_speech
         if speech.get("provider") == "disabled":
             return jsonify({"error": "Text to speech is disabled in Settings."}), 400
         provider = speech.get("provider")
@@ -984,7 +1032,7 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         payload = request.get_json(silent=True) or {}
         text = str(payload.get("text") or "").strip()
-        speech = current.speech
+        speech = current.conversation_speech
         model = str(speech.get("gemini_model") or "")
         if not text:
             return jsonify({"error": "There is no reply to speak."}), 400

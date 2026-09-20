@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Conversations
+
+- Added per-chat saved Petey profile assignments with a system-persona fallback.
+  The effective profile supplies both instructions and speech voice without
+  replacing the global persona.
+- Added the persona picker to the chat header and new-chat dialog so assignments
+  are visible and editable without opening Settings.
+- Added a jump-to-latest button that appears when a reader scrolls away from the
+  newest chat messages.
+
 ## v0.18.2 — 2026-09-19
 
 ### Wake-name conversation

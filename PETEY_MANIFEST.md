@@ -10,7 +10,7 @@ drifts.
 - Release: **v0.18.2**
 - Baseline commit: `6694347`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 257 tests
+- Test framework: `unittest`; current full suite contains 260 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 
@@ -29,6 +29,10 @@ separate web service.
 - A Petey profile owns instructions, traits, communication style, speech provider,
   voice, and delivery. Microphone mode and the device's auto-speak behavior remain
   device/session concerns when a saved profile is activated.
+- A saved chat may reference one saved Petey profile. Its prompt and speech voice
+  follow that profile without changing the system persona. Chats with no assignment
+  always inherit the current system persona, and clearing a saved profile returns
+  its assigned chats to that fallback.
 - Discord has its own room identity prompt. Desktop persona, memory, and tools do
   not bleed into Discord unless a specific external add-on is allowed there.
 - Consequential work is reviewable. Workspace model writes/commands and untrusted
@@ -112,6 +116,9 @@ authorized with **Allow in Discord**.
   view and section IDs so help links and saved hashes continue to work.
 - Core static assets use a startup mtime query revision. Restart the server and
   reload remote browsers after JavaScript/CSS changes.
+- The chat header keeps the conversation name and effective persona visible. New
+  chats choose a saved profile in the creation dialog, and long chats expose a
+  jump-to-latest control only while the reader is away from the bottom.
 - Phone layout applies at 760 px and below. Keep controls within safe areas and test
   at a real phone-sized viewport.
 - pywebview, ordinary browsers, mobile Chrome, and Cloudflare proxying have distinct

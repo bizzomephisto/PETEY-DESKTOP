@@ -281,6 +281,41 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(len(state.conversations), 1)
             self.assertTrue(state.conversation_id.startswith("chat-"))
 
+    def test_conversations_can_use_saved_personas_without_changing_system_persona(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            system_name = state.persona["name"]
+            state.update_speech({"auto_speak": True, "gemini_voice": "Kore"})
+            state.save_persona_slot(2, {
+                "name": "Workshop Petey",
+                "role_tag": "Builder",
+                "system_prompt": "You are Petey in the workshop.",
+                "speech": {"provider": "gemini", "gemini_voice": "Sulafat"},
+            })
+
+            created = state.create_conversation("Workshop", persona_slot=2)
+
+            self.assertEqual(created["persona_slot"], 2)
+            self.assertEqual(state.persona["name"], system_name)
+            self.assertEqual(state.conversation_persona["name"], "Workshop Petey")
+            self.assertIn("Petey in the workshop", state.conversation_system_prompt)
+            self.assertEqual(state.conversation_speech["gemini_voice"], "Sulafat")
+            self.assertTrue(state.conversation_speech["auto_speak"])
+            self.assertEqual(
+                [item["slot"] for item in state.conversation_persona_options],
+                [None, 2],
+            )
+
+            state.assign_conversation_persona(created["id"], None)
+            self.assertEqual(state.conversation_persona["name"], system_name)
+            self.assertEqual(state.conversation_speech["gemini_voice"], "Kore")
+            with self.assertRaisesRegex(ValueError, "empty"):
+                state.assign_conversation_persona(created["id"], 3)
+
+            state.assign_conversation_persona(created["id"], 2)
+            state.clear_persona_slot(2)
+            self.assertIsNone(state.conversation["persona_slot"])
+
     def test_ai_provider_settings_preserve_keys_and_validate_local_url(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)

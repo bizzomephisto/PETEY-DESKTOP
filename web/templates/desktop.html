@@ -39,7 +39,16 @@
 
         <section id="view-chat" class="chat-panel app-view active-view">
             <header class="chat-header">
-                <div><h1>PETEY</h1><p id="status">Starting up…</p></div>
+                <div class="chat-heading">
+                    <div class="chat-title-line">
+                        <h1>PETEY</h1>
+                        <label class="chat-persona-picker" title="Persona assigned to this chat">
+                            <span class="sr-only">Chat persona</span>
+                            <select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select>
+                        </label>
+                    </div>
+                    <p><span id="chat-name">New chat</span><span id="status" class="chat-runtime-status">Starting up…</span></p>
+                </div>
                 <div class="mobile-chat-actions" aria-label="Mobile chat controls">
                     <button id="mobile-visual-mode" type="button" title="Open visual mode">Visual</button>
                     <button id="mobile-settings-toggle" type="button" title="Mobile settings" aria-expanded="false">⚙</button>
@@ -59,6 +68,16 @@
                     <h2>Petey is ready.</h2>
                     <p>Start a conversation or attach an image for him to inspect.</p>
                 </div>
+            </div>
+            <button id="jump-to-latest" class="jump-to-latest" type="button" hidden>↓ Jump to latest</button>
+
+            <div id="new-chat-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="new-chat-dialog-title" hidden>
+                <form id="new-chat-form" class="new-chat-card">
+                    <div class="new-chat-heading"><div><span class="page-eyebrow">NEW CONVERSATION</span><h2 id="new-chat-dialog-title">Start a new chat</h2></div><button id="new-chat-cancel-x" class="new-chat-close" type="button" aria-label="Close">×</button></div>
+                    <label><span>Chat name</span><input id="new-chat-title" type="text" maxlength="80" value="New chat" autocomplete="off"></label>
+                    <label><span>Petey profile</span><select id="new-chat-persona"><option value="system">System persona</option></select><small>System persona follows the active personality from Settings.</small></label>
+                    <div class="new-chat-actions"><button id="new-chat-cancel" class="secondary-button" type="button">Cancel</button><button class="primary-button" type="submit">Create chat</button></div>
+                </form>
             </div>
 
             <div id="visual-chat" class="visual-chat" hidden>

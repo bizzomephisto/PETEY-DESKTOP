@@ -112,6 +112,15 @@ class DesktopState:
         if not isinstance(settings.get("conversations"), list) or not settings["conversations"]:
             settings["conversations"] = [self._new_conversation(legacy_id, "Main chat")]
             changed = True
+        for conversation in settings["conversations"]:
+            if not isinstance(conversation, dict):
+                continue
+            persona_slot = self._normalized_conversation_persona_slot(
+                conversation.get("persona_slot")
+            )
+            if conversation.get("persona_slot") != persona_slot or "persona_slot" not in conversation:
+                conversation["persona_slot"] = persona_slot
+                changed = True
         if not settings.get("active_conversation_id"):
             settings["active_conversation_id"] = legacy_id
             changed = True
@@ -347,12 +356,25 @@ class DesktopState:
         return settings
 
     @staticmethod
-    def _new_conversation(conversation_id: str, title: str) -> dict:
+    def _new_conversation(
+        conversation_id: str, title: str, persona_slot: int | None = None
+    ) -> dict:
         return {
             "id": conversation_id,
             "title": title,
+            "persona_slot": persona_slot,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _normalized_conversation_persona_slot(value: object) -> int | None:
+        if value is None or value == "" or value == "system" or type(value) is bool:
+            return None
+        try:
+            slot = int(value)
+        except (TypeError, ValueError):
+            return None
+        return slot if 1 <= slot <= PERSONA_SLOT_COUNT else None
 
     @property
     def installation_id(self) -> str:
@@ -387,6 +409,60 @@ class DesktopState:
         return copy.deepcopy(self.settings.get("conversations", []))
 
     @property
+    def conversation(self) -> dict:
+        match = next(
+            (item for item in self.settings.get("conversations", [])
+             if item.get("id") == self.conversation_id),
+            None,
+        )
+        return copy.deepcopy(match or self._new_conversation(self.conversation_id, "New chat"))
+
+    @property
+    def conversation_persona(self) -> dict:
+        slot = self._normalized_conversation_persona_slot(
+            self.conversation.get("persona_slot")
+        )
+        if slot is not None:
+            saved = self.saved_personas[slot - 1]
+            if isinstance(saved, dict):
+                return copy.deepcopy(saved)
+        return self.persona
+
+    @property
+    def conversation_persona_options(self) -> list[dict]:
+        options = [{
+            "slot": None,
+            "name": str(self.persona.get("name") or "Petey")[:80],
+            "role_tag": str(self.persona.get("role_tag") or "System persona")[:80],
+            "system": True,
+        }]
+        for index, saved in enumerate(self.saved_personas, 1):
+            if not isinstance(saved, dict):
+                continue
+            options.append({
+                "slot": index,
+                "name": str(saved.get("name") or f"Profile {index}")[:80],
+                "role_tag": str(saved.get("role_tag") or "Saved profile")[:80],
+                "system": False,
+            })
+        return options
+
+    @property
+    def conversation_speech(self) -> dict:
+        slot = self._normalized_conversation_persona_slot(
+            self.conversation.get("persona_slot")
+        )
+        if slot is None:
+            return self.speech
+        saved = self.saved_personas[slot - 1]
+        if not isinstance(saved, dict) or not isinstance(saved.get("speech"), dict):
+            return self.speech
+        speech = self._validated_speech(self.speech, saved["speech"])
+        if speech.get("provider") != "disabled":
+            speech["auto_speak"] = bool(self.speech.get("auto_speak", False))
+        return speech
+
+    @property
     def preferences(self) -> dict:
         return copy.deepcopy(self.settings.get("preferences", {}))
 
@@ -401,9 +477,14 @@ class DesktopState:
             self._write_json(self.settings_path, self.settings)
         return self.plan_preview
 
-    def create_conversation(self, title: str = "New chat") -> dict:
+    def create_conversation(
+        self, title: str = "New chat", persona_slot: object = None
+    ) -> dict:
         title = str(title or "New chat").strip()[:80] or "New chat"
-        conversation = self._new_conversation(f"chat-{uuid.uuid4().hex}", title)
+        slot = self._validated_conversation_persona_slot(persona_slot)
+        conversation = self._new_conversation(
+            f"chat-{uuid.uuid4().hex}", title, slot
+        )
         with self._lock:
             self.settings["conversations"] = [conversation, *self.settings["conversations"]]
             self.settings["active_conversation_id"] = conversation["id"]
@@ -419,6 +500,30 @@ class DesktopState:
             if match is None:
                 raise KeyError("Conversation not found.")
             self.settings["active_conversation_id"] = conversation_id
+            self._write_json(self.settings_path, self.settings)
+        return copy.deepcopy(match)
+
+    def _validated_conversation_persona_slot(self, value: object) -> int | None:
+        slot = self._normalized_conversation_persona_slot(value)
+        if value is not None and value != "" and value != "system" and slot is None:
+            raise ValueError("Choose a saved Petey profile or the system persona.")
+        if slot is not None and not isinstance(self.saved_personas[slot - 1], dict):
+            raise ValueError("That saved Petey profile is empty.")
+        return slot
+
+    def assign_conversation_persona(
+        self, conversation_id: str, persona_slot: object
+    ) -> dict:
+        slot = self._validated_conversation_persona_slot(persona_slot)
+        with self._lock:
+            match = next(
+                (item for item in self.settings["conversations"]
+                 if item["id"] == conversation_id),
+                None,
+            )
+            if match is None:
+                raise KeyError("Conversation not found.")
+            match["persona_slot"] = slot
             self._write_json(self.settings_path, self.settings)
         return copy.deepcopy(match)
 
@@ -905,6 +1010,10 @@ class DesktopState:
         return _build_enriched_prompt(persona)
 
     @property
+    def conversation_system_prompt(self) -> str:
+        return _build_enriched_prompt(self.conversation_persona)
+
+    @property
     def persona(self) -> dict:
         return copy.deepcopy(self.settings.get("persona") or make_default_persona(1))
 
@@ -1019,6 +1128,10 @@ class DesktopState:
             existed = slots[index] is not None
             slots[index] = None
             self.settings["saved_personas"] = slots
+            if existed:
+                for conversation in self.settings.get("conversations", []):
+                    if conversation.get("persona_slot") == index + 1:
+                        conversation["persona_slot"] = None
             self._write_json(self.settings_path, self.settings)
         return existed
 

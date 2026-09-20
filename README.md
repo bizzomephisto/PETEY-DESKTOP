@@ -67,6 +67,7 @@ speed, and hardware setup.
 - Gemini image inspection using the selected Gemini chat model
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
+- Per-chat saved Petey profiles with visible header assignment, system-persona fallback, and jump-to-latest navigation
 - Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
 - Read-only Filesystem MCP tools scoped to folders approved in Workspace
 - [Discord bot bridge](docs/discord.md) with online Gateway presence, deAPI media slash commands, startup auto-connect, AI-enhanced room prompts, adaptive participation, watched topics, and approved channel-management proposals

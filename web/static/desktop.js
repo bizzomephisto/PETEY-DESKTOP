@@ -5,6 +5,12 @@ const attachmentInput = document.getElementById('attachment');
 const attachmentChip = document.getElementById('attachment-chip');
 const sendButton = document.getElementById('send');
 const statusText = document.getElementById('status');
+const chatNameText = document.getElementById('chat-name');
+const chatPersonaSelect = document.getElementById('chat-persona');
+const jumpToLatestButton = document.getElementById('jump-to-latest');
+const newChatDialog = document.getElementById('new-chat-dialog');
+const newChatTitle = document.getElementById('new-chat-title');
+const newChatPersona = document.getElementById('new-chat-persona');
 const mobileLayoutQuery = window.matchMedia('(max-width: 760px)');
 let personName = 'User';
 let personaPresets = {};
@@ -67,6 +73,7 @@ let lastMediaJobsSignature = '';
 const displayedMediaJobs = new Set();
 let conversations = [];
 let activeConversationId = '';
+let conversationPersonaOptions = [];
 let temporaryHistory = [];
 let preferences = {always_on_top: false, sidebar_collapsed: false, ui_scale: 1, visual_mode: false, visual_style: 'neural_core'};
 let workspaces = [];
@@ -92,11 +99,31 @@ function ensureNeuralVisualizationRunning() {
 
 function showEmptyState(title = 'Petey is ready.', copy = 'Start a conversation or attach an image for him to inspect.') {
     messages.innerHTML = `<div class="empty-state" id="empty-state"><img src="/static/petey_avatar.png" alt=""><h2>${title}</h2><p>${copy}</p></div>`;
+    updateJumpToLatest();
 }
 
 function removeEmptyState() {
     document.getElementById('empty-state')?.remove();
 }
+
+function distanceFromLatest() {
+    return Math.max(0, messages.scrollHeight - messages.scrollTop - messages.clientHeight);
+}
+
+function updateJumpToLatest() {
+    jumpToLatestButton.hidden = messages.childElementCount === 0 || distanceFromLatest() < 140;
+}
+
+function scrollToLatest(smooth = true) {
+    messages.scrollTo({
+        top: messages.scrollHeight,
+        behavior: smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto',
+    });
+    if (!smooth) updateJumpToLatest();
+}
+
+jumpToLatestButton.addEventListener('click', () => scrollToLatest(true));
+messages.addEventListener('scroll', updateJumpToLatest, {passive: true});
 
 async function copyChatText(text, button) {
     try {
@@ -130,6 +157,7 @@ async function copyChatText(text, button) {
 }
 
 function addMessage(role, text, options = {}) {
+    const followLatest = options.forceScroll === true || distanceFromLatest() < 100;
     removeEmptyState();
     const item = document.createElement('article');
     item.className = `message ${role}${options.typing ? ' typing' : ''}`;
@@ -198,9 +226,53 @@ function addMessage(role, text, options = {}) {
     }
     item.append(avatar, content);
     messages.append(item);
-    messages.scrollTop = messages.scrollHeight;
+    if (followLatest) messages.scrollTop = messages.scrollHeight;
+    updateJumpToLatest();
     if (role === 'assistant' && !options.typing && text) setLastPeteyCaption(text);
     return item;
+}
+
+function activeConversation() {
+    return conversations.find(item => item.id === activeConversationId) || null;
+}
+
+function personaChoiceLabel(option) {
+    if (option.system) return `System · ${option.name || 'Petey'}`;
+    return `${option.slot}. ${option.name || `Profile ${option.slot}`}`;
+}
+
+function fillConversationPersonaSelect(select, selectedSlot = null) {
+    select.replaceChildren();
+    conversationPersonaOptions.forEach(option => {
+        const item = document.createElement('option');
+        item.value = option.slot === null ? 'system' : String(option.slot);
+        item.textContent = personaChoiceLabel(option);
+        item.title = option.role_tag || item.textContent;
+        select.append(item);
+    });
+    if (!select.options.length) select.add(new Option('System · Petey', 'system'));
+    const value = selectedSlot === null || selectedSlot === undefined ? 'system' : String(selectedSlot);
+    select.value = [...select.options].some(option => option.value === value) ? value : 'system';
+}
+
+function updateChatHeader() {
+    const conversation = activeConversation();
+    chatNameText.textContent = conversation?.title || 'New chat';
+    statusText.textContent = '';
+    fillConversationPersonaSelect(chatPersonaSelect, conversation?.persona_slot);
+    chatPersonaSelect.disabled = !conversation;
+}
+
+function applyConversationContext(payload) {
+    if (Array.isArray(payload.persona_options)) conversationPersonaOptions = payload.persona_options;
+    if (payload.speech) speechConfiguration = payload.speech;
+    if (payload.voice_cues) applyWakeCueConfiguration(payload.voice_cues);
+    updateChatHeader();
+}
+
+async function refreshConversationPersonaOptions() {
+    const payload = await apiJson('/api/desktop/conversations');
+    applyConversationContext(payload);
 }
 
 async function loadDesktop() {
@@ -210,6 +282,7 @@ async function loadDesktop() {
         document.getElementById('user-display-name').value = personName;
         activeConversationId = bootstrap.conversation_id;
         conversations = bootstrap.conversations || [];
+        conversationPersonaOptions = bootstrap.persona_options || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
         speechConfiguration = bootstrap.speech || {provider: 'automatic', auto_speak: false};
         voiceInputConfiguration = {...voiceInputConfiguration, ...(bootstrap.voice_input || {})};
@@ -217,6 +290,7 @@ async function loadDesktop() {
         activeWorkspaceId = bootstrap.active_workspace_id || '';
         applyPreferences();
         renderConversations();
+        updateChatHeader();
         await loadConversationMessages();
         if (mobileLayoutQuery.matches) {
             const emptyCopy = document.querySelector('#empty-state p');
@@ -237,8 +311,8 @@ async function loadConversationMessages() {
     const history = await apiJson('/api/desktop/messages');
     history.forEach(item => addMessage(item.role, item.message));
     if (!history.length) showEmptyState();
-    const active = conversations.find(item => item.id === activeConversationId);
-    statusText.textContent = active ? active.title : `Ready for ${personName}`;
+    scrollToLatest(false);
+    updateChatHeader();
 }
 
 function renderConversations() {
@@ -291,7 +365,7 @@ async function renameConversation(conversation) {
         });
         conversations = payload.conversations;
         renderConversations();
-        if (conversation.id === activeConversationId) statusText.textContent = payload.conversation.title;
+        if (conversation.id === activeConversationId) updateChatHeader();
     } catch (error) {
         window.alert(error.message);
     }
@@ -299,8 +373,9 @@ async function renameConversation(conversation) {
 
 async function selectConversation(conversationId) {
     if (conversationId === activeConversationId && !document.getElementById('temporary-mode').checked) return;
-    await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversationId)}/select`, {method: 'PUT'});
+    const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversationId)}/select`, {method: 'PUT'});
     activeConversationId = conversationId;
+    applyConversationContext(payload);
     leaveTemporaryMode();
     renderConversations();
     showView('chat');
@@ -313,6 +388,7 @@ async function deleteConversation(conversation) {
         const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversation.id)}`, {method: 'DELETE'});
         conversations = payload.conversations;
         activeConversationId = payload.conversation_id;
+        applyConversationContext(payload);
         leaveTemporaryMode();
         renderConversations();
         await loadConversationMessages();
@@ -321,21 +397,76 @@ async function deleteConversation(conversation) {
     }
 }
 
-document.getElementById('new-chat').addEventListener('click', async () => {
+function closeNewChatDialog() {
+    newChatDialog.hidden = true;
+}
+
+async function openNewChatDialog() {
+    try {
+        const payload = await apiJson('/api/desktop/conversations');
+        if (Array.isArray(payload.persona_options)) conversationPersonaOptions = payload.persona_options;
+        fillConversationPersonaSelect(newChatPersona, null);
+        newChatTitle.value = 'New chat';
+        newChatDialog.hidden = false;
+        newChatTitle.focus();
+        newChatTitle.select();
+    } catch (error) {
+        window.alert(error.message);
+    }
+}
+
+document.getElementById('new-chat').addEventListener('click', openNewChatDialog);
+document.getElementById('new-chat-cancel').addEventListener('click', closeNewChatDialog);
+document.getElementById('new-chat-cancel-x').addEventListener('click', closeNewChatDialog);
+newChatDialog.addEventListener('click', event => {
+    if (event.target === newChatDialog) closeNewChatDialog();
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !newChatDialog.hidden) closeNewChatDialog();
+});
+
+document.getElementById('new-chat-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const title = newChatTitle.value.trim() || 'New chat';
+    const personaSlot = newChatPersona.value === 'system' ? null : Number(newChatPersona.value);
     try {
         const payload = await apiJson('/api/desktop/conversations', {
-            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: 'New chat'}),
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title, persona_slot: personaSlot}),
         });
         conversations = payload.conversations;
         activeConversationId = payload.conversation_id;
+        applyConversationContext(payload);
         leaveTemporaryMode();
         renderConversations();
         showView('chat');
-        showEmptyState('New chat', 'This conversation will be saved to Petey’s local memory.');
-        statusText.textContent = payload.conversation.title;
+        showEmptyState(payload.conversation.title, 'This conversation will be saved to Petey’s local memory.');
+        updateChatHeader();
+        closeNewChatDialog();
         messageInput.focus();
     } catch (error) {
         window.alert(error.message);
+    }
+});
+
+chatPersonaSelect.addEventListener('change', async () => {
+    const conversation = activeConversation();
+    if (!conversation) return;
+    const previous = conversation.persona_slot ?? null;
+    const personaSlot = chatPersonaSelect.value === 'system' ? null : Number(chatPersonaSelect.value);
+    chatPersonaSelect.disabled = true;
+    try {
+        const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversation.id)}`, {
+            method: 'PATCH', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({persona_slot: personaSlot}),
+        });
+        conversations = payload.conversations;
+        applyConversationContext(payload);
+        renderConversations();
+    } catch (error) {
+        fillConversationPersonaSelect(chatPersonaSelect, previous);
+        window.alert(error.message);
+    } finally {
+        chatPersonaSelect.disabled = false;
     }
 });
 
@@ -427,8 +558,8 @@ composer.addEventListener('submit', async event => {
     const historyText = text || (file ? `[Attached ${file.name}]` : '');
     const temporary = document.getElementById('temporary-mode').checked;
     const priorTemporaryHistory = temporaryHistory.slice();
-    addMessage('user', displayedText, {attachmentPreviewUrl, attachmentName: file?.name || ''});
-    const typing = addMessage('assistant', 'Typing…', {typing: true});
+    addMessage('user', displayedText, {attachmentPreviewUrl, attachmentName: file?.name || '', forceScroll: true});
+    const typing = addMessage('assistant', 'Typing…', {typing: true, forceScroll: true});
     const body = new FormData();
     body.append('message', text);
     body.append('stream', 'true');
@@ -471,6 +602,7 @@ composer.addEventListener('submit', async event => {
                 }
             }
             if (follow) messages.scrollTop = messages.scrollHeight;
+            updateJumpToLatest();
         });
         typing.remove();
         addMessage('assistant', payload.text || '', {
@@ -484,7 +616,8 @@ composer.addEventListener('submit', async event => {
             }
         }
         if (temporary) temporaryHistory.push({role: 'assistant', content: payload.text || ''});
-        statusText.textContent = temporary ? 'Temporary · nothing saved' : `Ready for ${personName}`;
+        if (temporary) statusText.textContent = 'Temporary · nothing saved';
+        else updateChatHeader();
     } catch (error) {
         if (partialText) {
             typing.classList.remove('typing');
@@ -2677,6 +2810,7 @@ async function savePersonaSlot(slot, replacing) {
         });
         savedPersonas = result.saved_personas || [];
         renderSavedPersonaSlots();
+        await refreshConversationPersonaOptions();
         setFeedback(feedback, `Saved the complete Petey profile to slot ${slot}.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -2694,6 +2828,7 @@ async function activatePersonaSlot(slot, button) {
         mediaCatalogLoaded = false;
         mediaModelsCache.delete('txt2audio');
         applyWakeCueConfiguration(result.voice_cues);
+        await refreshConversationPersonaOptions();
         setFeedback(feedback, `Petey profile ${slot} is now active.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -2709,6 +2844,7 @@ async function clearPersonaSlot(slot) {
         const result = await apiJson(`/api/desktop/personality/slots/${slot}`, {method: 'DELETE'});
         savedPersonas = result.saved_personas || [];
         renderSavedPersonaSlots();
+        await refreshConversationPersonaOptions();
         setFeedback(feedback, `Cleared persona slot ${slot}.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -2770,6 +2906,7 @@ document.getElementById('save-personality').addEventListener('click', async () =
         mediaCatalogLoaded = false;
         mediaModelsCache.delete('txt2audio');
         applyWakeCueConfiguration(result.voice_cues);
+        await refreshConversationPersonaOptions();
         setFeedback(feedback, 'Petey profile saved — instructions, style, and voice are active.', 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');

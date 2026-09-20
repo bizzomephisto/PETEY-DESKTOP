@@ -403,6 +403,27 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(response.get_json()["text"], "Desktop reply")
             self.assertNotIn("gif_url", response.get_json())
 
+    def test_chat_route_uses_the_conversations_assigned_persona(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.save_persona_slot(1, {
+                "name": "Story Petey",
+                "system_prompt": "You narrate from the old lighthouse.",
+            })
+            state.create_conversation("Lighthouse", 1)
+            with patch("web.desktop_app.AssistantService") as service_type:
+                service_type.return_value.respond = AsyncMock(
+                    return_value=AssistantReply("The lamp turns slowly.")
+                )
+                app = create_desktop_app(state=state, runtime=AsyncRuntime())
+                response = app.test_client().post(
+                    "/api/desktop/chat", data={"message": "Continue"}
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("old lighthouse", service_type.call_args.args[0])
+            self.assertNotEqual(service_type.call_args.args[0], state.system_prompt)
+
     def test_conversation_management_and_preferences(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -429,6 +450,42 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(saved.get_json()["preferences"]["ui_scale"], 1.3)
             self.assertEqual(renamed.get_json()["conversation"]["title"], "Named ideas")
             self.assertNotEqual(deleted.get_json()["conversation_id"], conversation_id)
+
+    def test_conversation_persona_can_be_chosen_when_created_and_changed_in_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.save_persona_slot(1, {
+                "name": "Story Petey",
+                "role_tag": "Narrator",
+                "system_prompt": "You narrate this story.",
+                "speech": {"provider": "gemini", "gemini_voice": "Sulafat"},
+            })
+            app = create_desktop_app(state=state, runtime=object(), memory=MagicMock())
+            client = app.test_client()
+
+            shell = client.get("/").get_data(as_text=True)
+            created = client.post(
+                "/api/desktop/conversations",
+                json={"title": "Campaign", "persona_slot": 1},
+            )
+            conversation_id = created.get_json()["conversation_id"]
+            unassigned = client.patch(
+                f"/api/desktop/conversations/{conversation_id}",
+                json={"persona_slot": None},
+            )
+
+            self.assertIn('id="chat-persona"', shell)
+            self.assertIn('id="jump-to-latest"', shell)
+            self.assertIn('id="new-chat-dialog"', shell)
+            self.assertEqual(created.status_code, 201)
+            self.assertEqual(created.get_json()["conversation"]["persona_slot"], 1)
+            self.assertEqual(created.get_json()["conversation_persona"]["name"], "Story Petey")
+            self.assertEqual(created.get_json()["speech"]["gemini_voice"], "Sulafat")
+            self.assertIsNone(unassigned.get_json()["conversation"]["persona_slot"])
+            self.assertEqual(
+                unassigned.get_json()["conversation_persona"]["name"],
+                state.persona["name"],
+            )
 
     def test_ai_provider_configuration_never_returns_saved_key(self):
         with tempfile.TemporaryDirectory() as directory:
