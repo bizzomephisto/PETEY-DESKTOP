@@ -1,11 +1,17 @@
 # PETEY Desktop add-ons
 
+For the repository-level map and release boundary, see [`../ADDONS.md`](../ADDONS.md).
+For cross-system product and runtime invariants, see
+[`../PETEY_MANIFEST.md`](../PETEY_MANIFEST.md).
+
 PETEY Desktop add-ons are local Python modules that can add API routes, background
 services, and optional sidebar screens. The built-in Discord integration appears in
 the same **Add-ons** manager, so people can choose whether PETEY loads it.
 
 PETEY's GitHub releases bundle no external add-ons. Discord is the only built-in
 integration. Third-party add-ons remain separate folders installed by the user.
+`scripts/package_release.py` enforces this boundary by rejecting `examples/`, known
+legacy add-on roots, external `petey-addon.json` files, `.env`, and symlinks.
 
 Add-ons run inside PETEY's process with the same filesystem, network, settings, and
 user permissions as PETEY. Install only code you trust. PETEY discovers manifests
@@ -18,6 +24,11 @@ the add-on is loaded. They are blocked from Discord by default. The user must en
 immediately, includes only that add-on's namespaced `ToolSpec` objects, and is cleared
 when the add-on is disabled. The add-on remains responsible for its own approval or
 trust policy for consequential commands.
+
+The public add-on status includes desired `enabled` state, actual `loaded` state,
+`restart_required`, a bounded load error, whether model tools are present, and the
+per-add-on Discord permission. Never add secrets or private configuration values to
+that projection.
 
 ## Install an add-on
 
@@ -239,4 +250,18 @@ should implement a review/approval UI before dispatch.
 `MCPStdioClient` supports stdio servers, connection-specific environment variables,
 working directories, roots, timeouts, and lifecycle cleanup. A remote Streamable HTTP
 MCP can implement the same `tool_specs()` contract with its own authenticated client;
-the current shared client does not yet implement remote transports or OAuth.
+the current shared client does not yet implement remote transports or OAuth. Such an
+add-on owns strict origin validation, TLS policy, redirect refusal or validation,
+protected token storage, refresh/logout behavior, bounded timeouts and responses,
+and clear disclosure of data sent to the remote service.
+
+## Release boundary
+
+External add-ons must be distributed and versioned separately from PETEY core. Do
+not place an enabled user's add-on folder, token, generated configuration, or
+`addon-data/` contents in this repository. Local ignored examples are useful during
+development, but a release ZIP must contain Discord only. Run the packaging script
+as part of release validation; do not bypass its external-manifest check.
+
+Add-ons do not choose PETEY's bind address or authentication. Normal startup and
+Cloudflare origins are loopback; explicit LAN modes remain owned by the launcher.

@@ -1,7 +1,8 @@
 # PETEY coding-agent context
 
-Scope: repository. Snapshot: 2026-09-19, v0.18.0, source baseline `ffdb94d`.
+Scope: repository. Snapshot: 2026-09-19, v0.18.2, source baseline `6694347`.
 Start here; read only task-relevant implementation/tests. This is a navigation cache, not a substitute for checking code before edits. Source wins on factual drift; update this file when architecture, commands, contracts, or extension points change. Keep it compact; no session logs or copied source.
+Read `PETEY_MANIFEST.md` for durable product/runtime/release invariants and `ADDONS.md` plus `docs/addons.md` before changing the extension system.
 
 ## Fast start
 
@@ -23,7 +24,7 @@ Discord add-on tools are opt-in per external add-on. Persistent permissions live
 
 UI `web/templates/desktop.html` + `web/static/desktop.js` + `desktop.css` -> `/api/desktop/*` in `web/desktop_app.py` (composition root, validation, errors, service injection).
 
-Add-ons: `AddonManager` in `addons.py` discovers `petey-addon.json` folders under the local data root's `addons/` directory without importing disabled code. Persistent enablement is `DesktopState.settings.addons`; changes require restart. Enabled external entrypoints run `setup(AddonContext)` after core routes/database setup and may add namespaced API routes, optional sidebar panel/assets, services, and a returned `close()` hook. Assets resolve inside the add-on folder; writable state belongs in `addon-data/<id>`. Discord is the only built-in add-on and defaults on. GitHub releases do not bundle third-party/example add-ons; local add-on development folders are ignored. UI/API: `view-addons`, `/api/desktop/addons*`; author contract: `docs/addons.md`. Add-ons are trusted local code with process-level access.
+Add-ons: `AddonManager` in `addons.py` discovers `petey-addon.json` folders under the local data root's `addons/` directory without importing disabled code. Persistent enablement is `DesktopState.settings.addons`; changes require restart. Enabled external entrypoints run `setup(AddonContext)` after core routes/database setup and may add namespaced API routes, optional sidebar panel/assets, services, model tools, and a returned `close()` hook. Assets resolve inside the add-on folder; writable state belongs in `addon-data/<id>`. Discord is the only built-in add-on and defaults on. GitHub releases do not bundle third-party/example add-ons; `scripts/package_release.py` rejects `examples/`, known legacy add-on roots, every external `petey-addon.json`, `.env`, and symlinks. UI/API: `view-addons`, `/api/desktop/addons*`; overview: `ADDONS.md`; author contract: `docs/addons.md`. Add-ons are trusted local code with process-level access.
 
 Chat model picker: `AIProvider.list_models` supports Gemini's paginated model catalog (filtered for chat), OpenAI, and local servers. Providers settings exposes one dropdown per model; `loadModelCatalogs` automatically refreshes on settings entry, provider/key changes, and local server URL changes, preserving selections and rejecting stale replies. Catalog presence does not guarantee account access; Test connection checks generation.
 
@@ -65,7 +66,7 @@ Paths below are repo-relative; backend modules live under `petey/` unless otherw
 | Folder IDE/edit/command approval | `workspace.py`: `resolve`, `preview_write`, `propose_write`, `propose_command`, `approve`, `agent_proposals`; API `/workspaces*`, `/workspace/*` |
 | Image picker/thumbnails | `image_browser.py`: token-scoped `open`, `resolve`, `thumbnail`; API `/image-browser/*` |
 | Window/launcher/packaging artwork | `run_desktop.py`: `DesktopBridge`, `quick_window_position`, `LocalServer`, `main`; `petey/quick_window.py`; `assets/icons/`; `tests/test_desktop_launcher.py` |
-| Add-on discovery/lifecycle/UI contract | `addons.py`: `AddonManager`, `AddonContext`; `desktop_state.py`: `addon_enabled`; API `/addons*`; template `view-addons`; `docs/addons.md`; `tests/test_addons.py` |
+| Add-on discovery/lifecycle/UI contract | `addons.py`: `AddonManager`, `AddonContext`; `desktop_state.py`: `addon_enabled`, `addon_discord_tools_enabled`; API `/addons*`; template `view-addons`; `ADDONS.md`, `docs/addons.md`; `tests/test_addons.py` |
 | API wiring/contracts | `web/desktop_app.py:create_desktop_app`; injectable state/runtime/gallery/jobs/memory/workspace service; `tests/test_desktop_app.py` |
 | Version/project URLs | `version.py`; README release text; template receives version/URLs from Flask |
 
@@ -84,6 +85,7 @@ Help: sidebar `view-help` includes `web/templates/desktop_help.html`; setup link
 - Workspace paths resolve within approved roots (including symlink checks); AI writes/commands are proposals until approved. Preserve stale-content hashes, proposal expiry, 60s command timeout. Manual editor save is a separate path. Shell commands run with OS-user privileges, not an OS sandbox. These are product behavior requirements, not extra approval rules for coding agents editing this repo.
 - Filesystem MCP receives only approved Workspace roots. Keep the model-facing allowlist read-only and bounded; never pass through server write, move, delete, or arbitrary command tools. Enabling the connector must be an explicit user action.
 - Disabled user add-ons must not be imported. Add-on enable/disable remains restart-gated; external paths and served assets stay inside the discovered folder. Register core routes before external `setup()`, keep add-on endpoints under `/api/addons/<id>/`, and close add-ons before shared runtimes/workers.
+- Wake-name mode acknowledges only a standalone wake name followed by a short pause. Continued speech cancels the pending cue, so commands beginning with “Petey” are not interrupted. Preserve the local-detector fast path, transcription fallback, speech-overlap guard, per-voice cue lookup, and cache-busted clip URLs together.
 - `AsyncRuntime.call` uses a fresh event loop per request and closes the shared deAPI session. Media model/balance reads must create and close a request-local client for both saved and environment keys: the first Media visit requests them concurrently. Preserve session/loop ownership and job-worker shutdown; don't casually move blocking/provider calls between threads/loops.
 - Keep Flask loopback-only by default. Network binding must remain explicit and token-gated; never print an unprotected LAN URL. Upload cap currently 25 MiB; workspace text-file cap 2 MiB. Preserve API error handling and bounded inputs.
 
@@ -95,3 +97,4 @@ Help: sidebar `view-help` includes `web/templates/desktop_help.html`; setup link
 - Focused suite example: `python -m unittest discover -s tests -p 'test_workspace.py' -v` (substitute mapped test filename). Tests use `unittest`, mocks/AsyncMock, temporary directories, Flask test client; do not require paid live calls for routine verification.
 - JS syntax if Node available: `node --check web/static/desktop.js`; no configured frontend test runner. UI changes also need a browser/native smoke check of the affected flow; Python tests don't prove microphone/audio/fullscreen/native behavior.
 - Docs-only: verify referenced paths/symbols and `git diff --check`; runtime suite unnecessary. Report checks actually run, not assumed results.
+- Release: bump `petey/version.py`, README and wiki version text, add a top changelog section, run the full suite, tag the exact commit, build with `scripts/package_release.py`, generate notes/checksum, push commit+tag, then publish/verify GitHub assets. Never rewrite a published tag.

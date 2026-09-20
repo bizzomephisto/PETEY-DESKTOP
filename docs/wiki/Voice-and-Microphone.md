@@ -36,6 +36,10 @@ downloads about 17 MB of model files; later sessions load them from the local PE
 data folder. Cloud transcription still handles the actual request and remains the
 fallback if local detection is unavailable.
 
+The acknowledgement waits briefly for a pause. Saying only “Petey” plays a canned
+response and keeps listening; continuing directly into “Petey, turn off the lights”
+cancels the pending cue and sends the command without an interruption.
+
 Open **Settings → Microphone → Open cue folder** to customize acknowledgements. Put
 short audio files directly in the folder named for the current speech voice, such as
 `voice-cues/Kore/` or `voice-cues/marin/`.

@@ -54,7 +54,7 @@ speed, and hardware setup.
 - Streaming Gemini text to speech with OpenAI fallback, named voices, and delivery direction
 - Per-reply Speak controls and optional automatic playback for new chat responses
 - Push-to-talk, always-on microphone, and wake-name input with deAPI transcription and Gemini fallback
-- Immediate, replaceable wake-name acknowledgement clips organized by speech voice
+- Replaceable per-voice wake acknowledgements that play only after the wake name is followed by a pause
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
 - Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
 - Build Your Plan preview from $5 in $5 steps, with rollover balance, capability mix, and live usage estimates
@@ -298,8 +298,10 @@ sandbox for arbitrary code.
 ## Development
 
 For coding agents, start with [AGENTS.md](AGENTS.md), the compact architecture,
-task-to-file map, extension guide, and validation reference. Many agents load this
-root-level filename automatically. For any other tool, paste:
+task-to-file map, extension guide, and validation reference. Read
+[PETEY_MANIFEST.md](PETEY_MANIFEST.md) for durable product/runtime/release
+invariants and [ADDONS.md](ADDONS.md) before extension work. Many agents load the
+root-level `AGENTS.md` automatically. For any other tool, paste:
 
 > Read `AGENTS.md` in the project root first, then implement my request. Use its
 > task-to-file map to inspect only relevant code and tests; update it if your
