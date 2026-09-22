@@ -6,7 +6,7 @@ from petey.tools.registry import ToolRegistry, ToolSpec
 
 def build_desktop_tool_registry(
     state, media_jobs_getter, memory, temporary: bool = False, mcp_manager=None,
-    addon_manager=None,
+    addon_manager=None, surface: str = "petey_desktop",
 ) -> ToolRegistry:
     """Compose Petey's built-in capabilities in one extension point."""
     tools = []
@@ -16,12 +16,13 @@ def build_desktop_tool_registry(
             media_jobs_getter,
             memory,
             record_memory=not temporary,
+            surface=surface,
         )
     )
     if mcp_manager is not None:
         tools.extend(mcp_manager.tool_specs())
     if addon_manager is not None:
-        tools.extend(addon_manager.tool_specs())
+        tools.extend(addon_manager.tool_specs(surface=surface))
     return ToolRegistry(tools)
 
 

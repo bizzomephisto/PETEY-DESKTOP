@@ -1,7 +1,9 @@
 import unittest
+import tempfile
 from unittest.mock import MagicMock, patch
 
 from petey.tools import build_desktop_tool_registry
+from petey.desktop_state import DesktopState
 from petey.tools.media import build_media_tools, explicit_image_request
 from petey.tools.registry import ToolError, ToolRegistry, ToolSpec
 
@@ -103,6 +105,35 @@ class ToolRegistryTests(unittest.TestCase):
                     {"prompt": "A robot"},
                     "Generate an image of a robot",
                 )
+
+    def test_direct_image_request_bypasses_only_the_autonomous_daily_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            capabilities = [{
+                "id": "generate_image", "label": "Generate images",
+                "metered": True, "default_daily_limit": 0,
+            }]
+            registry = ToolRegistry(build_media_tools(
+                state, MagicMock(), MagicMock(), surface="mobile_petey"
+            ))
+            request = "Generate an image of Petey reading on the moon"
+
+            self.assertEqual(registry.schemas_for(request), [])
+            state.update_petey_control(
+                "deapi-media", {
+                    "enabled": True,
+                    "capabilities": {"generate_image": {"daily_limit": 0}},
+                }, capabilities,
+            )
+            self.assertEqual(registry.schemas_for("Surprise me with something visual"), [])
+            self.assertEqual(
+                registry.schemas_for(request)[0]["function"]["name"],
+                "generate_image",
+            )
+            state.update_petey_control(
+                "deapi-media", {"surfaces": {"mobile_petey": False}}, capabilities
+            )
+            self.assertEqual(registry.schemas_for(request), [])
 
     def test_temporary_generation_does_not_write_memory_metric(self):
         state = MagicMock()

@@ -18,22 +18,26 @@ Official external add-ons are released independently:
 - [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT)
 - [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE)
 
+Petey Life reads `DesktopState.system_prompt`, so its simulation always uses the
+system-default Petey profile and never the persona assigned to the active chat or
+Discord. Its decision prompt explicitly identifies the current surface as Petey Life.
+
 Add-ons run inside PETEY's process with the same filesystem, network, settings, and
 user permissions as PETEY. Install only code you trust. PETEY discovers manifests
 without importing disabled add-ons. Enabling or disabling an add-on takes effect on
 the next restart.
 
-Model commands contributed by an external add-on are available in desktop chat when
-the add-on is loaded. They are blocked from Discord by default. The user must enable
-**Allow in Discord** separately for each add-on. That permission takes effect
-immediately, includes only that add-on's namespaced `ToolSpec` objects, and is cleared
-when the add-on is disabled. The add-on remains responsible for its own approval or
-trust policy for consequential commands.
+Model commands contributed by an external add-on remain unavailable until the user
+turns on **Allow Petey to control**. The user can independently allow Desktop,
+Mobile, Discord, and Petey Life, disable individual capabilities, and set autonomous
+daily limits for metered capabilities. These policy changes take effect immediately.
+The add-on remains responsible for its own approval or trust policy for consequential
+commands.
 
 The public add-on status includes desired `enabled` state, actual `loaded` state,
 `restart_required`, a bounded load error, whether model tools are present, and the
-per-add-on Discord permission. Never add secrets or private configuration values to
-that projection.
+sanitized model-control policy and current-day usage. Never add secrets or private
+configuration values to that projection.
 
 ## Install an add-on
 
@@ -150,6 +154,8 @@ Scripts and styles are served only for enabled, successfully loaded add-ons from
 `/api/desktop/addons/<id>/assets/...`. Keep DOM IDs globally unique by prefixing them
 with the add-on ID. Use `textContent` for external values and validate every API
 argument server-side.
+Asset URLs include a revision derived from the add-on's panel, script, and stylesheet
+modification times so browser and tunnel caches refresh after those files change.
 
 ## Lifecycle and compatibility
 
@@ -172,9 +178,33 @@ An add-on can expose model tools by returning an object whose `tool_specs()` met
 returns `petey.tools.registry.ToolSpec` objects. PETEY namespaces every contributed
 name as `addon_<id>__<tool>` to prevent collisions. `available_when` should narrowly
 match user intent so a paid, private, or mutating tool is not offered unnecessarily.
-Discord PETEY receives these tools only when the user turns on **Allow in Discord**
-for this specific add-on. Other desktop tools and the filesystem MCP are not included
-by that permission.
+Every contributed tool is wrapped by PETEY's host policy. It is offered only when
+the add-on's master control, capability, and current surface are enabled. Other
+desktop tools and the filesystem MCP are not included by an add-on permission.
+
+Describe a controllable capability directly on `ToolSpec`:
+
+```python
+ToolSpec(
+    name="create_report",
+    description="Create a report from the current data.",
+    parameters={"type": "object", "properties": {}},
+    handler=create_report,
+    available_when=lambda message: "report" in message.casefold(),
+    explicit_when=lambda message: "create" in message.casefold(),
+    control_capability="create_report",
+    control_label="Create reports",
+    metered=True,
+    default_daily_limit=3,
+)
+```
+
+Tools with the same `control_capability` share one permission and usage counter.
+`explicit_when` identifies a direct user request. A direct request may exceed the
+autonomous daily limit, but it never bypasses a disabled add-on, master control,
+surface, or capability. The host increments metered usage immediately before an
+autonomous dispatch. Keep `explicit_when` narrow enough that casual mentions do not
+become paid or consequential actions.
 
 For a narrowly matched request where an optional model decision would create a false
 denial, a `ToolSpec` may set `required_when`. PETEY then requires one tool call on the

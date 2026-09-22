@@ -166,6 +166,18 @@ class RoomConversationTests(unittest.TestCase):
         self.assertNotIn("friendly AI participant", system)
         self.assertNotIn("desktop persona", system)
 
+    def test_explicit_shared_memory_is_marked_as_private_context_for_public_output(self):
+        provider = Mock()
+        provider.complete.return_value = "The porch light was blue."
+        RoomConversation(provider).reply(
+            Turn("reply", (RoomMessage("1", "Guest", "What color?", addressed=True),)),
+            relevant_memory="[Mobile Petey — User] The porch light is blue.",
+        )
+        system = provider.complete.call_args.args[1]
+        self.assertIn("may come from private Desktop or Mobile chats", system)
+        self.assertIn("saved knowledge documents", system)
+        self.assertIn("The porch light is blue", system)
+
     def test_explicitly_supplied_addon_tools_use_the_provider_tool_loop(self):
         provider = Mock()
         provider.complete_with_tools.return_value = (

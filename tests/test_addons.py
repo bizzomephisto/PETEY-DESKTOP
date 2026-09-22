@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,7 +7,7 @@ from unittest.mock import MagicMock
 
 from petey.addons import AddonManager
 from petey.desktop_state import DesktopState
-from petey.tools.registry import ToolSpec
+from petey.tools.registry import ToolRegistry, ToolSpec
 from web.desktop_app import create_desktop_app
 
 
@@ -56,7 +57,7 @@ class AddonManagerTests(unittest.TestCase):
     def test_enabled_addon_registers_route_panel_asset_and_closes(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
-            write_addon(state.data_dir / "addons")
+            addon_dir = write_addon(state.data_dir / "addons")
             state.update_addon_enabled("sample-addon", True)
             manager = AddonManager(state)
             app = create_desktop_app(
@@ -69,6 +70,13 @@ class AddonManagerTests(unittest.TestCase):
             self.assertIn('data-view="addon-sample-addon"', html)
             self.assertIn("Sample panel", html)
             self.assertIn('id="restart-petey"', html)
+            first_revision = int(manager.template_views()[0]["asset_revision"])
+            script = addon_dir / "panel.js"
+            os.utime(script, ns=(first_revision + 1_000_000_000,
+                                 first_revision + 1_000_000_000))
+            next_revision = int(manager.template_views()[0]["asset_revision"])
+            self.assertGreater(next_revision, first_revision)
+            self.assertIn(f"panel.js?v={next_revision}", client.get("/").get_data(as_text=True))
             response = client.get("/api/desktop/addons/sample-addon/assets/panel.js")
             self.assertEqual(response.status_code, 200)
             response.close()
@@ -111,16 +119,19 @@ class AddonManagerTests(unittest.TestCase):
             self.assertTrue(response.json["restart_required"])
             self.assertTrue(DesktopState(directory).addon_enabled("sample-addon"))
 
-            discord_access = app.test_client().put(
-                "/api/desktop/addons/sample-addon",
-                json={"discord_tools_enabled": True},
+            control = app.test_client().put(
+                "/api/desktop/addons/deapi-media",
+                json={"petey_control": {
+                    "enabled": True,
+                    "surfaces": {"discord": True},
+                    "capabilities": {"generate_image": {"daily_limit": 3}},
+                }},
             )
-            self.assertEqual(discord_access.status_code, 200)
-            self.assertTrue(discord_access.json["addon"]["discord_tools_enabled"])
-            self.assertTrue(discord_access.json["restart_required"])
-            self.assertTrue(
-                DesktopState(directory).addon_discord_tools_enabled("sample-addon")
-            )
+            self.assertEqual(control.status_code, 200)
+            policy = control.json["addon"]["petey_control"]
+            self.assertTrue(policy["enabled"])
+            self.assertTrue(policy["surfaces"]["discord"])
+            self.assertEqual(policy["capabilities"][0]["daily_limit"], 3)
 
     def test_loaded_addon_tools_are_namespaced_and_callable(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -141,15 +152,17 @@ def setup(context): return Addon()
             specs = manager.tool_specs()
             self.assertEqual([spec.name for spec in specs], ["addon_sample_addon__forecast"])
             self.assertEqual(specs[0].handler({}), {"weather": "sunny"})
-            self.assertEqual(manager.tool_specs(for_discord=True), [])
-            manager.set_discord_tools_enabled("sample-addon", True)
-            discord_specs = manager.tool_specs(for_discord=True)
+            self.assertEqual(ToolRegistry(specs).schemas_for("forecast"), [])
+            manager.set_petey_control("sample-addon", {
+                "enabled": True,
+                "surfaces": {"discord": True},
+            })
+            discord_specs = manager.tool_specs(surface="discord")
             self.assertEqual(
-                [spec.name for spec in discord_specs],
+                [item["function"]["name"] for item in ToolRegistry(discord_specs).schemas_for("forecast")],
                 ["addon_sample_addon__forecast"],
             )
             manager.set_enabled("sample-addon", False)
-            self.assertFalse(state.addon_discord_tools_enabled("sample-addon"))
 
 
 if __name__ == "__main__":

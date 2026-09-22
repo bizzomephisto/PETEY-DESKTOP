@@ -18,6 +18,7 @@
         <section class="settings-card">
             <div class="card-heading"><h2>2. Choose where PETEY chats</h2><button id="discord-refresh" class="secondary-button" type="button">Refresh servers</button></div>
             <div class="discord-selectors">
+                <label>Discord personality<select id="discord-persona"><option value="default">Discord default</option></select><small>Choose a saved Petey profile for Discord. This never follows the active desktop chat.</small></label>
                 <label>Server<select id="discord-guild" disabled><option value="">Save a bot token first</option></select></label>
                 <label>Text channel<select id="discord-channel" disabled><option value="">Choose a server</option></select></label>
             </div>
@@ -30,6 +31,15 @@
                 <span><strong>Auto-connect</strong><small>Reconnect to the last successfully used server and channel when PETEY starts.</small></span>
                 <input id="discord-auto-connect" type="checkbox" role="switch">
             </label>
+            <label class="discord-memory-policy" for="discord-memory-policy">
+                <span><strong>Discord memory access</strong><small id="discord-memory-description">Do not save or recall new Discord messages. Previously stored Discord memory remains saved.</small></span>
+                <select id="discord-memory-policy">
+                    <option value="room_only">Room only</option>
+                    <option value="store">Store Discord, no private recall</option>
+                    <option value="shared">Full shared memory</option>
+                </select>
+            </label>
+            <p id="discord-memory-warning" class="security-note" hidden><strong>Public-memory warning:</strong> Discord replies may use relevant details from private Desktop and Mobile chats. Anyone in the selected channel may see those replies.</p>
             <div class="discord-pacing">
                 <label for="discord-pace"><span><strong>Spontaneous participation</strong><small>Controls how often PETEY joins unrelated conversation. Mentions, replies, his name, and watched topics take priority.</small></span><output id="discord-pace-label">Auto</output></label>
                 <input id="discord-pace" type="range" min="0" max="4" step="1" value="0" aria-label="Discord conversation pace">
@@ -54,7 +64,7 @@
                 </div>
             </form>
             <p id="discord-status" class="wide-status" role="status">Save a token, add the bot to a server, then refresh the list.</p>
-            <p class="hint">PETEY starts with fresh room-only context. Direct conversation and watched topics get prompt replies; the participation control governs unrelated conversation. Other bots and webhooks are ignored to prevent bot loops.</p>
+            <p class="hint">PETEY starts with fresh room context. The memory setting above controls whether Discord enters shared memory and whether Discord replies can search it. Direct conversation and watched topics get prompt replies; the participation control governs unrelated conversation. Other bots and webhooks are ignored to prevent bot loops.</p>
             <p class="hint"><strong>Media commands:</strong> /genimg, /img2img, /genvid, /img2vid, /vid2vid, /genmusic, /tts, /rmbg, and /upscale use this desktop's provider settings and save results to Gallery. Anyone allowed to use these commands can consume the configured provider balance.</p>
         </section>
         <section class="settings-card">
@@ -71,7 +81,7 @@
         </section>
         <section class="settings-card">
             <h2>Channel activity</h2>
-            <p class="hint">Only messages seen after connecting appear here. This temporary transcript is not added to PETEY's personal memory.</p>
+            <p id="discord-activity-memory-note" class="hint">Only messages seen after connecting appear here. Room-only mode does not add this transcript to PETEY's personal memory.</p>
             <div id="discord-activity" class="discord-activity" role="log" aria-live="polite"><p class="muted">Not connected yet.</p></div>
         </section>
     </div>

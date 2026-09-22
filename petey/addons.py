@@ -43,6 +43,18 @@ class AddonManager:
                 "description": "Connect PETEY to Discord chat and media slash commands.",
                 "source": "built-in", "default_enabled": True, "loaded": False,
                 "error": "", "path": None, "manifest": {}, "instance": None,
+                "configurable_enabled": True, "control_capabilities": [],
+            },
+            "deapi-media": {
+                "id": "deapi-media", "name": "deAPI Media", "version": "",
+                "description": "Generate images through PETEY's configured deAPI media service.",
+                "source": "core", "default_enabled": True, "loaded": True,
+                "error": "", "path": None, "manifest": {}, "instance": None,
+                "configurable_enabled": False,
+                "control_capabilities": [{
+                    "id": "generate_image", "label": "Generate images",
+                    "metered": True, "default_daily_limit": 5,
+                }],
             }
         }
         self._discover_user_addons()
@@ -111,6 +123,7 @@ class AddonManager:
             "default_enabled": manifest.get("default_enabled") is True,
             "loaded": False, "error": "", "path": directory, "manifest": manifest,
             "instance": None,
+            "configurable_enabled": True, "control_capabilities": [],
         }
 
     def enabled(self, addon_id: str) -> bool:
@@ -157,33 +170,69 @@ class AddonManager:
     def set_enabled(self, addon_id: str, enabled) -> dict:
         if addon_id not in self._records:
             raise ValueError("Unknown add-on.")
+        if not self._records[addon_id].get("configurable_enabled", True):
+            raise ValueError("This built-in integration cannot be disabled here.")
         self.state.update_addon_enabled(addon_id, enabled)
-        if not enabled:
-            self.state.update_addon_discord_tools(addon_id, False)
         return self.public_record(self._records[addon_id])
 
-    def set_discord_tools_enabled(self, addon_id: str, enabled) -> dict:
+    def _control_capabilities(self, record: dict) -> list[dict]:
+        declared = record.get("control_capabilities")
+        if declared:
+            return list(declared)
+        if not record.get("loaded") or record.get("error"):
+            return []
+        provider = getattr(record.get("instance"), "tool_specs", None)
+        if not callable(provider):
+            return []
+        try:
+            offered = provider()
+        except Exception:
+            return []
+        capabilities = {}
+        for spec in offered if isinstance(offered, list) else []:
+            if not isinstance(spec, ToolSpec):
+                continue
+            capability = str(spec.control_capability or spec.name or "")
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{1,63}", capability):
+                continue
+            try:
+                default_daily_limit = int(spec.default_daily_limit or 0)
+            except (TypeError, ValueError):
+                default_daily_limit = 0
+            capabilities[capability] = {
+                "id": capability,
+                "label": str(spec.control_label or capability.replace("_", " ").title())[:80],
+                "metered": bool(spec.metered),
+                "default_daily_limit": max(0, min(1000, default_daily_limit)),
+            }
+        return list(capabilities.values())
+
+    def set_petey_control(self, addon_id: str, changes: dict) -> dict:
         record = self._records.get(addon_id)
-        if record is None or record["source"] != "user":
-            raise ValueError("Discord tool access is available for external add-ons only.")
-        if enabled and not self.enabled(addon_id):
-            raise ValueError("Enable this add-on before allowing its tools in Discord.")
-        self.state.update_addon_discord_tools(addon_id, enabled)
-        return self.public_record(self._records[addon_id])
+        if record is None:
+            raise ValueError("Unknown add-on.")
+        capabilities = self._control_capabilities(record)
+        if not capabilities:
+            raise ValueError("This add-on does not expose controllable capabilities.")
+        if record["source"] == "user" and not self.enabled(addon_id):
+            raise ValueError("Enable this add-on before allowing Petey to control it.")
+        self.state.update_petey_control(addon_id, changes, capabilities)
+        return self.public_record(record)
 
     def public_record(self, record: dict) -> dict:
         desired = self.enabled(record["id"])
+        capabilities = self._control_capabilities(record)
         return {
             "id": record["id"], "name": record["name"], "version": record["version"],
             "description": record["description"], "source": record["source"],
             "enabled": desired, "loaded": record["loaded"], "error": record["error"],
-            "discord_tools_enabled": (
-                record["source"] == "user"
-                and self.state.addon_discord_tools_enabled(record["id"])
-            ),
+            "configurable_enabled": record.get("configurable_enabled", True),
             "has_model_tools": bool(
-                record["loaded"]
-                and callable(getattr(record.get("instance"), "tool_specs", None))
+                capabilities
+            ),
+            "petey_control": (
+                self.state.petey_control_status(record["id"], capabilities)
+                if capabilities else None
             ),
             "restart_required": desired != record["loaded"] and not bool(record["error"]),
         }
@@ -208,12 +257,21 @@ class AddonManager:
                 html = (directory / panel).read_text(encoding="utf-8")
             except OSError:
                 continue
+            asset_paths = [directory / panel]
+            for key in ("script", "stylesheet"):
+                if manifest.get(key):
+                    asset_paths.append(directory / str(manifest[key]))
+            asset_revision = max(
+                (path.stat().st_mtime_ns for path in asset_paths if path.is_file()),
+                default=0,
+            )
             views.append({
                 "id": f"addon-{record['id']}", "addon_id": record["id"],
                 "label": str(navigation["label"])[:40],
                 "icon": str(navigation.get("icon") or "◇")[:4], "html": html,
                 "script": str(manifest.get("script") or ""),
                 "stylesheet": str(manifest.get("stylesheet") or ""),
+                "asset_revision": str(asset_revision),
             })
         return views
 
@@ -241,13 +299,11 @@ class AddonManager:
         digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:8]
         return full[:55] + "_" + digest
 
-    def tool_specs(self, *, for_discord: bool = False) -> list[ToolSpec]:
+    def tool_specs(self, *, surface: str = "petey_desktop") -> list[ToolSpec]:
         """Collect model tools from loaded add-ons under collision-safe names."""
         result = []
         for record in self._records.values():
             if not record["loaded"] or record["error"]:
-                continue
-            if for_discord and not self.state.addon_discord_tools_enabled(record["id"]):
                 continue
             provider = getattr(record.get("instance"), "tool_specs", None)
             if not callable(provider):
@@ -263,13 +319,51 @@ class AddonManager:
                 name = self._tool_name(record["id"], spec.name)
                 if not name:
                     continue
+                capability = str(spec.control_capability or spec.name or "")
+                definitions = self._control_capabilities(record)
+
+                def available(message, original=spec.available_when, addon_id=record["id"],
+                              selected=capability, definitions=definitions,
+                              explicit_when=spec.explicit_when, selected_surface=surface):
+                    if not original(message):
+                        return False
+                    try:
+                        self.state.authorize_petey_control(
+                            addon_id, selected, selected_surface,
+                            explicit=bool(explicit_when(message)),
+                            capabilities=definitions,
+                        )
+                        return True
+                    except ValueError:
+                        return False
+
+                def authorize(message, original=spec.authorize_when, addon_id=record["id"],
+                              selected=capability, definitions=definitions,
+                              explicit_when=spec.explicit_when, selected_surface=surface):
+                    original(message)
+                    try:
+                        self.state.authorize_petey_control(
+                            addon_id, selected, selected_surface,
+                            explicit=bool(explicit_when(message)),
+                            capabilities=definitions, consume=True,
+                        )
+                    except ValueError as exc:
+                        from petey.tools.registry import ToolError
+                        raise ToolError(str(exc)) from exc
+
                 result.append(ToolSpec(
                     name=name,
                     description=f"{spec.description} Provided by the {record['name']} add-on.",
                     parameters=spec.parameters,
                     handler=spec.handler,
-                    available_when=spec.available_when,
+                    available_when=available,
                     required_when=spec.required_when,
+                    authorize_when=authorize,
+                    explicit_when=spec.explicit_when,
+                    control_capability=capability,
+                    control_label=spec.control_label,
+                    metered=spec.metered,
+                    default_daily_limit=spec.default_daily_limit,
                 ))
         return result
 

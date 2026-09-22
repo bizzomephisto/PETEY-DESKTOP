@@ -15,13 +15,15 @@ from petey.discord_transport import DiscordError, DiscordTransport
 
 class DiscordBridge:
     def __init__(self, state, transport_factory=DiscordTransport, provider_factory=AIProvider,
-                 typing_interval=8, media_jobs_getter=None, addon_tools_getter=None):
+                 typing_interval=8, media_jobs_getter=None, addon_tools_getter=None,
+                 memory_getter=None):
         self.state = state
         self.transport_factory = transport_factory
         self.provider_factory = provider_factory
         self.typing_interval = typing_interval
         self.media_jobs_getter = media_jobs_getter
         self.addon_tools_getter = addon_tools_getter
+        self.memory_getter = memory_getter
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.thread = None
@@ -31,6 +33,9 @@ class DiscordBridge:
         self.pace = state.discord_pace
         self.watched_topics = state.discord_watched_topics
         self.room_prompt = state.discord_room_prompt
+        self.persona_slot = state.discord_persona_slot
+        self.memory_policy = state.discord_memory_policy
+        self.system_prompt = state.discord_system_prompt
         self.auto_connect = state.discord_auto_connect
         last_location = state.discord_last_location
         self.selection = {
@@ -82,6 +87,9 @@ class DiscordBridge:
                 "pace": self.pace,
                 "watched_topics": list(self.watched_topics),
                 "room_prompt": self.room_prompt,
+                "persona_slot": self.state.discord_persona_slot,
+                "persona_options": self.state.discord_persona_options,
+                "memory_policy": self.state.discord_memory_policy,
                 "auto_connect": self.auto_connect,
                 **self.selection, "credential": self.credential_status(),
                 "instructions": [dict(item) for item in self.instructions],
@@ -157,6 +165,22 @@ class DiscordBridge:
         prompt = self.state.update_discord_room_prompt(prompt, reset=reset)
         with self.lock:
             self.room_prompt = prompt
+            self.system_prompt = self.state.discord_system_prompt
+            self.revision += 1
+        return self.status()
+
+    def set_persona(self, persona_slot=None):
+        persona_slot = self.state.update_discord_persona(persona_slot)
+        with self.lock:
+            self.persona_slot = persona_slot
+            self.system_prompt = self.state.discord_system_prompt
+            self.revision += 1
+        return self.status()
+
+    def set_memory_policy(self, policy):
+        policy = self.state.update_discord_memory_policy(policy)
+        with self.lock:
+            self.memory_policy = policy
             self.revision += 1
         return self.status()
 
@@ -294,7 +318,10 @@ class DiscordBridge:
             '"status": "unavailable"',
         ))
 
-    def _reply_with_typing(self, transport, conversation, turn, guidance, owner_instruction):
+    def _reply_with_typing(
+        self, transport, conversation, turn, guidance, owner_instruction,
+        relevant_memory="",
+    ):
         """Generate a reply while periodically refreshing Discord's typing indicator."""
         try:
             transport.typing()
@@ -309,7 +336,7 @@ class DiscordBridge:
                 for attempt, delay in enumerate((2, 5, 0)):
                     try:
                         outcome["text"] = conversation.reply(
-                            turn, guidance, owner_instruction
+                            turn, guidance, owner_instruction, relevant_memory
                         )
                         return
                     except AIProviderError as exc:
@@ -342,6 +369,42 @@ class DiscordBridge:
         if "error" in outcome:
             raise outcome["error"]
         return outcome.get("text", "")
+
+    def _discord_conversation_id(self):
+        return f"discord:{self.selection['guild_id']}:{self.selection['channel_id']}"
+
+    def _store_discord_message(self, user_id, content):
+        if self.state.discord_memory_policy == "room_only" or self.memory_getter is None:
+            return
+        try:
+            self.memory_getter().store_memory(
+                self.state.installation_id,
+                self._discord_conversation_id(),
+                user_id,
+                content,
+                source_surface="discord",
+            )
+        except Exception:
+            self._event("error", "A Discord message could not be added to shared memory.")
+
+    def _shared_memory_for_turn(self, turn):
+        if self.state.discord_memory_policy != "shared" or self.memory_getter is None:
+            return ""
+        query = "\n".join(message.text for message in turn.messages).strip()
+        if not query:
+            return ""
+        try:
+            return self.memory_getter().search_memories(
+                query,
+                self.state.installation_id,
+                limit=5,
+                exclude_contents=tuple(
+                    f"{message.nickname}: {message.text}" for message in turn.messages
+                ),
+            )
+        except Exception:
+            self._event("error", "Shared memory lookup failed; Discord continued without it.")
+            return ""
 
     def _handle_media_interaction(self, interaction):
         parsed = parse_media_interaction(interaction)
@@ -460,7 +523,7 @@ class DiscordBridge:
                 priority_delay_cap=2,
             )
             conversation = RoomConversation(
-                self.provider_factory(config), self.room_prompt,
+                self.provider_factory(config), self.system_prompt,
                 tool_registry_getter=self.addon_tools_getter,
             )
             next_poll = 0
@@ -474,6 +537,10 @@ class DiscordBridge:
                         )
                     if activity.observe(message, now):
                         self._event("received", message.text, message.nickname)
+                        self._store_discord_message(
+                            f"discord:{message.nickname}",
+                            f"{message.nickname}: {message.text}",
+                        )
 
             while not self.stop.is_set():
                 now = time.monotonic()
@@ -483,12 +550,15 @@ class DiscordBridge:
                 with self.lock:
                     paused = self.paused
                     pace = self.pace
-                    room_prompt = self.room_prompt
+                    # Resolve the explicitly assigned Discord profile each turn so
+                    # saving or removing that profile cannot leave a stale persona
+                    # in a long-running Discord connection.
+                    system_prompt = self.state.discord_system_prompt
                     revision = self.revision
                     instruction = next((item for item in self.instructions if item["status"] == "queued"), None)
                     guidance = "\n".join(item["text"] for item in self.instructions
                                          if item["status"] in {"completed", "queued"})[-8000:]
-                conversation.room_prompt = room_prompt
+                conversation.room_prompt = system_prompt
                 if paused:
                     activity.pending.clear()
                     self.stop.wait(1)
@@ -501,9 +571,11 @@ class DiscordBridge:
                 delivered = False
                 try:
                     try:
+                        relevant_memory = self._shared_memory_for_turn(turn)
                         text = self._reply_with_typing(
                             transport, conversation, turn, guidance,
                             instruction["text"] if instruction else "",
+                            relevant_memory,
                         )
                     except Exception as exc:
                         if instruction is not None:
@@ -526,6 +598,7 @@ class DiscordBridge:
                             transport.send(text)
                             delivered = True
                             conversation.delivered(text)
+                            self._store_discord_message("PETEY", text)
                             self._event("sent", text, identity["name"])
                         if instruction is not None:
                             instruction["status"] = "completed"

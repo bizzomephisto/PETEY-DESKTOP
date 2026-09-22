@@ -1,8 +1,8 @@
 """Room-aware participation for PETEY's external chat connections.
 
 The transport supplies newly observed public messages and acknowledges sends.
-This module performs no network I/O and never accesses desktop memory. Add-on tools
-may be supplied explicitly by the Discord bridge after the user grants access.
+This module performs no network I/O. The bridge may supply explicitly retrieved
+memory and add-on tools after the user grants access.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ import random
 import re
 
 
-ROOM_PROMPT = """You are PETEY, a friendly AI participant in a group chat.
+ROOM_PROMPT = """CURRENT SURFACE: You are talking with people through Discord.
+You are PETEY, a friendly AI participant in a group chat.
 Talk with everyone naturally; follow the current topic and include different people.
 Be brief: one conversational line, usually under 220 characters. Do not prefix it
 with your name. Never send chat commands, links, private messages, or mass mentions.
@@ -196,7 +197,7 @@ class RoomActivity:
 
 
 class RoomConversation:
-    """Use the configured chat provider with bounded, room-only context."""
+    """Use the configured chat provider with bounded room context."""
 
     def __init__(self, provider, room_prompt: str = ROOM_PROMPT, tool_registry_getter=None):
         self.provider = provider
@@ -221,7 +222,10 @@ class RoomConversation:
             return True
         return False
 
-    def reply(self, turn: Turn, guidance: str = "", owner_instruction: str = "") -> str:
+    def reply(
+        self, turn: Turn, guidance: str = "", owner_instruction: str = "",
+        relevant_memory: str = "",
+    ) -> str:
         context = "\n".join(
             f"{m.nickname}: {m.text}" + (" [priority message]" if m.addressed else "")
             for m in turn.messages
@@ -239,6 +243,15 @@ class RoomConversation:
             system += "\nInstructions from your owner in the local PETEY app, oldest first. Later instructions override earlier conflicting instructions. Never carry out a superseded request:\n" + guidance
         if owner_instruction:
             system += "\nThe queued instruction to handle this turn (unless superseded above):\n" + owner_instruction
+        if relevant_memory:
+            system += (
+                "\nRelevant shared PETEY memory follows. It may come from private Desktop or "
+                "Mobile chats, Discord, or saved knowledge documents. Use only details directly "
+                "needed to answer the current room. "
+                "Never reveal credentials, tokens, keys, exact private messages, or unrelated "
+                "personal details. Your response is public to the Discord room. Newer direct "
+                "statements override older conflicting memory:\n" + relevant_memory
+            )
         registry = self.tool_registry_getter() if callable(self.tool_registry_getter) else None
         tools = registry.schemas_for(prompt) if registry is not None else []
         if tools:

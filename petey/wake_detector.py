@@ -92,7 +92,8 @@ class LocalWakeDetector:
             import sherpa_onnx
         except ImportError as exc:
             raise WakeDetectorError(
-                "Local wake detection requires sherpa-onnx and sentencepiece."
+                "Local wake detection could not import sherpa-onnx and sentencepiece: "
+                f"{exc}."
             ) from exc
         self._processor = sentencepiece.SentencePieceProcessor(
             model_file=str(self.model_dir / "bpe.model")
@@ -107,14 +108,21 @@ class LocalWakeDetector:
             joiner=str(self.model_dir / "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
             keywords_file=str(base_keywords),
             num_threads=1,
-            keywords_score=2.0,
-            keywords_threshold=0.12,
+            keywords_score=3.0,
+            keywords_threshold=0.05,
             num_trailing_blanks=0,
         )
 
     def _keywords(self, wake_word: str) -> str:
         cleaned = " ".join(str(wake_word or "Petey").upper().split())[:40] or "PETEY"
-        phrases = (cleaned, f"HEY {cleaned}")
+        phrases = [cleaned, f"HEY {cleaned}"]
+        if cleaned == "PETEY":
+            # The compact English model may render the name as ordinary spelling
+            # or as spoken letter sounds. PETE is intentionally excluded because
+            # it creates conversational false wakes in the bundled model.
+            aliases = ("PETTY", "P T", "P T Y", "PEE TEE")
+            for alias in aliases:
+                phrases.extend((alias, f"HEY {alias}"))
         encoded = []
         for phrase in phrases:
             pieces = self._processor.encode(phrase, out_type=str)

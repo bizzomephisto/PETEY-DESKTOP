@@ -10,6 +10,11 @@ let discordCatalogVersion = 0;
 let discordCatalogError = '';
 const discordPaces = ['auto', 'relaxed', 'balanced', 'lively', 'fast'];
 const discordPaceLabels = ['Auto', 'Relaxed', 'Balanced', 'Lively', 'Fast'];
+const discordMemoryDescriptions = {
+    room_only: 'Do not save or recall new Discord messages. Previously stored Discord memory remains saved.',
+    store: 'Save Discord messages so Desktop and Mobile Petey can recall them. Discord cannot search private chats.',
+    shared: 'Save Discord messages and let public Discord replies search relevant Desktop, Mobile, and other shared memory.',
+};
 
 function discordControls() {
     const busy = ['connecting', 'connected', 'stopping'].includes(discordState.phase);
@@ -28,6 +33,8 @@ function discordControls() {
     document.getElementById('discord-instruction').disabled = !connected;
     document.getElementById('discord-instruct').disabled = !connected || discordActionPending;
     document.getElementById('discord-pace').disabled = discordActionPending;
+    document.getElementById('discord-persona').disabled = discordActionPending;
+    document.getElementById('discord-memory-policy').disabled = discordActionPending;
     document.getElementById('discord-topics').disabled = discordActionPending;
     document.getElementById('discord-save-topics').disabled = discordActionPending;
     document.getElementById('discord-room-prompt').disabled = discordActionPending;
@@ -54,6 +61,36 @@ function renderDiscord(state) {
     document.getElementById('discord-pace').value = String(paceIndex);
     document.getElementById('discord-pace-label').textContent = discordPaceLabels[paceIndex];
     document.getElementById('discord-auto-connect').checked = Boolean(state.auto_connect);
+    const personaSelect = document.getElementById('discord-persona');
+    const personaOptions = state.persona_options || [];
+    const personaSignature = JSON.stringify(personaOptions);
+    if (personaSelect.dataset.signature !== personaSignature) {
+        personaSelect.replaceChildren();
+        for (const profile of personaOptions) {
+            const option = document.createElement('option');
+            option.value = profile.slot == null ? 'default' : String(profile.slot);
+            option.textContent = profile.role_tag
+                ? `${profile.name} — ${profile.role_tag}`
+                : profile.name;
+            personaSelect.append(option);
+        }
+        if (!personaOptions.length) {
+            const option = document.createElement('option');
+            option.value = 'default';
+            option.textContent = 'Discord default';
+            personaSelect.append(option);
+        }
+        personaSelect.dataset.signature = personaSignature;
+    }
+    personaSelect.value = state.persona_slot == null ? 'default' : String(state.persona_slot);
+    const memoryPolicy = Object.prototype.hasOwnProperty.call(discordMemoryDescriptions, state.memory_policy)
+        ? state.memory_policy : 'room_only';
+    document.getElementById('discord-memory-policy').value = memoryPolicy;
+    document.getElementById('discord-memory-description').textContent = discordMemoryDescriptions[memoryPolicy];
+    document.getElementById('discord-memory-warning').hidden = memoryPolicy !== 'shared';
+    document.getElementById('discord-activity-memory-note').textContent = memoryPolicy === 'room_only'
+        ? 'Only messages seen after connecting appear here. Room-only mode does not add this transcript to PETEY’s personal memory.'
+        : 'Only messages seen after connecting appear here. New Discord messages and PETEY replies are being saved to shared memory.';
     const topics = state.watched_topics || [];
     const topicsInput = document.getElementById('discord-topics');
     if (document.activeElement !== topicsInput) topicsInput.value = topics.join(', ');
@@ -280,6 +317,13 @@ document.getElementById('discord-pace').addEventListener('change', event => {
 });
 document.getElementById('discord-auto-connect').addEventListener('change', event => {
     discordAction('auto-connect', {enabled: event.target.checked});
+});
+document.getElementById('discord-persona').addEventListener('change', event => {
+    const value = event.target.value;
+    discordAction('persona', {persona_slot: value === 'default' ? null : Number(value)});
+});
+document.getElementById('discord-memory-policy').addEventListener('change', event => {
+    discordAction('memory-policy', {policy: event.target.value});
 });
 document.getElementById('discord-topics-form').addEventListener('submit', async event => {
     event.preventDefault();

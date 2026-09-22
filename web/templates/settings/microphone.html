@@ -7,6 +7,9 @@
                             <label><span>Audio input</span><select id="voice-input-device"><option value="">System default microphone</option></select></label>
                             <label><span>Voice sensitivity</span><select id="voice-input-sensitivity"><option value="high">High · quiet microphones</option><option value="normal" selected>Normal</option><option value="low">Low · noisy rooms</option></select></label>
                             <label id="voice-wake-word-field" hidden><span>Wake name</span><input id="voice-wake-word" type="text" maxlength="40" value="Petey"></label>
+                            <label id="voice-wake-delay-field" hidden><span>“Yeah?” pause (milliseconds)</span><input id="voice-wake-delay" type="number" min="200" max="2000" step="50" value="500"></label>
+                            <label id="voice-submit-delay-field" hidden><span>Send after silence (milliseconds)</span><input id="voice-submit-delay" type="number" min="400" max="3000" step="50" value="800"></label>
+                            <label id="voice-follow-up-field" hidden><span>Follow-up idle timeout (seconds)</span><input id="voice-follow-up-seconds" type="number" min="3" max="30" step="1" value="8"></label>
                         </div>
                         <div class="microphone-test">
                             <div class="microphone-meter" aria-label="Microphone input level"><span id="voice-input-meter"></span></div>
@@ -16,11 +19,11 @@
                         <p id="voice-input-note" class="hint">Audio stays off until microphone input is enabled.</p>
                         <div class="inline-actions"><button id="save-voice-input" class="primary-button" type="button">Save microphone settings</button><span id="voice-input-settings-status" class="wide-status"></span></div>
                         <div class="wake-cue-settings">
-                            <div><strong>Wake acknowledgements</strong><p>When PETEY hears his wake name followed by a pause, he plays a random clip for the current voice. Continuing directly into a command skips the clip. Add WAV, MP3, OGG, OPUS, M4A, AAC, FLAC, or WEBM files to the voice folder.</p><code id="voice-cues-directory">Loading folder…</code></div>
+                            <div><strong>Wake acknowledgements</strong><p>When PETEY hears his wake name followed by a pause, he plays a random clip for the current voice and listens for the request. Continuing directly into a command skips the clip. The follow-up timeout counts only while you are silent; it does not limit how long you can speak. Add WAV, MP3, OGG, OPUS, M4A, AAC, FLAC, or WEBM files to the voice folder.</p><code id="voice-cues-directory">Loading folder…</code></div>
                             <button id="open-voice-cues-folder" class="secondary-button" type="button">Open cue folder</button>
                             <span id="voice-cues-status" class="wide-status"></span>
                         </div>
-                        <p class="hint">Voice activity is detected on this machine. Completed utterance clips use low-cost media transcription first and Gemini only as a fallback; recordings are not added to Petey's gallery or memory.</p>
+                        <p class="hint">Voice activity and the wake name are detected on this machine. Completed utterance clips are sent to the selected transcription provider and are not added to Petey's gallery or memory.</p>
 
                     <p class="hint">Need a different transcription service? <button class="text-button" data-settings-view="providers" data-settings-target="transcription-model-settings" type="button">Choose transcription provider →</button></p></div>
                 </details>

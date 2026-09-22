@@ -4,9 +4,14 @@ const messageInput = document.getElementById('message');
 const attachmentInput = document.getElementById('attachment');
 const attachmentChip = document.getElementById('attachment-chip');
 const sendButton = document.getElementById('send');
+const voiceResponseButtons = [
+    document.getElementById('voice-response-toggle'),
+    document.getElementById('visual-voice-response-toggle'),
+];
 const statusText = document.getElementById('status');
 const chatNameText = document.getElementById('chat-name');
 const chatPersonaSelect = document.getElementById('chat-persona');
+const mobileChatPersonaSelect = document.getElementById('mobile-chat-persona');
 const jumpToLatestButton = document.getElementById('jump-to-latest');
 const newChatDialog = document.getElementById('new-chat-dialog');
 const newChatTitle = document.getElementById('new-chat-title');
@@ -20,15 +25,21 @@ let aiProviderLoaded = false;
 let aiProviderConfiguration = null;
 let speechSettingsLoaded = false;
 let speechConfiguration = null;
+let voiceResponseEnabled = false;
+let voiceResponseInitialized = false;
+let lastAppliedVisualMode = null;
 let voiceInputSettingsLoaded = false;
-let voiceInputConfiguration = {mode: 'disabled', provider: 'deapi', model: 'WhisperLargeV3', gemini_model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal'};
+let voiceInputConfiguration = {mode: 'disabled', provider: 'deapi', model: 'WhisperLargeV3', gemini_model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal', wake_ack_delay_ms: 500, submit_silence_ms: 800, follow_up_seconds: 8};
 let planBuilderLoaded = false;
 let planEstimateTimer = null;
 let planEstimateRequest = 0;
 let voiceInputModels = {deapi: ['WhisperLargeV3'], gemini: ['gemini-3.5-transcribe']};
 let microphoneStream = null;
 let microphoneContext = null;
+let microphoneSource = null;
 let microphoneProcessor = null;
+let microphoneSilentOutput = null;
+let microphoneFrameCount = 0;
 let microphoneCapture = [];
 let microphonePreRoll = [];
 let microphoneCapturing = false;
@@ -39,11 +50,13 @@ let voiceInputBusy = false;
 let voiceInputPlaybackBlocked = false;
 let wakeCueConfiguration = {voice: 'default', clips: [], fallback_phrases: ['Yeah?', "What's up?", 'Mm-hmm?']};
 let wakeCueAudios = [];
+let wakeCueBuffers = [];
 let wakeCueAudio = null;
 let wakeCuePlaying = false;
 let lastWakeCueIndex = -1;
 let microphoneTestActive = false;
 let pushToTalkHeld = false;
+let mobileVisualMicMuted = false;
 let wakeWordArmedUntil = 0;
 let wakeCueAcknowledgedUntil = 0;
 let wakeCuePendingTimer = null;
@@ -53,10 +66,14 @@ let wakeDetectorStarting = false;
 let wakeDetectorBusy = false;
 let wakeDetectorChunks = [];
 let wakeDetectorSampleCount = 0;
+let voiceConversationActive = false;
+let voiceConversationAwaitingReply = false;
+let voiceConversationFollowupTimer = null;
 let keyboardPushToTalkActive = false;
 let visualAudioEnergy = 0;
 let lastPeteyCaption = '';
 let visualCaptionTimer = null;
+let visualCaptionHideTimer = null;
 let nativeVisualFullscreen = false;
 let geminiSpeechModels = [];
 let geminiSpeechVoices = [];
@@ -75,6 +92,7 @@ let conversations = [];
 let activeConversationId = '';
 let conversationPersonaOptions = [];
 let temporaryHistory = [];
+let pendingDeleteConversation = null;
 let preferences = {always_on_top: false, sidebar_collapsed: false, ui_scale: 1, visual_mode: false, visual_style: 'neural_core'};
 let workspaces = [];
 let activeWorkspaceId = '';
@@ -156,6 +174,160 @@ async function copyChatText(text, button) {
     }, 1200);
 }
 
+function generatedImageUrl(job) {
+    const result = job?.result || {};
+    const galleryItem = result.gallery_item;
+    if (galleryItem?.local_filename && galleryItem.id) {
+        return `/api/desktop/gallery/file/${encodeURIComponent(galleryItem.id)}`;
+    }
+    return result.result_url || '';
+}
+
+function configureExternalOpenLink(link, label = 'file') {
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.addEventListener('click', async event => {
+        const galleryItemId = link.dataset.galleryItemId || '';
+        if (galleryItemId && window.pywebview?.api?.open_gallery_item) {
+            event.preventDefault();
+            try {
+                const result = await window.pywebview.api.open_gallery_item(galleryItemId);
+                if (!result?.ok) window.alert(result?.error || `Could not open this ${label}.`);
+            } catch (_error) {
+                window.alert(`Could not open this ${label}.`);
+            }
+            return;
+        }
+        if (!window.pywebview?.api?.open_external_url) return;
+        event.preventDefault();
+        try {
+            if (!await window.pywebview.api.open_external_url(link.href)) {
+                window.alert(`Could not open this ${label} in the default browser.`);
+            }
+        } catch (_error) {
+            window.alert(`Could not open this ${label} in the default browser.`);
+        }
+    });
+}
+
+async function loadChatGeneratedImage(source, prompt) {
+    let displaySource = source;
+    let objectUrl = '';
+    if (source.startsWith('/')) {
+        const response = await fetch(source, {cache: 'no-store'});
+        if (!response.ok) throw new Error(`Gallery returned ${response.status}.`);
+        const blob = await response.blob();
+        if (!blob.type.startsWith('image/')) throw new Error('Gallery returned a non-image file.');
+        objectUrl = URL.createObjectURL(blob);
+        displaySource = objectUrl;
+    }
+    const image = document.createElement('img');
+    image.alt = prompt;
+    try {
+        await new Promise((resolve, reject) => {
+            image.addEventListener('load', resolve, {once: true});
+            image.addEventListener('error', () => reject(new Error('The image file could not be decoded.')), {once: true});
+            image.src = displaySource;
+        });
+        return {image, objectUrl};
+    } catch (error) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        throw error;
+    }
+}
+
+async function followChatImageJob(card, event) {
+    const jobId = String(event?.result?.job_id || '');
+    if (!jobId) return;
+    const status = card.querySelector('.chat-image-status');
+    const prompt = String(event.result?.prompt || 'Generated image');
+    for (let attempt = 0; attempt < 600 && card.isConnected; attempt += 1) {
+        try {
+            const payload = await apiJson(`/api/desktop/media/jobs/${encodeURIComponent(jobId)}`);
+            const job = payload.job;
+            if (job.status === 'failed') {
+                card.classList.add('failed');
+                status.textContent = job.error || 'Image generation failed.';
+                return;
+            }
+            if (job.status === 'completed') {
+                const source = generatedImageUrl(job);
+                if (!source) {
+                    card.classList.add('failed');
+                    status.textContent = 'The image finished, but its file is unavailable.';
+                    return;
+                }
+                const followLatest = distanceFromLatest() < 100;
+                try {
+                    const {image, objectUrl} = await loadChatGeneratedImage(source, prompt);
+                    const caption = document.createElement('figcaption');
+                    caption.textContent = prompt;
+                    const open = document.createElement('a');
+                    open.href = source;
+                    const galleryItem = job.result?.gallery_item;
+                    if (galleryItem?.local_filename && galleryItem.id) {
+                        open.dataset.galleryItemId = String(galleryItem.id);
+                    }
+                    configureExternalOpenLink(open, 'image');
+                    open.textContent = 'Open image';
+                    caption.append(' · ', open);
+                    card.replaceChildren(image, caption);
+                    card.classList.remove('pending');
+                    card.classList.add('completed');
+                    if (followLatest) messages.scrollTop = messages.scrollHeight;
+                    updateJumpToLatest();
+                } catch (error) {
+                    card.classList.remove('pending');
+                    card.classList.add('failed');
+                    status.textContent = `The generated image could not be displayed: ${error.message}`;
+                }
+                return;
+            }
+            const progress = Number(job.progress);
+            const progressText = Number.isFinite(progress) ? ` · ${Math.round(progress)}%` : '';
+            status.textContent = `${job.status === 'queued' ? 'Image queued' : 'Creating image'}${progressText}…`;
+        } catch (error) {
+            if (attempt === 0) {
+                try {
+                    const source = `/api/desktop/gallery/file/${encodeURIComponent(jobId)}`;
+                    const {image} = await loadChatGeneratedImage(source, prompt);
+                    const caption = document.createElement('figcaption');
+                    caption.textContent = prompt;
+                    const open = document.createElement('a');
+                    open.href = source;
+                    open.dataset.galleryItemId = jobId;
+                    configureExternalOpenLink(open, 'image');
+                    open.textContent = 'Open image';
+                    caption.append(' · ', open);
+                    card.replaceChildren(image, caption);
+                    card.classList.remove('pending');
+                    card.classList.add('completed');
+                    return;
+                } catch (_galleryError) { /* The job may still be starting. */ }
+            }
+            card.classList.add('failed');
+            status.textContent = `Could not follow image generation: ${error.message}`;
+            return;
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 1000));
+    }
+    if (card.isConnected) status.textContent = 'Image generation is still running. Check Media for progress.';
+}
+
+function appendChatImageJobs(content, toolEvents) {
+    for (const event of toolEvents || []) {
+        if (event.name !== 'generate_image' || event.result?.status !== 'queued' || !event.result?.job_id) continue;
+        const card = document.createElement('figure');
+        card.className = 'chat-generated-image pending';
+        const status = document.createElement('figcaption');
+        status.className = 'chat-image-status';
+        status.textContent = 'Image queued…';
+        card.append(status);
+        content.append(card);
+        window.setTimeout(() => followChatImageJob(card, event), 0);
+    }
+}
+
 function addMessage(role, text, options = {}) {
     const followLatest = options.forceScroll === true || distanceFromLatest() < 100;
     removeEmptyState();
@@ -194,7 +366,71 @@ function addMessage(role, text, options = {}) {
     if (text || options.typing) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
-        bubble.textContent = text;
+        if (role === 'assistant' && !options.typing) {
+            const artifactPath = '\\/api\\/addons\\/petey-opencode\\/artifacts\\/\\d+\\/\\d+';
+            const galleryPath = '\\/api\\/desktop\\/gallery\\/file\\/[a-f0-9]{32}';
+            const pattern = new RegExp(
+                `\\[([^\\]\\n]+)\\]\\((https?:\\/\\/[^\\s<>()]+|${artifactPath}|${galleryPath})\\)`
+                + `|(https?:\\/\\/[^\\s<>()\\[\\]]+|${artifactPath}|${galleryPath})`,
+                'g',
+            );
+            let offset = 0;
+            for (const match of String(text).matchAll(pattern)) {
+                bubble.append(document.createTextNode(text.slice(offset, match.index)));
+                const link = document.createElement('a');
+                const originalHref = match[2] || match[3];
+                let href = originalHref;
+                let artifactHref = '';
+                let galleryItemId = '';
+                try {
+                    const parsed = new URL(originalHref, window.location.href);
+                    const artifact = /^\/api\/addons\/petey-opencode\/artifacts\/\d+\/\d+$/.test(parsed.pathname);
+                    const galleryMatch = /^\/api\/desktop\/gallery\/file\/([a-f0-9]{32})$/.exec(parsed.pathname);
+                    const localOrigin = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+                    const sameOrigin = parsed.origin === window.location.origin;
+                    if ((artifact || galleryMatch) && (localOrigin || sameOrigin)) {
+                        artifactHref = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+                        if (galleryMatch) galleryItemId = galleryMatch[1];
+                    }
+                    if (artifactHref && localOrigin) {
+                        href = artifactHref;
+                    }
+                } catch (_error) {
+                    // Keep the displayed text; malformed links remain inert below.
+                }
+                link.href = href;
+                if (galleryItemId) link.dataset.galleryItemId = galleryItemId;
+                link.target = '_blank';
+                link.rel = 'noopener';
+                link.addEventListener('click', async event => {
+                    if (galleryItemId && window.pywebview?.api?.open_gallery_item) {
+                        event.preventDefault();
+                        try {
+                            const result = await window.pywebview.api.open_gallery_item(galleryItemId);
+                            if (!result?.ok) window.alert(result?.error || 'Could not open this image.');
+                        } catch (_error) {
+                            window.alert('Could not open this image.');
+                        }
+                        return;
+                    }
+                    if (!window.pywebview?.api?.open_external_url) return;
+                    event.preventDefault();
+                    try {
+                        if (!await window.pywebview.api.open_external_url(link.href)) {
+                            window.alert('Could not open the default browser. Copy the link to open it manually.');
+                        }
+                    } catch (error) {
+                        window.alert('Could not open the default browser. Copy the link to open it manually.');
+                    }
+                });
+                link.textContent = artifactHref || match[1] || originalHref;
+                bubble.append(link);
+                offset = match.index + match[0].length;
+            }
+            bubble.append(document.createTextNode(text.slice(offset)));
+        } else {
+            bubble.textContent = text;
+        }
         content.append(bubble);
     }
 
@@ -211,19 +447,7 @@ function addMessage(role, text, options = {}) {
         content.append(attachment);
     }
 
-    if ((options.toolEvents || []).some(event =>
-        event.name === 'generate_image' && event.result?.status === 'queued'
-    )) {
-        const action = document.createElement('button');
-        action.type = 'button';
-        action.className = 'message-action';
-        action.textContent = 'View generation progress';
-        action.addEventListener('click', () => {
-            showView('media');
-            loadMediaJobs();
-        });
-        content.append(action);
-    }
+    appendChatImageJobs(content, options.toolEvents);
     item.append(avatar, content);
     messages.append(item);
     if (followLatest) messages.scrollTop = messages.scrollHeight;
@@ -231,6 +455,23 @@ function addMessage(role, text, options = {}) {
     if (role === 'assistant' && !options.typing && text) setLastPeteyCaption(text);
     return item;
 }
+
+window.addEventListener('petey:addon-notification', event => {
+    const detail = event.detail || {};
+    if (detail.addon !== 'petey-opencode' || typeof detail.message !== 'string') return;
+    addMessage('assistant', detail.message, {forceScroll: true});
+    if (!document.getElementById('temporary-mode').checked) {
+        apiJson('/api/desktop/messages/notification', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                source: detail.addon,
+                message: detail.message,
+                conversation_id: activeConversationId,
+                surface: mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop',
+            }),
+        }).catch(error => { statusText.textContent = `Could not save OpenCode notice: ${error.message}`; });
+    }
+});
 
 function activeConversation() {
     return conversations.find(item => item.id === activeConversationId) || null;
@@ -261,12 +502,20 @@ function updateChatHeader() {
     statusText.textContent = '';
     fillConversationPersonaSelect(chatPersonaSelect, conversation?.persona_slot);
     chatPersonaSelect.disabled = !conversation;
+    fillConversationPersonaSelect(mobileChatPersonaSelect, conversation?.persona_slot);
+    mobileChatPersonaSelect.disabled = !conversation;
 }
 
 function applyConversationContext(payload) {
     if (Array.isArray(payload.persona_options)) conversationPersonaOptions = payload.persona_options;
     if (payload.speech) speechConfiguration = payload.speech;
     if (payload.voice_cues) applyWakeCueConfiguration(payload.voice_cues);
+    if (payload.speech && voiceResponseInitialized && !mobileLayoutQuery.matches
+        && !preferences.visual_mode) {
+        setVoiceResponseEnabled(Boolean(speechConfiguration.auto_speak));
+    } else {
+        renderVoiceResponseToggle();
+    }
     updateChatHeader();
 }
 
@@ -285,6 +534,10 @@ async function loadDesktop() {
         conversationPersonaOptions = bootstrap.persona_options || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
         speechConfiguration = bootstrap.speech || {provider: 'automatic', auto_speak: false};
+        voiceResponseEnabled = mobileLayoutQuery.matches
+            ? Boolean(preferences.visual_mode)
+            : Boolean(speechConfiguration.auto_speak);
+        voiceResponseInitialized = true;
         voiceInputConfiguration = {...voiceInputConfiguration, ...(bootstrap.voice_input || {})};
         workspaces = bootstrap.workspaces || [];
         activeWorkspaceId = bootstrap.active_workspace_id || '';
@@ -309,7 +562,9 @@ async function loadDesktop() {
 async function loadConversationMessages() {
     messages.innerHTML = '';
     const history = await apiJson('/api/desktop/messages');
-    history.forEach(item => addMessage(item.role, item.message));
+    history.forEach(item => addMessage(item.role, item.message, {
+        toolEvents: item.metadata?.tool_events || [],
+    }));
     if (!history.length) showEmptyState();
     scrollToLatest(false);
     updateChatHeader();
@@ -383,9 +638,29 @@ async function selectConversation(conversationId) {
 }
 
 async function deleteConversation(conversation) {
-    if (!window.confirm(`Delete “${conversation.title}” and all of its messages?`)) return;
+    pendingDeleteConversation = conversation;
+    document.getElementById('delete-chat-name').textContent = conversation.title;
+    document.getElementById('delete-chat-dialog').hidden = false;
+    document.getElementById('delete-chat-cancel').focus();
+}
+
+function closeDeleteChatDialog() {
+    pendingDeleteConversation = null;
+    document.getElementById('delete-chat-dialog').hidden = true;
+}
+
+async function confirmDeleteConversation(preserveMemory) {
+    const conversation = pendingDeleteConversation;
+    if (!conversation) return;
+    const dialog = document.getElementById('delete-chat-dialog');
+    const buttons = dialog.querySelectorAll('button');
+    buttons.forEach(button => { button.disabled = true; });
     try {
-        const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversation.id)}`, {method: 'DELETE'});
+        const payload = await apiJson(
+            `/api/desktop/conversations/${encodeURIComponent(conversation.id)}?preserve_memory=${preserveMemory ? 'true' : 'false'}`,
+            {method: 'DELETE'},
+        );
+        closeDeleteChatDialog();
         conversations = payload.conversations;
         activeConversationId = payload.conversation_id;
         applyConversationContext(payload);
@@ -394,8 +669,15 @@ async function deleteConversation(conversation) {
         await loadConversationMessages();
     } catch (error) {
         window.alert(error.message);
+    } finally {
+        buttons.forEach(button => { button.disabled = false; });
     }
 }
+
+document.getElementById('delete-chat-cancel').addEventListener('click', closeDeleteChatDialog);
+document.getElementById('delete-chat-cancel-x').addEventListener('click', closeDeleteChatDialog);
+document.getElementById('delete-chat-keep-memory').addEventListener('click', () => confirmDeleteConversation(true));
+document.getElementById('delete-chat-with-memory').addEventListener('click', () => confirmDeleteConversation(false));
 
 function closeNewChatDialog() {
     newChatDialog.hidden = true;
@@ -454,6 +736,7 @@ chatPersonaSelect.addEventListener('change', async () => {
     const previous = conversation.persona_slot ?? null;
     const personaSlot = chatPersonaSelect.value === 'system' ? null : Number(chatPersonaSelect.value);
     chatPersonaSelect.disabled = true;
+    mobileChatPersonaSelect.disabled = true;
     try {
         const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversation.id)}`, {
             method: 'PATCH', headers: {'Content-Type': 'application/json'},
@@ -462,12 +745,20 @@ chatPersonaSelect.addEventListener('change', async () => {
         conversations = payload.conversations;
         applyConversationContext(payload);
         renderConversations();
+        fillConversationPersonaSelect(mobileChatPersonaSelect, activeConversation()?.persona_slot);
     } catch (error) {
         fillConversationPersonaSelect(chatPersonaSelect, previous);
+        fillConversationPersonaSelect(mobileChatPersonaSelect, previous);
         window.alert(error.message);
     } finally {
-        chatPersonaSelect.disabled = false;
+        const hasConversation = Boolean(activeConversation());
+        chatPersonaSelect.disabled = !hasConversation;
+        mobileChatPersonaSelect.disabled = !hasConversation;
     }
+});
+mobileChatPersonaSelect.addEventListener('change', () => {
+    chatPersonaSelect.value = mobileChatPersonaSelect.value;
+    chatPersonaSelect.dispatchEvent(new Event('change', {bubbles: true}));
 });
 
 let selectedAttachmentPreviewUrl = '';
@@ -546,12 +837,14 @@ async function readChatStream(response, onEvent) {
 
 composer.addEventListener('submit', async event => {
     event.preventDefault();
-    if (speechConfiguration?.auto_speak && speechConfiguration?.provider !== 'disabled') {
+    if (voiceResponseEnabled && speechConfiguration?.provider !== 'disabled') {
         primeSpeechPlayback();
     }
     const text = messageInput.value.trim();
     const file = attachmentInput.files[0];
     if (sendButton.disabled || (!text && !file)) return;
+    const continueVoiceConversation = voiceInputConfiguration.mode === 'wake_word'
+        && voiceConversationActive && voiceConversationAwaitingReply;
 
     const attachmentPreviewUrl = file?.type?.startsWith('image/') ? URL.createObjectURL(file) : '';
     const displayedText = text || (file && !attachmentPreviewUrl ? `Attached: ${file.name}` : '');
@@ -563,6 +856,7 @@ composer.addEventListener('submit', async event => {
     const body = new FormData();
     body.append('message', text);
     body.append('stream', 'true');
+    body.append('surface', mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop');
     if (file) body.append('attachment', file);
     if (temporary) {
         body.append('temporary', 'true');
@@ -580,7 +874,7 @@ composer.addEventListener('submit', async event => {
     let spokenPrefix = '';
     let autoSpeechChain = Promise.resolve();
     const autoSpeak = speechConfiguration?.provider !== 'disabled'
-        && Boolean(speechConfiguration?.auto_speak);
+        && voiceResponseEnabled;
     try {
         const response = await fetch('/api/desktop/chat', {method: 'POST', body});
         if (!response.ok) {
@@ -596,7 +890,7 @@ composer.addEventListener('submit', async event => {
             statusText.textContent = 'Petey is replying…';
             if (autoSpeak && !spokenPrefix) {
                 const segment = firstStreamingSpeechSegment(partialText);
-                if (segment) {
+                if (segment && !/(?:^|\n)\s*Created files:/i.test(segment)) {
                     spokenPrefix = segment;
                     autoSpeechChain = autoSpeechChain.then(() => speakChatText(segment));
                 }
@@ -615,6 +909,13 @@ composer.addEventListener('submit', async event => {
                 autoSpeechChain = autoSpeechChain.then(() => speakChatText(remainder));
             }
         }
+        if (continueVoiceConversation) {
+            if (autoSpeak && payload.text) {
+                autoSpeechChain.finally(openVoiceConversationFollowup);
+            } else {
+                openVoiceConversationFollowup();
+            }
+        }
         if (temporary) temporaryHistory.push({role: 'assistant', content: payload.text || ''});
         if (temporary) statusText.textContent = 'Temporary · nothing saved';
         else updateChatHeader();
@@ -627,6 +928,10 @@ composer.addEventListener('submit', async event => {
         }
         addMessage('assistant', `I hit a problem: ${error.message}`);
         statusText.textContent = 'Something went wrong';
+        if (continueVoiceConversation) {
+            if (spokenPrefix) autoSpeechChain.finally(openVoiceConversationFollowup);
+            else openVoiceConversationFollowup();
+        }
     } finally {
         sendButton.disabled = false;
         messageInput.focus();
@@ -657,6 +962,62 @@ function setFeedback(element, text, kind = '') {
     if (kind) element.classList.add(kind);
 }
 
+function renderVoiceResponseToggle() {
+    const available = speechConfiguration?.provider !== 'disabled';
+    const enabled = available && voiceResponseEnabled;
+    voiceResponseButtons.forEach(button => {
+        button.textContent = '🔊';
+        button.classList.toggle('active', enabled);
+        button.classList.toggle('muted', !enabled);
+        button.setAttribute('aria-pressed', String(enabled));
+        button.setAttribute('aria-label', enabled ? 'Turn voice responses off' : 'Turn voice responses on');
+        button.title = available
+            ? (enabled ? 'Voice responses on · click to mute' : 'Voice responses off · click to enable')
+            : 'Choose a speech provider to enable voice responses';
+        button.disabled = !available;
+    });
+}
+
+function setVoiceResponseEnabled(enabled) {
+    voiceResponseEnabled = Boolean(enabled) && speechConfiguration?.provider !== 'disabled';
+    if (voiceResponseEnabled) {
+        primeSpeechPlayback();
+    } else {
+        if (activeSpeechCancel) activeSpeechCancel();
+        activeSpeechCancel = null;
+        activeChatAudio = null;
+        window.speechSynthesis?.cancel?.();
+        resetSpeechButton(activeSpeechButton);
+        setVoicePlaybackActive(false);
+    }
+    renderVoiceResponseToggle();
+}
+
+async function toggleVoiceResponse() {
+    const previous = voiceResponseEnabled;
+    const enabled = !previous;
+    setVoiceResponseEnabled(enabled);
+    if (mobileLayoutQuery.matches) return;
+    voiceResponseButtons.forEach(button => { button.disabled = true; });
+    try {
+        const payload = await apiJson('/api/desktop/speech', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({auto_speak: enabled}),
+        });
+        speechConfiguration = payload.configuration;
+        if (payload.voice_cues) applyWakeCueConfiguration(payload.voice_cues);
+        setVoiceResponseEnabled(Boolean(speechConfiguration.auto_speak));
+        if (speechSettingsLoaded) fillSpeechForm(speechConfiguration);
+    } catch (error) {
+        setVoiceResponseEnabled(previous);
+        statusText.textContent = `Could not change voice responses: ${error.message}`;
+    } finally {
+        renderVoiceResponseToggle();
+    }
+}
+
+voiceResponseButtons.forEach(button => button.addEventListener('click', toggleVoiceResponse));
+
 function applyPreferences() {
     const theme = preferences.theme || 'midnight';
     document.documentElement.dataset.theme = theme;
@@ -669,6 +1030,8 @@ function applyPreferences() {
     document.getElementById('ui-scale-value').textContent = `${Math.round(scale * 100)}%`;
     document.getElementById('collapse-sidebar').title = preferences.sidebar_collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     const visualMode = Boolean(preferences.visual_mode);
+    const enteringVisualMode = visualMode && lastAppliedVisualMode !== true;
+    lastAppliedVisualMode = visualMode;
     document.getElementById('view-chat').classList.toggle('visual-mode', visualMode);
     messages.hidden = visualMode;
     document.getElementById('visual-chat').hidden = !visualMode;
@@ -679,7 +1042,14 @@ function applyPreferences() {
     styleSelect.value = preferences.visual_style || 'neural_core';
     document.getElementById('visual-fullscreen').hidden = !visualMode;
     document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
-    if (visualMode) ensureNeuralVisualizationRunning();
+    if (voiceResponseInitialized && enteringVisualMode && !voiceResponseEnabled) {
+        setVoiceResponseEnabled(true);
+    } else {
+        renderVoiceResponseToggle();
+    }
+    if (visualMode) {
+        ensureNeuralVisualizationRunning();
+    } else setMobileVisualMenuOpen(false);
 }
 
 let themeSaving = false;
@@ -744,6 +1114,7 @@ document.getElementById('always-on-top').addEventListener('change', event => {
     savePreferences({always_on_top: event.target.checked}, true);
 });
 document.getElementById('visual-mode-toggle').addEventListener('click', () => {
+    if (!preferences.visual_mode) setVoiceResponseEnabled(true);
     savePreferences({visual_mode: !preferences.visual_mode});
 });
 document.getElementById('visual-style-select').addEventListener('change', event => {
@@ -758,19 +1129,35 @@ function captionExcerpt(text, wordLimit = 28) {
 function setLastPeteyCaption(text) {
     lastPeteyCaption = String(text || '').trim();
     if (!visualCaptionTimer) {
-        document.getElementById('visual-caption').textContent = captionExcerpt(lastPeteyCaption);
+        showVisualCaption(captionExcerpt(lastPeteyCaption));
+        scheduleVisualCaptionFade();
     }
+}
+
+function showVisualCaption(text) {
+    const caption = document.getElementById('visual-caption');
+    caption.textContent = text;
+    caption.classList.toggle('is-visible', Boolean(text));
+}
+
+function scheduleVisualCaptionFade() {
+    window.clearTimeout(visualCaptionHideTimer);
+    visualCaptionHideTimer = window.setTimeout(() => {
+        document.getElementById('visual-caption').classList.remove('is-visible');
+        visualCaptionHideTimer = null;
+    }, 5000);
 }
 
 function startVisualCaption(text) {
     window.clearInterval(visualCaptionTimer);
+    window.clearTimeout(visualCaptionHideTimer);
+    visualCaptionHideTimer = null;
     const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-    const caption = document.getElementById('visual-caption');
     lastPeteyCaption = String(text || '').trim();
     let cursor = 1;
     const render = () => {
         const start = Math.max(0, cursor - 16);
-        caption.textContent = words.slice(start, cursor).join(' ');
+        showVisualCaption(words.slice(start, cursor).join(' '));
         cursor = Math.min(words.length, cursor + 1);
     };
     render();
@@ -780,7 +1167,8 @@ function startVisualCaption(text) {
 function finishVisualCaption() {
     window.clearInterval(visualCaptionTimer);
     visualCaptionTimer = null;
-    document.getElementById('visual-caption').textContent = captionExcerpt(lastPeteyCaption);
+    showVisualCaption(captionExcerpt(lastPeteyCaption));
+    scheduleVisualCaptionFade();
 }
 
 async function toggleVisualFullscreen() {
@@ -816,6 +1204,16 @@ async function toggleVisualFullscreen() {
 
 document.getElementById('visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
 document.getElementById('mobile-visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
+const mobileVisualActions = document.getElementById('mobile-visual-actions');
+const mobileVisualMenuToggle = document.getElementById('mobile-visual-menu-toggle');
+function setMobileVisualMenuOpen(open) {
+    mobileVisualActions.hidden = !open;
+    mobileVisualMenuToggle.setAttribute('aria-expanded', String(open));
+    mobileVisualMenuToggle.setAttribute('aria-label', open ? 'Hide visual controls' : 'Show visual controls');
+}
+mobileVisualMenuToggle.addEventListener('click', () => {
+    if (mobileLayoutQuery.matches) setMobileVisualMenuOpen(mobileVisualActions.hidden);
+});
 function syncFullscreenControls() {
     const active = Boolean(document.fullscreenElement || nativeVisualFullscreen);
     document.getElementById('visual-fullscreen').textContent = active
@@ -909,6 +1307,9 @@ async function loadMobileSpeechCatalog() {
 
 async function openMobileSettings() {
     syncMobileSettings();
+    const conversation = activeConversation();
+    fillConversationPersonaSelect(mobileChatPersonaSelect, conversation?.persona_slot);
+    mobileChatPersonaSelect.disabled = !conversation;
     mobileSettingsPanel.hidden = false;
     mobileSettingsToggle.setAttribute('aria-expanded', 'true');
     try {
@@ -934,6 +1335,7 @@ mobilePersonaSelect.addEventListener('change', () => {
     fillMobileVoiceChoices(selectedMobileProfile()?.speech || speechConfiguration);
 });
 document.getElementById('mobile-visual-mode').addEventListener('click', async () => {
+    setVoiceResponseEnabled(true);
     await savePreferences({visual_mode: true});
 });
 document.getElementById('mobile-show-chat').addEventListener('click', async () => {
@@ -957,8 +1359,7 @@ document.getElementById('mobile-settings-save').addEventListener('click', async 
             savedPersonas = profilePayload.saved_personas || savedPersonas;
             applyWakeCueConfiguration(profilePayload.voice_cues);
         }
-        const speechUpdate = speechConfiguration?.provider === 'disabled'
-            ? {} : {auto_speak: true};
+        const speechUpdate = {};
         if (!mobileVoiceSelect.disabled && mobileVoiceSelect.value) {
             const provider = speechConfiguration?.provider || 'automatic';
             speechUpdate[provider === 'openai' ? 'openai_voice' : 'gemini_voice'] = mobileVoiceSelect.value;
@@ -970,6 +1371,7 @@ document.getElementById('mobile-settings-save').addEventListener('click', async 
             });
             speechConfiguration = speechPayload.configuration;
             applyWakeCueConfiguration(speechPayload.voice_cues);
+            renderVoiceResponseToggle();
         }
         const voicePayload = await apiJson('/api/desktop/voice-input', {
             method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -1057,7 +1459,7 @@ function renderAddons(payload) {
         const name = document.createElement('strong');
         name.textContent = addon.name;
         const version = document.createElement('small');
-        version.textContent = `${addon.version || ''} · ${addon.source}`;
+        version.textContent = [addon.version, addon.source].filter(Boolean).join(' · ');
         heading.append(name, version);
         const description = document.createElement('p');
         description.textContent = addon.description;
@@ -1078,14 +1480,15 @@ function renderAddons(payload) {
         const enabledLabel = document.createElement('label');
         enabledLabel.className = 'addon-toggle';
         const enabledText = document.createElement('span');
-        enabledText.textContent = 'Enabled';
+        enabledText.textContent = addon.configurable_enabled === false ? 'Available' : 'Enabled';
         const toggle = document.createElement('input');
         toggle.type = 'checkbox';
         toggle.role = 'switch';
         toggle.checked = Boolean(addon.enabled);
         // A broken enabled add-on must remain switchable off. Broken disabled
         // manifests cannot be enabled until their files are repaired.
-        toggle.disabled = Boolean(addon.error && !addon.enabled);
+        toggle.disabled = addon.configurable_enabled === false
+            || Boolean(addon.error && !addon.enabled);
         toggle.setAttribute('aria-label', `Enable ${addon.name}`);
         toggle.addEventListener('change', async () => {
             if (toggle.checked && addon.source === 'user'
@@ -1108,44 +1511,105 @@ function renderAddons(payload) {
         });
         enabledLabel.append(enabledText, toggle);
         controls.append(enabledLabel);
-        if (addon.source === 'user') {
-            const discordLabel = document.createElement('label');
-            discordLabel.className = 'addon-toggle addon-discord-toggle';
-            const discordCopy = document.createElement('span');
-            const discordTitle = document.createElement('strong');
-            discordTitle.textContent = 'Allow in Discord';
-            const discordHint = document.createElement('small');
-            discordHint.textContent = addon.has_model_tools
-                ? 'Discord users can ask PETEY to run this add-on’s commands.'
-                : 'Applies when this add-on provides model commands.';
-            discordCopy.append(discordTitle, discordHint);
-            const discordToggle = document.createElement('input');
-            discordToggle.type = 'checkbox';
-            discordToggle.role = 'switch';
-            discordToggle.checked = Boolean(addon.discord_tools_enabled);
-            // An enabled add-on with an error must still allow an existing
-            // Discord permission to be revoked.
-            discordToggle.disabled = !addon.enabled
-                || Boolean(addon.error && !addon.discord_tools_enabled);
-            discordToggle.setAttribute('aria-label', `Allow ${addon.name} commands in Discord`);
-            discordToggle.addEventListener('change', async () => {
-                discordToggle.disabled = true;
+        const control = addon.petey_control;
+        if (control) {
+            const controlPanel = document.createElement('section');
+            controlPanel.className = 'addon-control-panel';
+            const saveControl = async (changes, success) => {
                 try {
                     await apiJson(`/api/desktop/addons/${encodeURIComponent(addon.id)}`, {
                         method: 'PUT', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({discord_tools_enabled: discordToggle.checked}),
+                        body: JSON.stringify({petey_control: changes}),
                     });
-                    document.getElementById('addons-status').textContent = discordToggle.checked
-                        ? `${addon.name} commands are now available to Discord PETEY.`
-                        : `${addon.name} commands are blocked from Discord PETEY.`;
+                    document.getElementById('addons-status').textContent = success;
                     await loadAddons(true);
                 } catch (error) {
-                    discordToggle.checked = !discordToggle.checked;
                     document.getElementById('addons-status').textContent = error.message;
-                } finally { discordToggle.disabled = false; }
-            });
-            discordLabel.append(discordCopy, discordToggle);
-            controls.append(discordLabel);
+                    await loadAddons(true);
+                }
+            };
+            const controlLabel = document.createElement('label');
+            controlLabel.className = 'addon-toggle addon-control-master';
+            const controlCopy = document.createElement('span');
+            const controlTitle = document.createElement('strong');
+            controlTitle.textContent = 'Allow Petey to control';
+            const controlHint = document.createElement('small');
+            controlHint.textContent = 'Lets the model invoke the enabled capabilities below.';
+            controlCopy.append(controlTitle, controlHint);
+            const controlToggle = document.createElement('input');
+            controlToggle.type = 'checkbox';
+            controlToggle.role = 'switch';
+            controlToggle.checked = Boolean(control.enabled);
+            controlToggle.disabled = !addon.enabled || Boolean(addon.error);
+            controlToggle.addEventListener('change', () => saveControl(
+                {enabled: controlToggle.checked},
+                controlToggle.checked
+                    ? `Petey can now control ${addon.name} on the selected surfaces.`
+                    : `Petey can no longer control ${addon.name}.`,
+            ));
+            controlLabel.append(controlCopy, controlToggle);
+            controlPanel.append(controlLabel);
+
+            const surfaces = document.createElement('fieldset');
+            surfaces.className = 'addon-control-surfaces';
+            surfaces.disabled = !control.enabled;
+            const legend = document.createElement('legend');
+            legend.textContent = 'Allowed from';
+            surfaces.append(legend);
+            const surfaceLabels = {
+                petey_desktop: 'Desktop', mobile_petey: 'Mobile',
+                discord: 'Discord', petey_life: 'Petey Life',
+            };
+            for (const [surface, label] of Object.entries(surfaceLabels)) {
+                const option = document.createElement('label');
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.checked = Boolean(control.surfaces?.[surface]);
+                input.addEventListener('change', () => saveControl(
+                    {surfaces: {[surface]: input.checked}},
+                    `${addon.name} ${label} access updated.`,
+                ));
+                option.append(input, document.createTextNode(label));
+                surfaces.append(option);
+            }
+            controlPanel.append(surfaces);
+
+            for (const capability of control.capabilities || []) {
+                const capabilityRow = document.createElement('div');
+                capabilityRow.className = 'addon-capability';
+                const capabilityLabel = document.createElement('label');
+                const capabilityToggle = document.createElement('input');
+                capabilityToggle.type = 'checkbox';
+                capabilityToggle.checked = Boolean(capability.enabled);
+                capabilityToggle.disabled = !control.enabled;
+                capabilityToggle.addEventListener('change', () => saveControl(
+                    {capabilities: {[capability.id]: {enabled: capabilityToggle.checked}}},
+                    `${capability.label} permission updated.`,
+                ));
+                capabilityLabel.append(capabilityToggle, document.createTextNode(capability.label));
+                capabilityRow.append(capabilityLabel);
+                if (capability.metered) {
+                    const limitLabel = document.createElement('label');
+                    limitLabel.className = 'addon-daily-limit';
+                    limitLabel.append(document.createTextNode('Autonomous daily limit'));
+                    const limit = document.createElement('input');
+                    limit.type = 'number';
+                    limit.min = '0';
+                    limit.max = '1000';
+                    limit.value = String(capability.daily_limit);
+                    limit.disabled = !control.enabled || !capability.enabled;
+                    limit.addEventListener('change', () => saveControl(
+                        {capabilities: {[capability.id]: {daily_limit: Number(limit.value)}}},
+                        `${capability.label} daily limit updated.`,
+                    ));
+                    const usage = document.createElement('small');
+                    usage.textContent = `${capability.used_today} used today · direct requests bypass this limit`;
+                    limitLabel.append(limit, usage);
+                    capabilityRow.append(limitLabel);
+                }
+                controlPanel.append(capabilityRow);
+            }
+            controls.append(controlPanel);
         }
         row.append(copy, controls);
         list.append(row);
@@ -1503,6 +1967,7 @@ document.getElementById('test-ai-provider').addEventListener('click', async () =
 const voiceInputButton = document.getElementById('voice-input-button');
 const visualVoiceInputButton = document.getElementById('visual-voice-input-button');
 const visualVoiceInputLabel = document.getElementById('visual-voice-input-label');
+const visualMicMuteButton = document.getElementById('visual-mic-mute-button');
 const visualDictationForm = document.getElementById('visual-dictation-form');
 const visualDictationInput = document.getElementById('visual-dictation-input');
 const voiceInputModeSelect = document.getElementById('voice-input-mode');
@@ -1516,14 +1981,23 @@ function configureVoiceInputUI() {
     const mode = voiceInputConfiguration?.mode || 'disabled';
     voiceInputButton.hidden = mode === 'disabled';
     visualVoiceInputButton.hidden = mode !== 'push_to_talk';
+    visualMicMuteButton.hidden = mode === 'disabled';
+    voiceInputButton.classList.toggle('muted', mobileLayoutQuery.matches && mobileVisualMicMuted);
+    visualMicMuteButton.classList.toggle('muted', mobileVisualMicMuted);
+    visualVoiceInputButton.classList.toggle('muted', mobileVisualMicMuted);
+    visualMicMuteButton.setAttribute('aria-pressed', String(mobileVisualMicMuted));
+    visualMicMuteButton.setAttribute('aria-label', mobileVisualMicMuted ? 'Unmute microphone' : 'Mute microphone');
+    visualMicMuteButton.title = mobileVisualMicMuted ? 'Unmute microphone' : 'Mute microphone';
     if (mode !== 'push_to_talk') visualDictationForm.hidden = true;
     [voiceInputButton, visualVoiceInputButton].forEach(button => {
         button.classList.toggle('listening', voiceInputRunning && !microphoneCapturing);
         button.classList.toggle('recording', microphoneCapturing);
         button.classList.toggle('processing', voiceInputBusy);
-        button.disabled = voiceInputBusy;
+        button.disabled = voiceInputBusy || (button === visualVoiceInputButton && mobileVisualMicMuted);
     });
-    visualVoiceInputLabel.textContent = voiceInputBusy
+    visualVoiceInputLabel.textContent = mobileVisualMicMuted
+        ? 'Muted'
+        : voiceInputBusy
         ? 'Transcribing…'
         : microphoneCapturing
             ? 'Release to send'
@@ -1538,14 +2012,31 @@ function configureVoiceInputUI() {
         always_on: voiceInputRunning ? 'Microphone is listening; click to stop' : 'Click to start microphone',
         wake_word: voiceInputRunning ? `Listening for ${voiceInputConfiguration.wake_word || 'Petey'}; click to stop` : 'Click to start wake-name listening',
     }[mode] || 'Microphone input';
-    if (mode === 'disabled') {
-        setVoiceInputStatus('Enter to send · Shift+Enter for a new line');
+    if (mobileLayoutQuery.matches && mobileVisualMicMuted && mode !== 'disabled') {
+        voiceInputButton.title = 'Microphone muted · tap to unmute';
+        voiceInputButton.setAttribute('aria-label', 'Unmute microphone');
+    } else {
+        voiceInputButton.setAttribute('aria-label', voiceInputButton.title);
+    }
+    if (mode !== 'disabled' && mobileVisualMicMuted && mobileLayoutQuery.matches) {
+        setVoiceInputStatus('Microphone muted · tap the crossed-out mic to unmute');
+    } else if (mode === 'disabled') {
+        setVoiceInputStatus('Ready');
     } else if (voiceInputBusy) {
         setVoiceInputStatus('Transcribing…');
     } else if (microphoneCapturing) {
-        setVoiceInputStatus(mode === 'push_to_talk' ? 'Recording · release to send' : 'Listening to you…');
+        const heardWake = mode !== 'wake_word' || voiceConversationActive;
+        setVoiceInputStatus(mode === 'push_to_talk'
+            ? 'Recording · release to send'
+            : heardWake
+                ? 'Listening to you…'
+                : `Speech detected · waiting to hear “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
     } else if (mode === 'push_to_talk') {
         setVoiceInputStatus('Hold the mic or Space to talk · Enter to send');
+    } else if (voiceInputRunning && mode === 'wake_word' && voiceConversationAwaitingReply) {
+        setVoiceInputStatus('Petey is responding · microphone stays ready for follow-up…');
+    } else if (voiceInputRunning && mode === 'wake_word' && voiceConversationActive) {
+        setVoiceInputStatus('Listening for your request…');
     } else if (voiceInputRunning && mode === 'wake_word') {
         setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
     } else if (voiceInputRunning) {
@@ -1574,14 +2065,17 @@ function configureVoiceInputSettings() {
     document.getElementById('voice-input-device').disabled = !enabled;
     document.getElementById('voice-input-sensitivity').disabled = !enabled;
     document.getElementById('voice-wake-word-field').hidden = mode !== 'wake_word';
+    document.getElementById('voice-wake-delay-field').hidden = mode !== 'wake_word';
+    document.getElementById('voice-submit-delay-field').hidden = !['always_on', 'wake_word'].includes(mode);
+    document.getElementById('voice-follow-up-field').hidden = mode !== 'wake_word';
     document.getElementById('voice-input-badge').textContent = {
         disabled: 'Off', push_to_talk: 'Push to talk', always_on: 'Always on', wake_word: 'Wake name',
     }[mode];
     document.getElementById('voice-input-note').textContent = {
         disabled: 'Audio stays off until microphone input is enabled.',
         push_to_talk: 'Hold the mic button or Space outside the message box, speak, then release to transcribe and send.',
-        always_on: 'Petey detects speech and sends each utterance after a short silence.',
-        wake_word: `Petey sends an utterance only when it contains “${document.getElementById('voice-wake-word').value.trim() || 'Petey'}”.`,
+        always_on: 'Petey records each utterance and sends it to your selected transcription provider after the selected silence.',
+        wake_word: `Say “${document.getElementById('voice-wake-word').value.trim() || 'Petey'}” and pause for an acknowledgement, then speak naturally. PETEY keeps listening briefly after each answer.`,
     }[mode];
 }
 
@@ -1595,6 +2089,9 @@ async function loadVoiceInputSettings() {
         voiceInputProviderSelect.value = voiceInputConfiguration.provider || 'deapi';
         document.getElementById('voice-wake-word').value = voiceInputConfiguration.wake_word || 'Petey';
         document.getElementById('voice-input-sensitivity').value = voiceInputConfiguration.sensitivity || 'normal';
+        document.getElementById('voice-wake-delay').value = voiceInputConfiguration.wake_ack_delay_ms || 500;
+        document.getElementById('voice-submit-delay').value = voiceInputConfiguration.submit_silence_ms || 800;
+        document.getElementById('voice-follow-up-seconds').value = voiceInputConfiguration.follow_up_seconds || 8;
         await refreshMicrophoneDevices();
         configureVoiceInputSettings();
         configureVoiceInputUI();
@@ -1643,6 +2140,9 @@ document.getElementById('save-voice-input').addEventListener('click', async () =
                 wake_word: document.getElementById('voice-wake-word').value,
                 device_id: document.getElementById('voice-input-device').value,
                 sensitivity: document.getElementById('voice-input-sensitivity').value,
+                wake_ack_delay_ms: Number(document.getElementById('voice-wake-delay').value),
+                submit_silence_ms: Number(document.getElementById('voice-submit-delay').value),
+                follow_up_seconds: Number(document.getElementById('voice-follow-up-seconds').value),
             }),
         });
         await stopVoiceInput();
@@ -1686,7 +2186,7 @@ async function refreshMicrophoneDevices() {
 }
 
 async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || '') {
-    if (microphoneStream?.active && microphoneContext) return;
+    if (microphoneStream?.active && microphoneContext && microphoneProcessor) return;
     if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('This desktop backend does not provide microphone capture.');
     }
@@ -1710,19 +2210,22 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
         microphoneContext = new AudioContextClass({latencyHint: 'interactive'});
     }
     await microphoneContext.resume();
-    const source = microphoneContext.createMediaStreamSource(microphoneStream);
+    microphoneSource = microphoneContext.createMediaStreamSource(microphoneStream);
     microphoneProcessor = microphoneContext.createScriptProcessor(2048, 1, 1);
-    const silentOutput = microphoneContext.createGain();
-    silentOutput.gain.value = 0;
+    microphoneSilentOutput = microphoneContext.createGain();
+    microphoneSilentOutput.gain.value = 0;
     microphoneProcessor.onaudioprocess = handleMicrophoneAudio;
-    source.connect(microphoneProcessor);
-    microphoneProcessor.connect(silentOutput);
-    silentOutput.connect(microphoneContext.destination);
-    await refreshMicrophoneDevices();
+    microphoneSource.connect(microphoneProcessor);
+    microphoneProcessor.connect(microphoneSilentOutput);
+    microphoneSilentOutput.connect(microphoneContext.destination);
+    prepareWakeCueBuffers().catch(() => {});
+    refreshMicrophoneDevices();
 }
 
 function handleMicrophoneAudio(event) {
+    microphoneFrameCount += 1;
     const samples = event.inputBuffer.getChannelData(0);
+    const now = performance.now();
     let energy = 0;
     for (let index = 0; index < samples.length; index += 1) energy += samples[index] * samples[index];
     const rms = Math.sqrt(energy / samples.length);
@@ -1740,7 +2243,8 @@ function handleMicrophoneAudio(event) {
             ? 'Input detected — microphone is working.' : 'Listening… speak into the microphone.';
     }
     if (voiceInputRunning && voiceInputConfiguration.mode === 'wake_word'
-        && !voiceInputPlaybackBlocked) {
+        && !voiceInputPlaybackBlocked && !voiceConversationActive
+        && !voiceConversationAwaitingReply) {
         queueLocalWakeAudio(samples);
     }
     if (!voiceInputRunning || voiceInputBusy || voiceInputPlaybackBlocked) return;
@@ -1749,7 +2253,7 @@ function handleMicrophoneAudio(event) {
         if (microphoneCapturing) microphoneCapture.push(new Float32Array(samples));
         return;
     }
-    const now = performance.now();
+    if (mode === 'wake_word' && voiceConversationAwaitingReply) return;
     if (!microphoneCapturing) {
         microphonePreRoll.push(new Float32Array(samples));
         const preRollLimit = Math.max(2, Math.ceil((microphoneContext.sampleRate * .35) / samples.length));
@@ -1759,13 +2263,17 @@ function handleMicrophoneAudio(event) {
             microphoneCapturing = true;
             microphoneCaptureStartedAt = now;
             microphoneLastVoiceAt = now;
+            if (mode === 'wake_word' && voiceConversationActive) {
+                clearVoiceConversationFollowup();
+            }
             configureVoiceInputUI();
         }
         return;
     }
     microphoneCapture.push(new Float32Array(samples));
     if (rms >= threshold * .55) microphoneLastVoiceAt = now;
-    if ((now - microphoneLastVoiceAt > 375 && now - microphoneCaptureStartedAt > 300)
+    if ((now - microphoneLastVoiceAt > Number(voiceInputConfiguration.submit_silence_ms || 800)
+            && now - microphoneCaptureStartedAt > 300)
         || now - microphoneCaptureStartedAt > 30000) {
         finishVoiceCapture();
     }
@@ -1850,11 +2358,11 @@ function handleVoiceTranscript(transcript) {
     let command = transcript;
     if (voiceInputConfiguration.mode === 'wake_word') {
         const wakeWord = voiceInputConfiguration.wake_word || 'Petey';
-        const escaped = wakeWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const match = transcript.match(new RegExp(`\\b${escaped}\\b[\\s,.:;!?—-]*(.*)$`, 'i'));
+        const expression = wakeWordExpression(wakeWord);
+        const match = transcript.match(new RegExp(`\\b(?:${expression})\\b[\\s,.:;!?—-]*(.*)$`, 'i'));
         if (match) {
             command = match[1].trim();
-            wakeWordArmedUntil = Date.now() + 8000;
+            beginVoiceConversation();
             if (!command) {
                 if (Date.now() >= wakeCueAcknowledgedUntil) {
                     scheduleWakeAcknowledgement(performance.now(), 0);
@@ -1863,8 +2371,8 @@ function handleVoiceTranscript(transcript) {
                 return;
             }
             cancelPendingWakeAcknowledgement();
-        } else if (Date.now() < wakeWordArmedUntil) {
-            wakeWordArmedUntil = 0;
+        } else if (voiceConversationActive) {
+            clearVoiceConversationFollowup();
         } else {
             setVoiceInputStatus(`Ignored speech without “${wakeWord}”.`);
             return;
@@ -1873,7 +2381,10 @@ function handleVoiceTranscript(transcript) {
     const existing = messageInput.value.trim();
     messageInput.value = existing ? `${existing} ${command}` : command;
     messageInput.dispatchEvent(new Event('input'));
-    if (!sendButton.disabled) composer.requestSubmit();
+    if (!sendButton.disabled) {
+        if (voiceInputConfiguration.mode === 'wake_word') markVoiceConversationRequest();
+        composer.requestSubmit();
+    }
     else setVoiceInputStatus('Transcript added to the message box; Petey is still replying.');
 }
 
@@ -1887,12 +2398,14 @@ function applyWakeCueConfiguration(payload, showStatus = false) {
         audio.pause();
     });
     wakeCueConfiguration = payload;
+    wakeCueBuffers = [];
     wakeCueAudios = (payload.clips || []).map(clip => {
         const audio = new Audio(clip.url);
         audio.preload = 'auto';
         audio.load();
         return audio;
     });
+    prepareWakeCueBuffers();
     document.getElementById('voice-cues-directory').textContent = payload.directory;
     if (showStatus) {
         const source = payload.source_voice === payload.voice
@@ -1901,6 +2414,22 @@ function applyWakeCueConfiguration(payload, showStatus = false) {
             ? `${wakeCueAudios.length} acknowledgement clip${wakeCueAudios.length === 1 ? '' : 's'} loaded from ${source}.`
             : 'Using the built-in spoken acknowledgements until audio files are added.';
     }
+}
+
+async function prepareWakeCueBuffers() {
+    if (!microphoneContext || !wakeCueConfiguration?.clips?.length) return;
+    const configuration = wakeCueConfiguration;
+    const results = await Promise.all(configuration.clips.map(async clip => {
+        try {
+            const response = await fetch(clip.url);
+            if (!response.ok) return null;
+            const encoded = await response.arrayBuffer();
+            return await microphoneContext.decodeAudioData(encoded.slice(0));
+        } catch (_error) {
+            return null;
+        }
+    }));
+    if (wakeCueConfiguration === configuration) wakeCueBuffers = results;
 }
 
 async function loadWakeCues(showStatus = false) {
@@ -1925,6 +2454,9 @@ function setWakeCuePlaybackActive(active, preserveCapture = false) {
 function finishWakeCuePlayback() {
     wakeCueAudio = null;
     setWakeCuePlaybackActive(false);
+    if (voiceConversationActive && !voiceConversationAwaitingReply) {
+        armVoiceConversationListening('Listening for your request…');
+    }
 }
 
 function stopWakeAcknowledgement() {
@@ -1934,8 +2466,12 @@ function stopWakeAcknowledgement() {
     if (audio) {
         audio.onended = null;
         audio.onerror = null;
-        audio.pause();
-        audio.currentTime = 0;
+        if (typeof audio.stop === 'function') {
+            try { audio.stop(); } catch (_error) { /* already stopped */ }
+        } else {
+            audio.pause();
+            audio.currentTime = 0;
+        }
     }
     if (wakeCuePlaying) window.speechSynthesis?.cancel?.();
     setWakeCuePlaybackActive(false);
@@ -1947,7 +2483,7 @@ function cancelPendingWakeAcknowledgement() {
     wakeCuePendingAfter = 0;
 }
 
-function scheduleWakeAcknowledgement(continuedSpeechAfter, delay = 425) {
+function scheduleWakeAcknowledgement(continuedSpeechAfter, delay = Number(voiceInputConfiguration.wake_ack_delay_ms || 500)) {
     cancelPendingWakeAcknowledgement();
     wakeCuePendingAfter = Number(continuedSpeechAfter || performance.now());
     wakeCuePendingTimer = window.setTimeout(() => {
@@ -1960,6 +2496,70 @@ function scheduleWakeAcknowledgement(continuedSpeechAfter, delay = 425) {
         wakeCuePendingAfter = 0;
         playWakeAcknowledgement(true);
     }, delay);
+}
+
+function clearVoiceConversationFollowup() {
+    if (voiceConversationFollowupTimer) window.clearTimeout(voiceConversationFollowupTimer);
+    voiceConversationFollowupTimer = null;
+}
+
+function scheduleVoiceConversationIdleTimeout() {
+    clearVoiceConversationFollowup();
+    if (!voiceConversationActive || voiceConversationAwaitingReply) return;
+    const seconds = Number(voiceInputConfiguration.follow_up_seconds || 8);
+    wakeWordArmedUntil = Date.now() + seconds * 1000;
+    voiceConversationFollowupTimer = window.setTimeout(() => {
+        voiceConversationFollowupTimer = null;
+        if (microphoneCapturing || voiceInputBusy) {
+            scheduleVoiceConversationIdleTimeout();
+            return;
+        }
+        voiceConversationActive = false;
+        voiceConversationAwaitingReply = false;
+        wakeWordArmedUntil = 0;
+        setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
+    }, seconds * 1000);
+}
+
+function beginVoiceConversation() {
+    armVoiceConversationListening('Listening for your request…');
+}
+
+function markVoiceConversationRequest() {
+    clearVoiceConversationFollowup();
+    voiceConversationActive = true;
+    voiceConversationAwaitingReply = true;
+    wakeWordArmedUntil = 0;
+    setVoiceInputStatus('Petey is responding · microphone stays ready for follow-up…');
+}
+
+function armVoiceConversationListening(statusMessage) {
+    clearVoiceConversationFollowup();
+    voiceConversationActive = true;
+    voiceConversationAwaitingReply = false;
+    setVoiceInputStatus(statusMessage);
+    scheduleVoiceConversationIdleTimeout();
+}
+
+function openVoiceConversationFollowup() {
+    if (!voiceConversationActive || !voiceInputRunning
+        || voiceInputConfiguration.mode !== 'wake_word') return;
+    armVoiceConversationListening('Listening for your follow-up…');
+}
+
+function stopVoiceConversation() {
+    clearVoiceConversationFollowup();
+    voiceConversationActive = false;
+    voiceConversationAwaitingReply = false;
+    wakeWordArmedUntil = 0;
+}
+
+function wakeWordExpression(wakeWord) {
+    const variants = [String(wakeWord || 'Petey').trim() || 'Petey'];
+    if (variants[0].toLowerCase() === 'petey') variants.push('Pete', 'Petty', 'Pity');
+    return variants
+        .map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|');
 }
 
 function speakFallbackWakeCue() {
@@ -1991,6 +2591,16 @@ function playWakeAcknowledgement(preserveCapture = false) {
         index = (index + 1) % wakeCueAudios.length;
     }
     lastWakeCueIndex = index;
+    const decoded = wakeCueBuffers[index];
+    if (decoded && microphoneContext?.state === 'running') {
+        const source = microphoneContext.createBufferSource();
+        source.buffer = decoded;
+        source.connect(microphoneContext.destination);
+        source.onended = finishWakeCuePlayback;
+        wakeCueAudio = source;
+        source.start();
+        return;
+    }
     wakeCueAudio = wakeCueAudios[index];
     wakeCueAudio.currentTime = 0;
     wakeCueAudio.onended = finishWakeCuePlayback;
@@ -2044,10 +2654,14 @@ async function flushLocalWakeAudio() {
         if (!response.ok) throw new Error(payload.error || 'Local wake detector stopped.');
         if (payload.detected && Date.now() >= wakeCueAcknowledgedUntil
             && !wakeCuePendingTimer
-            && !voiceInputPlaybackBlocked && !activeSpeechCancel && !activeChatAudio) {
-            wakeWordArmedUntil = Date.now() + 8000;
+            && !voiceInputPlaybackBlocked && !activeSpeechCancel && !activeChatAudio
+            && !voiceConversationActive && !voiceConversationAwaitingReply) {
+            beginVoiceConversation();
             setVoiceInputStatus(`Heard “${voiceInputConfiguration.wake_word || 'Petey'}” · listening for your request…`);
-            scheduleWakeAcknowledgement(audioSentAt + 100);
+            scheduleWakeAcknowledgement(
+                audioSentAt + 100,
+                Number(voiceInputConfiguration.wake_ack_delay_ms || 500),
+            );
         }
     } catch (_error) {
         if (wakeDetectorSessionId === sessionId) wakeDetectorSessionId = '';
@@ -2066,11 +2680,11 @@ async function startLocalWakeDetector() {
         if (voiceInputRunning && voiceInputConfiguration.mode === 'wake_word') {
             wakeDetectorSessionId = payload.session_id || '';
             if (wakeDetectorSessionId) {
-                setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}” · local wake detector ready`);
+                setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
             }
         }
     } catch (_error) {
-        setVoiceInputStatus('Local wake detector unavailable · using transcription fallback');
+        setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
     } finally {
         wakeDetectorStarting = false;
     }
@@ -2090,11 +2704,16 @@ function stopLocalWakeDetector() {
 }
 
 async function startContinuousVoiceInput() {
-    if (!['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) return;
+    if (!['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)
+        || (mobileLayoutQuery.matches && mobileVisualMicMuted)) return;
     try {
         await ensureMicrophone();
+        if (mobileLayoutQuery.matches && mobileVisualMicMuted) {
+            await stopVoiceInput();
+            return;
+        }
         voiceInputRunning = true;
-        startLocalWakeDetector();
+        await startLocalWakeDetector();
         configureVoiceInputUI();
     } catch (error) {
         voiceInputRunning = false;
@@ -2105,12 +2724,17 @@ async function startContinuousVoiceInput() {
 
 async function stopVoiceInput() {
     voiceInputRunning = false;
+    stopVoiceConversation();
     stopLocalWakeDetector();
     pushToTalkHeld = false;
     microphoneTestActive = false;
     if (microphoneCapturing) await finishVoiceCapture(true);
+    if (microphoneSource) microphoneSource.disconnect();
+    microphoneSource = null;
     if (microphoneProcessor) microphoneProcessor.disconnect();
     microphoneProcessor = null;
+    if (microphoneSilentOutput) microphoneSilentOutput.disconnect();
+    microphoneSilentOutput = null;
     microphoneStream?.getTracks().forEach(track => track.stop());
     microphoneStream = null;
     if (microphoneContext) await microphoneContext.close().catch(() => {});
@@ -2134,10 +2758,17 @@ document.getElementById('test-voice-input').addEventListener('click', async () =
     button.disabled = true;
     try {
         await stopVoiceInput();
+        status.textContent = 'Requesting microphone access…';
+        const framesBeforeTest = microphoneFrameCount;
         await ensureMicrophone(document.getElementById('voice-input-device').value);
         microphoneTestActive = true;
         button.textContent = 'Stop test';
         status.textContent = 'Listening… speak into the microphone.';
+        window.setTimeout(() => {
+            if (microphoneTestActive && microphoneFrameCount === framesBeforeTest) {
+                status.textContent = 'Microphone opened, but no audio is arriving. Check the selected input and system microphone permission.';
+            }
+        }, 1500);
     } catch (error) {
         status.textContent = `Microphone unavailable: ${error.message}`;
     } finally {
@@ -2157,13 +2788,36 @@ function setVoicePlaybackActive(active) {
 }
 
 voiceInputButton.addEventListener('click', async () => {
+    if (mobileLayoutQuery.matches && mobileVisualMicMuted) {
+        mobileVisualMicMuted = false;
+        configureVoiceInputUI();
+        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            await startContinuousVoiceInput();
+        }
+        return;
+    }
     if (voiceInputConfiguration.mode === 'push_to_talk') return;
     if (voiceInputRunning) await stopVoiceInput();
     else await startContinuousVoiceInput();
 });
 
+visualMicMuteButton.addEventListener('click', async () => {
+    visualMicMuteButton.disabled = true;
+    mobileVisualMicMuted = !mobileVisualMicMuted;
+    try {
+        if (mobileVisualMicMuted) await stopVoiceInput();
+        else if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            await startContinuousVoiceInput();
+        }
+    } finally {
+        visualMicMuteButton.disabled = false;
+        configureVoiceInputUI();
+    }
+});
+
 async function beginPushToTalk(event) {
-    if (voiceInputConfiguration.mode !== 'push_to_talk' || voiceInputBusy) return;
+    if (voiceInputConfiguration.mode !== 'push_to_talk' || voiceInputBusy
+        || (mobileLayoutQuery.matches && mobileVisualMicMuted)) return;
     event.preventDefault();
     primeSpeechPlayback();
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -2424,7 +3078,21 @@ function primeSpeechPlayback() {
     }
 }
 
+function textForChatSpeech(text) {
+    const source = String(text || '');
+    const firstLine = source.split(/\r?\n/, 1)[0].trim();
+    if (/^OpenCode run #\d+\b/.test(firstLine)) return firstLine;
+    const heading = /(?:^|\r?\n)\s*Created files:\s*(?=\r?\n|$)/i.exec(source);
+    const prose = heading ? source.slice(0, heading.index) : source;
+    const spoken = prose.split(/\r?\n/)
+        .filter(line => !/\/api\/addons\/petey-opencode\/artifacts\/\d+\/\d+/.test(line))
+        .join('\n').trim();
+    return spoken || (heading ? 'Created files are linked in chat.' : '');
+}
+
 async function speakChatText(text, button = null) {
+    text = textForChatSpeech(text);
+    if (!text) return;
     primeSpeechPlayback();
     if (button?.classList.contains('speaking') && activeSpeechCancel) {
         activeSpeechCancel();
@@ -3678,8 +4346,15 @@ function renderMediaResult(payload) {
     media.src = previewUrl;
     container.append(media);
     openLink.href = localUrl || payload.result_url || '#';
+    if (localItem?.local_filename && localItem.id) {
+        openLink.dataset.galleryItemId = String(localItem.id);
+    } else {
+        delete openLink.dataset.galleryItemId;
+    }
     openLink.hidden = !localUrl && !payload.result_url;
 }
+
+configureExternalOpenLink(document.getElementById('media-open-result'), 'generated file');
 
 document.getElementById('generate-media').addEventListener('click', async () => {
     const operation = mediaOperation.value;

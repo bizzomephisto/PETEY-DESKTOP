@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>PETEY</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='desktop.css', v=asset_revision) }}">
-    {% for addon in addon_views %}{% if addon.stylesheet %}<link rel="stylesheet" href="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.stylesheet, v=asset_revision) }}">{% endif %}{% endfor %}
+    {% for addon in addon_views %}{% if addon.stylesheet %}<link rel="stylesheet" href="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.stylesheet, v=addon.asset_revision) }}">{% endif %}{% endfor %}
 </head>
 <body>
     <main class="app-shell">
@@ -80,20 +80,34 @@
                 </form>
             </div>
 
+            <div id="delete-chat-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-chat-dialog-title" hidden>
+                <div class="new-chat-card delete-chat-card">
+                    <div class="new-chat-heading"><div><span class="page-eyebrow">DELETE CHAT</span><h2 id="delete-chat-dialog-title">Delete “<span id="delete-chat-name"></span>”?</h2></div><button id="delete-chat-cancel-x" class="new-chat-close" type="button" aria-label="Close">×</button></div>
+                    <p>Choose whether PETEY should retain this conversation as searchable memory after removing it from the chat list.</p>
+                    <button id="delete-chat-keep-memory" class="secondary-button" type="button"><strong>Delete chat, preserve memory</strong><small>The messages remain available to PETEY’s memory search.</small></button>
+                    <button id="delete-chat-with-memory" class="danger-button" type="button"><strong>Delete chat and memory</strong><small>Permanently deletes every stored message in this chat. This cannot be undone.</small></button>
+                    <button id="delete-chat-cancel" class="text-button" type="button">Cancel</button>
+                </div>
+            </div>
+
             <div id="visual-chat" class="visual-chat" hidden>
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
-                <div class="mobile-visual-actions">
+                <div id="mobile-visual-actions" class="mobile-visual-actions" hidden>
                     <button id="mobile-show-chat" type="button">Chat</button>
                     <button id="mobile-visual-fullscreen" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
                     <button id="mobile-visual-settings" type="button" aria-label="Open mobile settings">⚙</button>
                 </div>
                 <div id="visual-caption" class="visual-caption" aria-live="polite"></div>
-                <div class="visual-chat-identity"><strong>PETEY</strong><span id="visual-chat-state">Present</span></div>
+                <button id="mobile-visual-menu-toggle" class="visual-chat-identity" type="button" aria-label="Show visual controls" aria-expanded="false" aria-controls="mobile-visual-actions"><span class="visual-menu-chevron" aria-hidden="true">⌃</span><strong>PETEY</strong><span id="visual-chat-state">Present</span></button>
                 <div class="visual-voice-control">
-                    <button id="visual-voice-input-button" class="visual-voice-input-button" type="button" aria-label="Hold to talk to Petey" hidden>
-                        <span aria-hidden="true">🎙</span>
-                        <strong id="visual-voice-input-label">Hold to talk</strong>
-                    </button>
+                    <div class="visual-voice-buttons">
+                        <button id="visual-mic-mute-button" class="visual-mic-mute-button" type="button" aria-label="Mute microphone" aria-pressed="false" hidden><span aria-hidden="true">🎙</span></button>
+                        <button id="visual-voice-input-button" class="visual-voice-input-button" type="button" aria-label="Hold to talk to Petey" hidden>
+                            <span aria-hidden="true">🎙</span>
+                            <strong id="visual-voice-input-label">Hold to talk</strong>
+                        </button>
+                        <button id="visual-voice-response-toggle" class="voice-response-button visual-voice-response-button muted" type="button" aria-label="Turn voice responses on" aria-pressed="false">🔊</button>
+                    </div>
                     <form id="visual-dictation-form" class="visual-dictation-form" hidden>
                         <label for="visual-dictation-input">Use the microphone on your phone keyboard</label>
                         <div>
@@ -107,6 +121,7 @@
 
             <aside id="mobile-settings-panel" class="mobile-settings-panel" hidden aria-label="Mobile settings">
                 <div class="mobile-settings-heading"><div><strong>Mobile settings</strong><span>Only the essentials.</span></div><button id="mobile-settings-close" type="button" aria-label="Close settings">×</button></div>
+                <label><span>Chat profile</span><select id="mobile-chat-persona" aria-label="Profile for this chat"><option value="system">System profile</option></select></label>
                 <label><span>Petey profile</span><select id="mobile-persona"><option value="current">Loading profiles…</option></select></label>
                 <label><span>Voice</span><select id="mobile-voice"><option value="">Loading voices…</option></select></label>
                 <label><span>Voice method</span><select id="mobile-voice-method"><option value="always_on">Open mic</option><option value="wake_word">Wait for “Petey”</option><option value="push_to_talk">Push to talk</option></select></label>
@@ -124,11 +139,12 @@
                             <span aria-hidden="true">＋</span>
                         </label>
                         <button id="voice-input-button" class="mic-button" type="button" title="Microphone input" aria-label="Microphone input" hidden>🎙</button>
+                        <button id="voice-response-toggle" class="voice-response-button muted" type="button" title="Turn voice responses on" aria-label="Turn voice responses on" aria-pressed="false">🔊</button>
                     </div>
                     <textarea id="message" name="message" rows="1" placeholder="Message Petey…" autofocus></textarea>
                     <button id="send" class="send-button" type="submit">Send</button>
                 </div>
-                <small><span id="voice-input-status">Enter to send · Shift+Enter for a new line</span> · 25 MB attachment limit</small>
+                <small><span id="voice-input-status">Ready</span></small>
             </form>
         </section>
 
@@ -381,7 +397,7 @@
     </dialog>
     <script>window.PETEY_ADDON_VIEWS = {{ addon_view_ids|tojson }};</script>
     {% if discord_enabled %}<script src="{{ url_for('static', filename='discord.js', v=asset_revision) }}"></script>{% endif %}
-    {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=asset_revision) }}"></script>{% endif %}{% endfor %}
+    {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=addon.asset_revision) }}"></script>{% endif %}{% endfor %}
     <script src="{{ url_for('static', filename='settings.js', v=asset_revision) }}"></script>
     <script src="{{ url_for('static', filename='desktop.js', v=asset_revision) }}"></script>
 </body>

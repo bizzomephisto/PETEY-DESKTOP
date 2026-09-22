@@ -1,6 +1,29 @@
 # Changelog
 
-## Unreleased
+## v0.19.0-experimental.1 — 2026-09-22
+
+This prerelease is published for testing. **v0.18.2 remains the stable release.**
+
+### Mobile security
+
+- Added a durable private pairing link for named Cloudflare access. Paired phones
+  stay authorized across PETEY restarts with a one-year Secure, HttpOnly cookie;
+  the bare public hostname returns `401`.
+- Added `--rotate-mobile-access` to replace the pairing secret and revoke every
+  previously paired browser.
+
+### Add-on control
+
+- Added off-by-default **Allow Petey to control** policies for compatible add-ons
+  and the core deAPI image generator, with separate Desktop, Mobile, Discord, and
+  Petey Life grants.
+- Added per-capability controls, current-day usage, and autonomous daily limits.
+  Explicit user requests bypass the daily allowance while still respecting every
+  enablement, surface, and capability permission.
+- Normalized add-on function schemas for Gemini so autonomous capabilities cannot
+  break ordinary chat with unsupported JSON Schema keywords.
+- Show Petey-requested image generations as live progress cards in the chat feed,
+  replacing each card with the finished Gallery image when it completes.
 
 ### Conversations
 
@@ -11,6 +34,39 @@
   are visible and editable without opening Settings.
 - Added a jump-to-latest button that appears when a reader scrolls away from the
   newest chat messages.
+
+### Mobile and voice
+
+- Refined mobile chat and Visual Mode with compact controls, a collapsible action
+  row, higher captions that fade after five seconds, clearer mute states, and a
+  smaller composer that preserves touch targets.
+- Added wake-free follow-up turns after a standalone wake name, with configurable
+  acknowledgement, silence-to-send, and follow-up timing.
+- Kept automatic speech as a per-device behavior and stopped speech from reading
+  OpenCode artifact filenames.
+
+### Memory and Discord
+
+- Added source-surface metadata to saved messages and correction-aware retrieval,
+  keeping newer user corrections authoritative while retaining older context.
+- Added an explicit choice to permanently delete a chat's messages or preserve
+  them as searchable memory.
+- Added Discord memory policies for room-only operation, storing Discord messages,
+  or explicitly sharing cross-surface memory, plus per-surface Petey identity.
+
+### Desktop and remote access
+
+- Added secure, durable Cloudflare pairing links, restart preservation for tunnel
+  settings, and launcher persistence for the configured hostname and port.
+- Open external chat links in the operating system browser and generated Gallery
+  images in the operating system viewer; normalize loopback artifact links for
+  paired mobile browsers.
+- Added per-add-on asset cache revisions so updated external panels refresh through
+  browser and tunnel caches.
+
+### Documentation
+
+- Added a detailed PETEY architecture and product overview in `PETEY_OVERVIEW.md`.
 
 ## v0.18.2 — 2026-09-19
 

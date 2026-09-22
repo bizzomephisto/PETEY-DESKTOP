@@ -11,26 +11,64 @@ from petey.quick_window import move_x11_window_frame, screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
+    def test_cloudflare_mobile_pairing_token_persists_and_rotates(self):
+        with TemporaryDirectory() as directory:
+            first = run_desktop.persistent_remote_access_token(directory)
+            second = run_desktop.persistent_remote_access_token(directory)
+            rotated = run_desktop.persistent_remote_access_token(directory, rotate=True)
+
+            self.assertEqual(first, second)
+            self.assertNotEqual(first, rotated)
+            token_file = Path(directory) / run_desktop.REMOTE_ACCESS_FILE
+            self.assertEqual(token_file.stat().st_mode & 0o777, 0o600)
+
     def test_cloudflare_mode_continues_into_the_local_desktop_flow(self):
         server = MagicMock()
         server.url = "http://127.0.0.1:43909"
+        server.private_url = "http://127.0.0.1:43909/?access_token=private-token"
         with (
             patch("run_desktop.sys.argv", [
                 "run_desktop.py", "--cloudflare", "--browser",
                 "--cloudflare-hostname", "meetpetey.com", "--port", "43909",
             ]),
             patch("run_desktop.LocalServer", return_value=server) as local_server,
+            patch("run_desktop.persistent_remote_access_token", return_value="private-token"),
             patch("run_desktop.run_in_browser") as open_local,
             patch("builtins.input") as terminal_pause,
         ):
             run_desktop.main()
 
-        open_local.assert_called_once_with(server.url)
+        open_local.assert_called_once_with(server.private_url)
         terminal_pause.assert_not_called()
         server.close.assert_called_once_with()
         self.assertEqual(
             local_server.call_args.kwargs["mirror_hosts"], ("::1",)
         )
+
+    def test_cloudflare_native_window_keeps_restart_settings(self):
+        server = MagicMock()
+        server.url = "http://127.0.0.1:43909"
+        server.private_url = "http://127.0.0.1:43909/?access_token=private-token"
+        webview = MagicMock()
+        with (
+            patch("run_desktop.sys.argv", [
+                "run_desktop.py", "--cloudflare", "--cloudflare-hostname",
+                "meetpetey.com", "--port", "43909",
+            ]),
+            patch("run_desktop.LocalServer", return_value=server),
+            patch("run_desktop.persistent_remote_access_token", return_value="private-token"),
+            patch("run_desktop.linux_webview_backend_available", return_value=True),
+            patch("run_desktop.preferred_linux_webview_backend", return_value=None),
+            patch.dict("sys.modules", {"webview": webview}),
+        ):
+            run_desktop.main()
+
+        bridge = webview.create_window.call_args.kwargs["js_api"]
+        self.assertEqual(bridge.restart_args, (
+            "--cloudflare", "--cloudflare-hostname", "meetpetey.com",
+            "--port", "43909",
+        ))
+        server.close.assert_called_once_with()
 
     def test_lan_access_requires_private_link_then_uses_mobile_safe_cookie(self):
         app = Flask(__name__)
@@ -70,6 +108,34 @@ class DesktopLauncherTests(unittest.TestCase):
             server.phone_url,
             "https://192.168.1.42:8765/?access_token=private-token",
         )
+
+    def test_cloudflare_forwarded_https_sets_secure_session_cookie(self):
+        app = Flask(__name__)
+        app.add_url_rule("/", "home", lambda: "PETEY")
+        run_desktop.protect_lan_app(app, "private-token", secure_cookie=None)
+
+        response = app.test_client().get(
+            "/?access_token=private-token",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("Secure", response.headers["Set-Cookie"])
+
+    def test_cloudflare_session_can_remember_a_paired_phone_for_one_year(self):
+        app = Flask(__name__)
+        app.add_url_rule("/", "home", lambda: "PETEY")
+        run_desktop.protect_lan_app(
+            app, "private-token", secure_cookie=None,
+            cookie_max_age=run_desktop.REMOTE_SESSION_SECONDS,
+        )
+
+        response = app.test_client().get(
+            "/?access_token=private-token",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+
+        self.assertIn(f"Max-Age={run_desktop.REMOTE_SESSION_SECONDS}", response.headers["Set-Cookie"])
 
     def test_certificate_setup_serves_only_public_certificate_with_token(self):
         with TemporaryDirectory() as directory:
@@ -245,6 +311,18 @@ class DesktopLauncherTests(unittest.TestCase):
             self.assertTrue(bridge.open_media_provider())
         opened.assert_called_once_with(run_desktop.MEDIA_PROVIDER_URL)
 
+    def test_desktop_bridge_opens_feed_links_in_new_browser_window(self):
+        bridge = run_desktop.DesktopBridge()
+        for url in ("https://example.com/report", "http://127.0.0.1:8765/api/addons/petey-opencode/artifacts/1/0"):
+            with self.subTest(url=url), patch("run_desktop.webbrowser.open", return_value=True) as opened:
+                self.assertTrue(bridge.open_external_url(url))
+                opened.assert_called_once_with(url, new=1)
+        with patch("run_desktop.webbrowser.open") as opened:
+            for url in ("javascript:alert(1)", "file:///tmp/report.html", "/relative", "https://[", "http://localhost:bad", "https://user:pass@example.com"):
+                with self.subTest(url=url):
+                    self.assertFalse(bridge.open_external_url(url))
+            opened.assert_not_called()
+
     def test_desktop_bridge_opens_addons_folder(self):
         with TemporaryDirectory() as directory, patch(
             "run_desktop.subprocess.Popen"
@@ -282,6 +360,20 @@ class DesktopLauncherTests(unittest.TestCase):
             [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve())],
         )
         bridge.window.destroy.assert_not_called()
+
+    def test_desktop_bridge_restart_preserves_cloudflare_launch_settings(self):
+        bridge = run_desktop.DesktopBridge(restart_args=(
+            "--cloudflare", "--cloudflare-hostname", "meetpetey.com",
+            "--port", "8765",
+        ))
+        bridge.window = MagicMock()
+        with patch("run_desktop.os.chdir"), patch("run_desktop.os.execv") as replaced:
+            self.assertEqual(bridge.restart_petey(), {"ok": True, "restarting": True})
+        replaced.assert_called_once_with(
+            run_desktop.sys.executable,
+            [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve()),
+             "--cloudflare", "--cloudflare-hostname", "meetpetey.com", "--port", "8765"],
+        )
 
     def test_restart_requires_native_window_and_recovers_from_launch_error(self):
         bridge = run_desktop.DesktopBridge()

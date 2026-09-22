@@ -10,7 +10,7 @@ Settings opens to an overview with common tasks and three groups:
 | --- | --- | --- |
 | Your companion | Appearance & profile | Theme, window behavior, display scale, user name |
 | Your companion | Personality & voice | Character, instructions, communication style, voice and persona snapshots |
-| Your companion | Microphone | Listening mode, audio device, sensitivity and microphone test |
+| Your companion | Microphone | Listening mode, audio device, sensitivity, acknowledgement/send/follow-up timing, and microphone test |
 | Connections | Models & API keys | All service credentials and provider/model choices |
 | Connections | Tools & integrations | Filesystem MCP, approved-folder access, link to Add-ons |
 | Your data | Knowledge files | Reference files and testing what Petey can find |

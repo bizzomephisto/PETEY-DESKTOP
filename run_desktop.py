@@ -6,6 +6,7 @@ import argparse
 import hmac
 import importlib.util
 import ipaddress
+import json
 import os
 import re
 import secrets
@@ -33,6 +34,45 @@ DESKTOP_APP_ID = "petey-desktop"
 QUICK_WINDOW_WIDTH = 430
 QUICK_WINDOW_HEIGHT = 390
 LAN_TLS_DIRECTORY = "lan-tls"
+REMOTE_ACCESS_FILE = "remote-access.json"
+REMOTE_SESSION_SECONDS = 365 * 24 * 60 * 60
+
+
+def persistent_remote_access_token(
+    data_dir: str | Path | None = None, *, rotate: bool = False,
+) -> str:
+    """Load PETEY's durable remote pairing secret, creating or rotating it safely."""
+    directory = Path(data_dir) if data_dir else default_data_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
+    path = directory / REMOTE_ACCESS_FILE
+    if not rotate:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            token = str(payload.get("access_token") or "")
+            if re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+                return token
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            pass
+    token = secrets.token_urlsafe(32)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps({"version": 1, "access_token": token}, indent=2),
+        encoding="utf-8",
+    )
+    try:
+        temporary.chmod(0o600)
+    except OSError:
+        pass
+    temporary.replace(path)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return token
 
 
 def application_icon_path(platform: str | None = None) -> Path:
@@ -52,6 +92,7 @@ def _desktop_exec_argument(value: str | Path) -> str:
 
 def install_linux_desktop_shortcut(
     data_home: str | Path | None = None, *, cloudflare: bool = False,
+    cloudflare_hostname: str = "", cloudflare_port: int | None = None,
 ) -> Path:
     """Install a per-user Linux launcher and stable icon copy."""
     if sys.platform != "linux":
@@ -67,6 +108,10 @@ def install_linux_desktop_shortcut(
     shutil.copy2(application_icon_path("linux"), installed_icon)
     launcher = application_directory / "petey-desktop.desktop"
     launch_mode = " --cloudflare" if cloudflare else ""
+    if cloudflare and cloudflare_hostname:
+        launch_mode += f" --cloudflare-hostname {_desktop_exec_argument(cloudflare_hostname)}"
+    if cloudflare and cloudflare_port is not None:
+        launch_mode += f" --port {int(cloudflare_port)}"
     launcher.write_text(
         "\n".join(
             [
@@ -154,11 +199,12 @@ def quick_window_position(cursor_x, cursor_y, screen_x, screen_y, screen_width, 
 class DesktopBridge:
     """Small native-window API exposed to the local web interface."""
 
-    def __init__(self, gallery=None, addons_dir=None, voice_cues_dir=None):
+    def __init__(self, gallery=None, addons_dir=None, voice_cues_dir=None, restart_args=()):
         self.window = None
         self.gallery = gallery
         self.addons_dir = Path(addons_dir) if addons_dir else None
         self.voice_cues_dir = Path(voice_cues_dir) if voice_cues_dir else None
+        self.restart_args = tuple(restart_args)
         self.fullscreen = False
         self._restart_started = False
 
@@ -241,12 +287,24 @@ class DesktopBridge:
             os.chdir(PROJECT_ROOT)
             os.execv(
                 sys.executable,
-                [sys.executable, str(Path(__file__).resolve())],
+                [sys.executable, str(Path(__file__).resolve()), *self.restart_args],
             )
             return {"ok": True, "restarting": True}
         except OSError as exc:
             self._restart_started = False
             return {"ok": False, "error": f"Could not restart PETEY: {exc}"}
+
+    def open_external_url(self, url):
+        """Open feed links in the OS default browser, outside the app window."""
+        try:
+            parsed = urlsplit(str(url or ""))
+            if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                    or parsed.username or parsed.password):
+                return False
+            parsed.port  # Reject malformed ports before handing off to the browser.
+        except ValueError:
+            return False
+        return bool(webbrowser.open(parsed.geturl(), new=1))
 
     def open_discord_url(self, url):
         parsed = urlsplit(str(url or ""))
@@ -538,7 +596,10 @@ class CertificateSetupServer:
         self.thread.join(timeout=5)
 
 
-def protect_lan_app(app, access_token: str, secure_cookie: bool = False):
+def protect_lan_app(
+    app, access_token: str, secure_cookie: bool | None = False,
+    cookie_max_age: int = 12 * 60 * 60,
+):
     """Require a secret URL once, then retain access in a strict browser cookie."""
     cookie_name = "petey_lan_session"
 
@@ -547,17 +608,23 @@ def protect_lan_app(app, access_token: str, secure_cookie: bool = False):
         supplied = request.args.get("access_token", "")
         if supplied and hmac.compare_digest(supplied, access_token):
             response = redirect(request.path or "/")
+            request_is_secure = (
+                bool(secure_cookie)
+                if secure_cookie is not None
+                else request.is_secure
+                or request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip() == "https"
+            )
             response.set_cookie(
                 cookie_name,
                 access_token,
-                max_age=12 * 60 * 60,
+                max_age=cookie_max_age,
                 httponly=True,
                 # A phone commonly opens this link from a messaging app or QR
                 # scanner. SameSite=Strict can suppress the new cookie for the
                 # redirect that immediately follows that cross-site navigation.
                 samesite="Lax",
                 path="/",
-                secure=secure_cookie,
+                secure=request_is_secure,
             )
             return response
         saved = request.cookies.get(cookie_name, "")
@@ -573,7 +640,7 @@ def protect_lan_app(app, access_token: str, secure_cookie: bool = False):
 class LocalServer:
     def __init__(
         self, host="127.0.0.1", port=0, access_token=None, ssl_context=None,
-        advertised_host=None, mirror_hosts=(),
+        advertised_host=None, mirror_hosts=(), cookie_max_age=12 * 60 * 60,
     ):
         if host not in {"127.0.0.1", "localhost", "::1"} and not access_token:
             raise ValueError("Network access requires an access token.")
@@ -585,7 +652,11 @@ class LocalServer:
         self.advertised_host = advertised_host
         self.app = create_desktop_app()
         if access_token:
-            protect_lan_app(self.app, access_token, secure_cookie=bool(ssl_context))
+            protect_lan_app(
+                self.app, access_token,
+                secure_cookie=True if ssl_context else None,
+                cookie_max_age=cookie_max_age,
+            )
         self.server = make_server(host, port, self.app, threaded=True, ssl_context=ssl_context)
         self.servers = [self.server]
         for mirror_host in mirror_hosts:
@@ -618,6 +689,13 @@ class LocalServer:
         query = urlencode({"access_token": self.access_token})
         host = self.advertised_host or lan_ip_address()
         return f"{self.scheme}://{host}:{self.server.server_port}/?{query}"
+
+    @property
+    def private_url(self):
+        if not self.access_token:
+            return self.url
+        query = urlencode({"access_token": self.access_token})
+        return f"{self.url}/?{query}"
 
     def start(self):
         for thread in self.threads:
@@ -667,6 +745,11 @@ def main():
         help="Public hostname routed by the named tunnel (or PETEY_CLOUDFLARE_HOSTNAME)",
     )
     parser.add_argument(
+        "--rotate-mobile-access",
+        action="store_true",
+        help="Replace the saved Cloudflare mobile pairing link and revoke paired browsers",
+    )
+    parser.add_argument(
         "--install-lan-certificate",
         action="store_true",
         help="Show the phone certificate installation page again (requires --lan-https)",
@@ -707,6 +790,8 @@ def main():
         parser.error("Network access and --quick cannot be used together")
     if args.install_lan_certificate and not args.lan_https:
         parser.error("--install-lan-certificate requires --lan-https")
+    if args.rotate_mobile_access and not args.cloudflare:
+        parser.error("--rotate-mobile-access requires --cloudflare")
     cloudflare_hostname = str(args.cloudflare_hostname or "").strip().lower()
     if args.cloudflare and not re.fullmatch(
         r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}",
@@ -719,7 +804,11 @@ def main():
 
     if args.install_shortcut:
         try:
-            launcher = install_linux_desktop_shortcut(cloudflare=args.cloudflare)
+            launcher = install_linux_desktop_shortcut(
+                cloudflare=args.cloudflare,
+                cloudflare_hostname=cloudflare_hostname,
+                cloudflare_port=port if args.cloudflare else None,
+            )
         except RuntimeError as exc:
             parser.error(str(exc))
         print(f"[DESKTOP] Installed launcher: {launcher}")
@@ -740,7 +829,10 @@ def main():
 
     network_enabled = args.lan or args.lan_https or args.cloudflare
     lan_enabled = args.lan or args.lan_https
-    access_token = secrets.token_urlsafe(24) if lan_enabled else None
+    if args.cloudflare:
+        access_token = persistent_remote_access_token(rotate=args.rotate_mobile_access)
+    else:
+        access_token = secrets.token_urlsafe(24) if network_enabled else None
     advertised_host = lan_ip_address() if lan_enabled else None
     ssl_context = None
     certificates = None
@@ -776,13 +868,18 @@ def main():
         ssl_context=ssl_context,
         advertised_host=advertised_host,
         mirror_hosts=("::1",) if args.cloudflare else (),
+        cookie_max_age=REMOTE_SESSION_SECONDS if args.cloudflare else 12 * 60 * 60,
     )
     local.start()
     print(f"[DESKTOP] Petey is running locally at {local.url}")
+    desktop_url = local.private_url if args.cloudflare else local.url
     try:
         if args.cloudflare:
+            public_query = urlencode({"access_token": access_token})
             print(f"[DESKTOP] Named tunnel origin: http://localhost:{port}")
-            print(f"[DESKTOP] Open PETEY from anywhere:\nhttps://{cloudflare_hostname}")
+            print(f"[DESKTOP] Open this private PETEY link from anywhere:\nhttps://{cloudflare_hostname}/?{public_query}")
+            print("[DESKTOP] The bare hostname is blocked even if Cloudflare Access is misconfigured.")
+            print("[DESKTOP] Paired browsers stay authorized for one year. Use --rotate-mobile-access to revoke them.")
 
         if lan_enabled:
             print(f"[DESKTOP] Open this private link on your phone:\n{local.phone_url}")
@@ -799,7 +896,7 @@ def main():
             return
 
         if args.browser:
-            run_in_browser(local.url)
+            run_in_browser(desktop_url)
             return
 
         try:
@@ -823,10 +920,14 @@ def main():
             local.app.config["PETEY_GALLERY"],
             local.app.config["PETEY_ADDONS"].user_dir,
             local.app.config["PETEY_VOICE_CUES"].root,
+            restart_args=(
+                "--cloudflare", "--cloudflare-hostname", cloudflare_hostname,
+                "--port", str(port),
+            ) if args.cloudflare else (),
         )
         bridge.window = webview.create_window(
             "PETEY",
-            local.url,
+            desktop_url,
             width=1180,
             height=780,
             min_size=(760, 560),

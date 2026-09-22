@@ -7,10 +7,11 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.18.2**
-- Baseline commit: `6694347`
+- Release: **v0.19.0-experimental.1**
+- Stable release: **v0.18.2**
+- Base commit before this prerelease: `4e749bf`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 260 tests
+- Test framework: `unittest`; current full suite contains 291 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 
@@ -26,6 +27,15 @@ separate web service.
   belong in settings or dedicated views.
 - Mobile is a focused remote control: chat, visual mode, saved Petey profile, voice,
   microphone method, animation, and fullscreen.
+- Mobile text chat starts with automatic reply speech muted on each page load.
+  Entering visual mode enables it for the current session. Speaker buttons beside
+  the microphone expose the same control on desktop and mobile.
+- Wake-name mode uses a small local keyword detector for the fast canned response.
+  Completed utterances in every microphone mode are uploaded to the selected
+  transcription provider. Configurable wake-pause and silence-to-send timers
+  control acknowledgement and submission.
+- Chat requests identify Petey Desktop or Mobile Petey; Discord and Petey Life add their own explicit surface context. SQLite message rows retain the source surface, and correction-aware retrieval presents older facts before newer user corrections.
+- Deleting a saved chat asks whether to preserve its rows for memory retrieval or permanently delete them; memory deletion is irreversible.
 - A Petey profile owns instructions, traits, communication style, speech provider,
   voice, and delivery. Microphone mode and the device's auto-speak behavior remain
   device/session concerns when a saved profile is activated.
@@ -33,8 +43,10 @@ separate web service.
   follow that profile without changing the system persona. Chats with no assignment
   always inherit the current system persona, and clearing a saved profile returns
   its assigned chats to that fallback.
-- Discord has its own room identity prompt. Desktop persona, memory, and tools do
-  not bleed into Discord unless a specific external add-on is allowed there.
+- Discord has its own room identity prompt and an independent saved persona. Its
+  memory policy defaults to room-only, can store Discord for Desktop/Mobile recall,
+  or can explicitly allow public Discord replies to search shared memory. Tools
+  remain separately granted per add-on.
 - Consequential work is reviewable. Workspace model writes/commands and untrusted
   add-on actions use proposals unless the user deliberately enables a scoped trust
   mode.
@@ -47,13 +59,16 @@ separate web service.
 | Browser development | `python run_desktop.py --browser` | Ephemeral loopback origin in browser |
 | Local private link | `python run_desktop.py --lan` | Explicit LAN bind, random token exchanged for HttpOnly cookie |
 | Trusted LAN HTTPS | `python run_desktop.py --lan-https` | Private CA/server certificate, Secure cookie, phone microphone support |
-| Named Cloudflare tunnel | `python run_desktop.py --cloudflare` | Fixed loopback origin; Cloudflare provides public HTTPS/access policy |
+| Named Cloudflare tunnel | `python run_desktop.py --cloudflare` | Fixed loopback origin; PETEY private token plus Cloudflare HTTPS/access policy |
 | Quick window | `python run_desktop.py --quick` | Compact local desktop window at cursor |
 
 Cloudflare mode expects an already configured `cloudflared` tunnel and does not
-start or manage it. It intentionally does not use the LAN private-link token;
-Cloudflare Access should protect an everyday public hostname. Default startup must
-remain loopback-only, and network binding must remain explicit.
+start or manage it. It requires a durable PETEY pairing token stored in the private
+data root's `remote-access.json` and exchanges it for a one-year HttpOnly, SameSite,
+Secure cookie; the bare public hostname returns `401`. `--rotate-mobile-access`
+replaces the token and revokes existing browser cookies on the next request.
+Cloudflare Access should remain an outer identity check. Default startup must remain
+loopback-only, and network binding must remain explicit.
 
 ## State and secrets
 
@@ -68,6 +83,7 @@ directory. Important contents include:
 - `addon-data/<id>/`: external add-on state and credentials
 - `voice-cues/<voice>/`: user-replaceable wake acknowledgements
 - `lan-tls/`: reusable local CA and LAN certificates
+- `remote-access.json`: durable private Cloudflare mobile pairing secret
 - `wake-word/`: downloaded local keyword model
 
 Never commit or inspect secret values casually. Public APIs return key/token status,
@@ -83,11 +99,16 @@ services.
 
 - Chat TTS, vision, embeddings, and STT are independently configured.
 - Gemini 3.1 speech can stream PCM; automatic speech can fall back to OpenAI.
-- Wake-name mode uses a local keyword detector for low latency and cloud STT for the
-  complete request.
+- Wake-name mode uses a local keyword detector for low-latency acknowledgement;
+  the selected deAPI or Gemini provider transcribes the complete recording.
 - A canned cue plays only when “Petey” or “Hey Petey” is followed by a short pause.
   Continued speech cancels the pending cue, so “Petey, turn off the lights” reaches
   the command path without an acknowledgement interrupting it.
+- A standalone wake name starts a continuous voice turn: the cue plays, the request
+  is recorded, transcribed by the selected provider, and sent after silence. The
+  microphone re-arms after PETEY finishes speaking. Follow-ups do not require the wake name until the saved
+  3–30 second dialogue window expires. The default window is eight seconds and is
+  shared by desktop and mobile access.
 - Cue selection follows the active speech voice, then `default/`, then browser
   speech. Profile/speech API responses carry the resolved catalog, and audio URLs
   include file modification revisions to prevent stale browser playback.
@@ -105,10 +126,11 @@ restart-gated. Disabled code is never imported. Their routes live under
 `addon-data/<id>`, and cleanup runs at shutdown. Read `ADDONS.md` and
 `docs/addons.md` before extension work.
 
-Model tool schemas and dispatch both enforce availability. Keep paid or mutating
-tools tied to clear user intent. Add-on MCP catalogs need exact allowlists and
-bounded results; Discord receives only the tools from external add-ons individually
-authorized with **Allow in Discord**.
+Model tool schemas and dispatch both enforce availability. Compatible add-ons have
+an off-by-default model-control policy with capability and surface grants. Metered
+capabilities enforce autonomous daily limits; direct requests identified by the
+tool's `explicit_when` predicate bypass only that limit. Add-on MCP catalogs need
+exact allowlists and bounded results.
 
 ## UI and compatibility
 

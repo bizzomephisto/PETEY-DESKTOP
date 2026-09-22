@@ -18,6 +18,9 @@ from petey.room_chat import ROOM_PROMPT
 from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 
 PERSONA_SLOT_COUNT = 5
+DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
+PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_life"}
+PETEY_CONTROL_ID = re.compile(r"[a-z][a-z0-9_-]{1,63}")
 
 
 def default_data_dir() -> Path:
@@ -168,24 +171,19 @@ class DesktopState:
         elif not isinstance(settings["addons"].get("discord", True), bool):
             settings["addons"]["discord"] = True
             changed = True
-        if not isinstance(settings.get("addon_discord_tools"), dict):
-            settings["addon_discord_tools"] = {}
+        if "addon_discord_tools" in settings:
+            settings.pop("addon_discord_tools", None)
             changed = True
-        else:
-            normalized_discord_tools = {
-                str(addon_id): enabled
-                for addon_id, enabled in settings["addon_discord_tools"].items()
-                if re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", str(addon_id))
-                and isinstance(enabled, bool)
-            }
-            if normalized_discord_tools != settings["addon_discord_tools"]:
-                settings["addon_discord_tools"] = normalized_discord_tools
-                changed = True
+        normalized_control = self._normalized_petey_control(settings.get("petey_control"))
+        if settings.get("petey_control") != normalized_control:
+            settings["petey_control"] = normalized_control
+            changed = True
         if not isinstance(settings.get("discord"), dict):
             settings["discord"] = {
                 "bot_token": "", "pace": "auto", "watched_topics": [],
                 "room_prompt": ROOM_PROMPT, "auto_connect": False,
-                "last_location": {},
+                "last_location": {}, "persona_slot": None,
+                "memory_policy": "room_only",
             }
             changed = True
         elif not isinstance(settings["discord"].get("bot_token"), str):
@@ -207,8 +205,21 @@ class DesktopState:
         if not isinstance(room_prompt, str) or not room_prompt.strip() or len(room_prompt) > 12000:
             settings["discord"]["room_prompt"] = ROOM_PROMPT
             changed = True
+        discord_persona_slot = self._normalized_conversation_persona_slot(
+            settings["discord"].get("persona_slot")
+        )
+        if (discord_persona_slot is not None
+                and not isinstance(settings["saved_personas"][discord_persona_slot - 1], dict)):
+            discord_persona_slot = None
+        if (settings["discord"].get("persona_slot") != discord_persona_slot
+                or "persona_slot" not in settings["discord"]):
+            settings["discord"]["persona_slot"] = discord_persona_slot
+            changed = True
         if not isinstance(settings["discord"].get("auto_connect"), bool):
             settings["discord"]["auto_connect"] = False
+            changed = True
+        if settings["discord"].get("memory_policy") not in DISCORD_MEMORY_POLICIES:
+            settings["discord"]["memory_policy"] = "room_only"
             changed = True
         location = settings["discord"].get("last_location")
         required_location = {"guild_id", "channel_id", "guild", "channel"}
@@ -310,6 +321,9 @@ class DesktopState:
             "wake_word": "Petey",
             "device_id": "",
             "sensitivity": "normal",
+            "wake_ack_delay_ms": 500,
+            "submit_silence_ms": 800,
+            "follow_up_seconds": 8,
         }
         if not isinstance(settings.get("voice_input"), dict):
             settings["voice_input"] = copy.deepcopy(voice_input_defaults)
@@ -764,6 +778,71 @@ class DesktopState:
         return self.discord_room_prompt
 
     @property
+    def discord_persona_slot(self) -> int | None:
+        slot = self._normalized_conversation_persona_slot(
+            self.settings.get("discord", {}).get("persona_slot")
+        )
+        if slot is None or not isinstance(self.saved_personas[slot - 1], dict):
+            return None
+        return slot
+
+    @property
+    def discord_persona_options(self) -> list[dict]:
+        options = [{
+            "slot": None,
+            "name": "Discord default",
+            "role_tag": "Room personality",
+        }]
+        for index, saved in enumerate(self.saved_personas, 1):
+            if not isinstance(saved, dict):
+                continue
+            options.append({
+                "slot": index,
+                "name": str(saved.get("name") or f"Profile {index}")[:80],
+                "role_tag": str(saved.get("role_tag") or "Saved profile")[:80],
+            })
+        return options
+
+    @property
+    def discord_system_prompt(self) -> str:
+        slot = self.discord_persona_slot
+        if slot is None:
+            return self.discord_room_prompt
+        persona = self.saved_personas[slot - 1]
+        return (
+            _build_enriched_prompt(persona)
+            + "\n\nPROFILE BOUNDARY: This selected profile exclusively controls your identity, "
+              "traits, tone, and communication style. Room history supplies conversational "
+              "context only; never inherit another personality from earlier replies."
+            + "\n\nDiscord room instructions:\n"
+            + self.discord_room_prompt
+        )
+
+    def update_discord_persona(self, persona_slot: object) -> int | None:
+        slot = self._validated_conversation_persona_slot(persona_slot)
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["persona_slot"] = slot
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_persona_slot
+
+    @property
+    def discord_memory_policy(self) -> str:
+        policy = self.settings.get("discord", {}).get("memory_policy")
+        return policy if policy in DISCORD_MEMORY_POLICIES else "room_only"
+
+    def update_discord_memory_policy(self, policy: object) -> str:
+        if policy not in DISCORD_MEMORY_POLICIES:
+            raise ValueError("Choose a valid Discord memory access level.")
+        with self._lock:
+            current = dict(self.settings.get("discord") or {})
+            current["memory_policy"] = policy
+            self.settings["discord"] = current
+            self._write_json(self.settings_path, self.settings)
+        return self.discord_memory_policy
+
+    @property
     def discord_auto_connect(self) -> bool:
         return self.settings.get("discord", {}).get("auto_connect") is True
 
@@ -815,22 +894,187 @@ class DesktopState:
             self._write_json(self.settings_path, self.settings)
         return self.addon_enabled(addon_id)
 
-    def addon_discord_tools_enabled(self, addon_id: str) -> bool:
-        value = self.settings.get("addon_discord_tools", {}).get(str(addon_id))
-        return value if isinstance(value, bool) else False
+    @staticmethod
+    def _normalized_petey_control(value) -> dict:
+        if not isinstance(value, dict):
+            return {}
+        normalized = {}
+        for addon_id, raw in value.items():
+            addon_id = str(addon_id or "")
+            if not PETEY_CONTROL_ID.fullmatch(addon_id) or not isinstance(raw, dict):
+                continue
+            surfaces = raw.get("surfaces") if isinstance(raw.get("surfaces"), dict) else {}
+            capabilities = raw.get("capabilities") if isinstance(raw.get("capabilities"), dict) else {}
+            usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
+            normalized_capabilities = {}
+            for capability, policy in capabilities.items():
+                capability = str(capability or "")
+                if not PETEY_CONTROL_ID.fullmatch(capability) or not isinstance(policy, dict):
+                    continue
+                try:
+                    daily_limit = max(0, min(1000, int(policy.get("daily_limit", 0))))
+                except (TypeError, ValueError):
+                    daily_limit = 0
+                normalized_capabilities[capability] = {
+                    "enabled": policy.get("enabled") is True,
+                    "daily_limit": daily_limit,
+                }
+            normalized_usage = {}
+            for day, counts in usage.items():
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(day)) or not isinstance(counts, dict):
+                    continue
+                day_counts = {}
+                for capability, count in counts.items():
+                    if PETEY_CONTROL_ID.fullmatch(str(capability or "")):
+                        try:
+                            day_counts[str(capability)] = max(0, int(count))
+                        except (TypeError, ValueError):
+                            pass
+                if day_counts:
+                    normalized_usage[str(day)] = day_counts
+            normalized[addon_id] = {
+                "enabled": raw.get("enabled") is True,
+                "surfaces": {
+                    surface: surfaces.get(surface) is True
+                    for surface in PETEY_CONTROL_SURFACES
+                },
+                "capabilities": normalized_capabilities,
+                "usage": normalized_usage,
+            }
+        return normalized
 
-    def update_addon_discord_tools(self, addon_id: str, enabled) -> bool:
+    @staticmethod
+    def _control_capability_definitions(capabilities) -> dict:
+        result = {}
+        for item in capabilities if isinstance(capabilities, list) else []:
+            if not isinstance(item, dict):
+                continue
+            capability = str(item.get("id") or "")
+            if not PETEY_CONTROL_ID.fullmatch(capability):
+                continue
+            try:
+                default_daily_limit = int(item.get("default_daily_limit") or 0)
+            except (TypeError, ValueError):
+                default_daily_limit = 0
+            result[capability] = {
+                "id": capability,
+                "label": str(item.get("label") or capability.replace("_", " ").title())[:80],
+                "metered": item.get("metered") is True,
+                "default_daily_limit": max(0, min(1000, default_daily_limit)),
+            }
+        return result
+
+    def petey_control_status(self, addon_id: str, capabilities: list[dict]) -> dict:
+        definitions = self._control_capability_definitions(capabilities)
+        saved = self.settings.get("petey_control", {}).get(str(addon_id), {})
+        surfaces = saved.get("surfaces") if isinstance(saved.get("surfaces"), dict) else {}
+        policies = saved.get("capabilities") if isinstance(saved.get("capabilities"), dict) else {}
+        today = datetime.now().astimezone().date().isoformat()
+        usage = saved.get("usage", {}).get(today, {}) if isinstance(saved.get("usage"), dict) else {}
+        return {
+            "enabled": saved.get("enabled") is True,
+            "surfaces": {
+                "petey_desktop": surfaces.get("petey_desktop", True) is True,
+                "mobile_petey": surfaces.get("mobile_petey", True) is True,
+                "discord": surfaces.get("discord") is True,
+                "petey_life": surfaces.get("petey_life") is True,
+            },
+            "capabilities": [{
+                **definition,
+                "enabled": policies.get(capability, {}).get("enabled", True) is True,
+                "daily_limit": int(policies.get(capability, {}).get(
+                    "daily_limit", definition["default_daily_limit"]
+                )),
+                "used_today": int(usage.get(capability, 0)),
+            } for capability, definition in definitions.items()],
+        }
+
+    def update_petey_control(self, addon_id: str, changes: dict, capabilities: list[dict]) -> dict:
         addon_id = str(addon_id or "")
-        if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id):
-            raise ValueError("Choose a valid add-on.")
-        if not isinstance(enabled, bool):
-            raise ValueError("Discord tool access must be true or false.")
+        definitions = self._control_capability_definitions(capabilities)
+        if not PETEY_CONTROL_ID.fullmatch(addon_id) or not definitions:
+            raise ValueError("This add-on does not expose controllable capabilities.")
+        if not isinstance(changes, dict):
+            raise ValueError("Petey control settings require an object.")
         with self._lock:
-            permissions = dict(self.settings.get("addon_discord_tools") or {})
-            permissions[addon_id] = enabled
-            self.settings["addon_discord_tools"] = permissions
+            controls = copy.deepcopy(self.settings.get("petey_control") or {})
+            saved_current = controls.get(addon_id)
+            if isinstance(saved_current, dict):
+                current = self._normalized_petey_control(
+                    {addon_id: saved_current}
+                ).get(addon_id, {})
+            else:
+                current = {
+                    "enabled": False,
+                    "surfaces": {
+                        "petey_desktop": True, "mobile_petey": True,
+                        "discord": False, "petey_life": False,
+                    },
+                    "capabilities": {}, "usage": {},
+                }
+            if "enabled" in changes:
+                if not isinstance(changes["enabled"], bool):
+                    raise ValueError("Allow Petey to control must be true or false.")
+                current["enabled"] = changes["enabled"]
+            if "surfaces" in changes:
+                if not isinstance(changes["surfaces"], dict):
+                    raise ValueError("Surface permissions require an object.")
+                for surface, enabled in changes["surfaces"].items():
+                    if surface not in PETEY_CONTROL_SURFACES or not isinstance(enabled, bool):
+                        raise ValueError("Choose valid surface permissions.")
+                    current["surfaces"][surface] = enabled
+            if "capabilities" in changes:
+                if not isinstance(changes["capabilities"], dict):
+                    raise ValueError("Capability permissions require an object.")
+                for capability, policy in changes["capabilities"].items():
+                    if capability not in definitions or not isinstance(policy, dict):
+                        raise ValueError("Choose a valid add-on capability.")
+                    saved_policy = dict(current["capabilities"].get(capability) or {})
+                    if "enabled" in policy:
+                        if not isinstance(policy["enabled"], bool):
+                            raise ValueError("Capability enabled must be true or false.")
+                        saved_policy["enabled"] = policy["enabled"]
+                    if "daily_limit" in policy:
+                        try:
+                            limit = int(policy["daily_limit"])
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError("Daily limits must be whole numbers.") from exc
+                        if limit < 0 or limit > 1000:
+                            raise ValueError("Daily limits must be between 0 and 1000.")
+                        saved_policy["daily_limit"] = limit
+                    current["capabilities"][capability] = saved_policy
+            controls[addon_id] = current
+            self.settings["petey_control"] = controls
             self._write_json(self.settings_path, self.settings)
-        return self.addon_discord_tools_enabled(addon_id)
+        return self.petey_control_status(addon_id, capabilities)
+
+    def authorize_petey_control(
+        self, addon_id: str, capability: str, surface: str, *, explicit: bool,
+        capabilities: list[dict], consume: bool = False,
+    ) -> dict:
+        with self._lock:
+            status = self.petey_control_status(addon_id, capabilities)
+            selected = next(
+                (item for item in status["capabilities"] if item["id"] == capability), None
+            )
+            if not status["enabled"] or not status["surfaces"].get(surface, False):
+                raise ValueError("Petey is not allowed to control this add-on on this surface.")
+            if selected is None or not selected["enabled"]:
+                raise ValueError("Petey is not allowed to use this capability.")
+            if not explicit and selected["metered"]:
+                if selected["daily_limit"] <= selected["used_today"]:
+                    raise ValueError("Petey reached the autonomous daily limit for this capability.")
+                if consume:
+                    controls = copy.deepcopy(self.settings.get("petey_control") or {})
+                    current = controls.setdefault(addon_id, {})
+                    usage = current.setdefault("usage", {})
+                    today = datetime.now().astimezone().date().isoformat()
+                    counts = usage.setdefault(today, {})
+                    counts[capability] = int(counts.get(capability, 0)) + 1
+                    self.settings["petey_control"] = controls
+                    self._write_json(self.settings_path, self.settings)
+                    selected["used_today"] += 1
+            return {"explicit": bool(explicit), "policy": selected}
 
     def update_ai_provider(self, changes: dict) -> dict:
         provider = str(changes.get("provider") or self.ai_provider.get("provider", "gemini"))
@@ -973,6 +1217,19 @@ class DesktopState:
             if sensitivity not in {"high", "normal", "low"}:
                 raise ValueError("Choose a supported microphone sensitivity.")
             current["sensitivity"] = sensitivity
+        for key, minimum, maximum in (
+            ("wake_ack_delay_ms", 200, 2000),
+            ("submit_silence_ms", 400, 3000),
+            ("follow_up_seconds", 3, 30),
+        ):
+            if key in changes:
+                try:
+                    value = int(changes[key])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Voice timing must be a whole number.") from exc
+                if value < minimum or value > maximum:
+                    raise ValueError("Choose a supported voice timing.")
+                current[key] = value
         with self._lock:
             self.settings["voice_input"] = current
             self._write_json(self.settings_path, self.settings)
@@ -1132,6 +1389,8 @@ class DesktopState:
                 for conversation in self.settings.get("conversations", []):
                     if conversation.get("persona_slot") == index + 1:
                         conversation["persona_slot"] = None
+                if self.settings.get("discord", {}).get("persona_slot") == index + 1:
+                    self.settings["discord"]["persona_slot"] = None
             self._write_json(self.settings_path, self.settings)
         return existed
 

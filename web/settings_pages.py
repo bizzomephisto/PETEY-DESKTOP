@@ -15,7 +15,7 @@ SETTINGS_PAGES = (
     dict(id="personality", title="Personality & voice", description="Shape PETEY’s character, conversation style, and spoken voice.",
          summary="Character, speaking & saved personas", icon="✧", group="Your companion",
          save_hint="Use Save Petey profile to save instructions, traits, style, voice, and speech provider together."),
-    dict(id="microphone", title="Microphone", description="Choose how you speak to PETEY and test your audio input.",
+    dict(id="microphone", title="Mic", description="Choose how you speak to PETEY and test your audio input.",
          summary="Listening mode, input device & testing", icon="⌁", group="Your companion",
          save_hint="Use Save microphone settings to apply changes to every personality."),
     dict(id="providers", title="Models & API keys", description="Connect services and choose the models behind each capability.",

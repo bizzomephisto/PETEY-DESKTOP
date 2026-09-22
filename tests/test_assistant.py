@@ -37,8 +37,8 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_response_uses_history_and_stores_both_speakers(self):
         stored = []
 
-        def store_memory(server_id, channel_id, user_id, content):
-            stored.append((server_id, channel_id, user_id, content))
+        def store_memory(server_id, channel_id, user_id, content, **kwargs):
+            stored.append((server_id, channel_id, user_id, content, kwargs))
 
         identity = AssistantIdentity("desktop-test", "main", "owner", "Pat")
         history = [
@@ -68,16 +68,39 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
             reply = await service.respond("Hello", identity)
 
         self.assertEqual(reply.text, "Hello from desktop")
-        self.assertEqual(stored[0], ("desktop-test", "main", "owner", "Hello"))
-        self.assertEqual(stored[1], ("desktop-test", "main", PETEY_USER_ID, "Hello from desktop"))
-        self.assertEqual(llm.call_args.args[2][0]["content"], "User Pat said: Earlier message")
+        self.assertEqual(stored[0][:4], ("desktop-test", "main", "owner", "Hello"))
+        self.assertEqual(stored[1][:4], ("desktop-test", "main", PETEY_USER_ID, "Hello from desktop"))
+        self.assertEqual(stored[0][4]["source_surface"], "petey_desktop")
+        self.assertEqual(
+            llm.call_args.args[2][0]["content"],
+            "User Pat said through Petey Desktop: Earlier message",
+        )
         self.assertEqual(llm.call_args.args[2][1]["role"], "assistant")
+        self.assertIn("PROFILE BOUNDARY", llm.call_args.args[1])
+        self.assertIn("facts and continuity only", llm.call_args.args[1])
 
     async def test_empty_message_is_rejected(self):
         service = AssistantService("You are Petey.")
         identity = AssistantIdentity("desktop-test", "main", "owner")
         with self.assertRaises(ValueError):
             await service.respond("   ", identity)
+
+    async def test_mobile_surface_is_added_to_prompt_and_saved_memory(self):
+        memory = MagicMock()
+        memory.get_conversation_messages.return_value = []
+        memory.search_memories.return_value = ""
+        service = AssistantService("You are Petey.", memory=memory)
+        identity = AssistantIdentity(
+            "desktop-test", "main", "owner", "Pat", surface="mobile_petey"
+        )
+        with patch("petey.assistant.AIProvider.complete", return_value="Hi from mobile") as llm:
+            await service.respond("Where are we talking?", identity)
+
+        self.assertIn("CURRENT SURFACE", llm.call_args.args[1])
+        self.assertIn("Mobile Petey", llm.call_args.args[1])
+        self.assertEqual(
+            memory.store_memory.call_args.kwargs["source_surface"], "mobile_petey"
+        )
 
     async def test_explicit_request_uses_registered_model_tools(self):
         registry = MagicMock()
@@ -107,6 +130,51 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         registry.execute.assert_called_once_with(
             "generate_image", {"prompt": "moon base"}, "Generate an image of a moon base"
         )
+
+    async def test_tool_artifact_links_are_preserved_in_reply(self):
+        registry = MagicMock()
+        registry.schemas_for.return_value = [{"type": "function", "function": {"name": "status"}}]
+        event = {"name": "status", "result": {"run": {"artifacts": [{
+            "name": "index.html", "url": "/api/addons/petey-opencode/artifacts/1/0",
+        }]}}}
+        service = AssistantService("You are Petey.", tool_registry=registry)
+        with patch("petey.assistant.AIProvider.complete_with_tools", return_value=("Finished.", [event])):
+            reply = await service.respond(
+                "What's the status of the code?",
+                AssistantIdentity("desktop-test", "main", "owner"),
+            )
+        self.assertIn("index.html: /api/addons/petey-opencode/artifacts/1/0", reply.text)
+
+    async def test_tool_artifact_markdown_drops_loopback_origin(self):
+        registry = MagicMock()
+        registry.schemas_for.return_value = [{"type": "function", "function": {"name": "status"}}]
+        artifact = "http://127.0.0.1:43909/api/addons/petey-opencode/artifacts/5/0"
+        service = AssistantService("You are Petey.", tool_registry=registry)
+        with patch(
+            "petey.assistant.AIProvider.complete_with_tools",
+            return_value=(f"Finished: [{artifact}]({artifact})", []),
+        ):
+            reply = await service.respond(
+                "What's the status of the code?",
+                AssistantIdentity("desktop-test", "main", "owner"),
+            )
+
+        self.assertEqual(
+            reply.text,
+            "Finished: /api/addons/petey-opencode/artifacts/5/0",
+        )
+        self.assertNotIn("127.0.0.1", reply.text)
+
+    async def test_generated_gallery_markdown_drops_loopback_origin(self):
+        item_id = "9d358672101d4766989d2a90fa17db10"
+        gallery = f"http://127.0.0.1:43909/api/desktop/gallery/file/{item_id}"
+        service = AssistantService("You are Petey.")
+        with patch("petey.assistant.AIProvider.complete", return_value=f"Open picture: [{gallery}]({gallery})"):
+            reply = await service.respond(
+                "Show me the picture",
+                AssistantIdentity("desktop-test", "main", "owner"),
+            )
+        self.assertEqual(reply.text, f"Open picture: /api/desktop/gallery/file/{item_id}")
 
     async def test_temporary_response_uses_ephemeral_history_without_database_access(self):
         service = AssistantService("You are Petey.")

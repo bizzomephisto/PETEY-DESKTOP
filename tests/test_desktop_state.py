@@ -43,6 +43,30 @@ class DesktopStateTests(unittest.TestCase):
                 self.assertEqual(
                     state.update_discord_room_prompt(reset=True), ROOM_PROMPT
                 )
+                state.save_persona_slot(1, {
+                    "name": "Discord Petey",
+                    "role_tag": "Server regular",
+                    "system_prompt": "You are Petey's Discord personality only.",
+                })
+                self.assertEqual(state.update_discord_persona(1), 1)
+                self.assertEqual(DesktopState(directory).discord_persona_slot, 1)
+                self.assertIn("Discord personality only", state.discord_system_prompt)
+                self.assertIn(ROOM_PROMPT, state.discord_system_prompt)
+                self.assertEqual(
+                    [item["slot"] for item in state.discord_persona_options],
+                    [None, 1],
+                )
+                with self.assertRaisesRegex(ValueError, "empty"):
+                    state.update_discord_persona(2)
+                state.clear_persona_slot(1)
+                self.assertIsNone(state.discord_persona_slot)
+                self.assertEqual(state.discord_system_prompt, ROOM_PROMPT)
+                self.assertEqual(state.discord_memory_policy, "room_only")
+                self.assertEqual(state.update_discord_memory_policy("store"), "store")
+                self.assertEqual(DesktopState(directory).discord_memory_policy, "store")
+                self.assertEqual(state.update_discord_memory_policy("shared"), "shared")
+                with self.assertRaises(ValueError):
+                    state.update_discord_memory_policy("everything")
                 self.assertTrue(state.update_discord_auto_connect(True))
                 state.update_discord_last_location(
                     "222222222222222222", "333333333333333333", "Friends", "#general"
@@ -79,19 +103,41 @@ class DesktopStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertTrue(state.addon_enabled("discord", True))
-            self.assertFalse(state.addon_discord_tools_enabled("sample-addon"))
             self.assertTrue(state.update_addon_enabled("sample-addon", True))
-            self.assertTrue(state.update_addon_discord_tools("sample-addon", True))
             self.assertTrue(DesktopState(directory).addon_enabled("sample-addon"))
-            self.assertTrue(
-                DesktopState(directory).addon_discord_tools_enabled("sample-addon")
-            )
             with self.assertRaises(ValueError):
                 state.update_addon_enabled("Bad ID", True)
             with self.assertRaises(ValueError):
                 state.update_addon_enabled("sample-addon", "yes")
-            with self.assertRaises(ValueError):
-                state.update_addon_discord_tools("sample-addon", "yes")
+
+    def test_petey_control_defaults_to_desktop_mobile_and_enforces_daily_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            capabilities = [{
+                "id": "generate_image", "label": "Generate images",
+                "metered": True, "default_daily_limit": 1,
+            }]
+            status = state.update_petey_control(
+                "deapi-media", {"enabled": True}, capabilities
+            )
+            self.assertTrue(status["surfaces"]["petey_desktop"])
+            self.assertTrue(status["surfaces"]["mobile_petey"])
+            self.assertFalse(status["surfaces"]["discord"])
+
+            state.authorize_petey_control(
+                "deapi-media", "generate_image", "petey_desktop",
+                explicit=False, capabilities=capabilities, consume=True,
+            )
+            with self.assertRaisesRegex(ValueError, "daily limit"):
+                state.authorize_petey_control(
+                    "deapi-media", "generate_image", "petey_desktop",
+                    explicit=False, capabilities=capabilities,
+                )
+            allowed = state.authorize_petey_control(
+                "deapi-media", "generate_image", "petey_desktop",
+                explicit=True, capabilities=capabilities, consume=True,
+            )
+            self.assertTrue(allowed["explicit"])
 
     def test_theme_persists_and_invalid_theme_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -294,7 +340,9 @@ class DesktopStateTests(unittest.TestCase):
             })
 
             created = state.create_conversation("Workshop", persona_slot=2)
+            plain = state.create_conversation("Plain chat")
 
+            state.select_conversation(created["id"])
             self.assertEqual(created["persona_slot"], 2)
             self.assertEqual(state.persona["name"], system_name)
             self.assertEqual(state.conversation_persona["name"], "Workshop Petey")
@@ -305,6 +353,11 @@ class DesktopStateTests(unittest.TestCase):
                 [item["slot"] for item in state.conversation_persona_options],
                 [None, 2],
             )
+
+            state.select_conversation(plain["id"])
+            self.assertEqual(state.conversation_persona["name"], system_name)
+            self.assertNotIn("Petey in the workshop", state.conversation_system_prompt)
+            state.select_conversation(created["id"])
 
             state.assign_conversation_persona(created["id"], None)
             self.assertEqual(state.conversation_persona["name"], system_name)
@@ -409,19 +462,31 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(state.voice_input["mode"], "disabled")
             self.assertEqual(state.voice_input["provider"], "deapi")
             self.assertEqual(state.voice_input["model"], "WhisperLargeV3")
+            self.assertEqual(state.voice_input["wake_ack_delay_ms"], 500)
+            self.assertEqual(state.voice_input["submit_silence_ms"], 800)
+            self.assertEqual(state.voice_input["follow_up_seconds"], 8)
             saved = state.update_voice_input({
                 "mode": "wake_word", "provider": "gemini",
                 "model": "gemini-3.5-transcribe", "gemini_model": "gemini-3.5-transcribe",
                 "wake_word": "Petey", "device_id": "usb-mic-1", "sensitivity": "high",
+                "wake_ack_delay_ms": 650, "submit_silence_ms": 950,
+                "follow_up_seconds": 12,
             })
             self.assertEqual(saved["mode"], "wake_word")
             self.assertEqual(saved["device_id"], "usb-mic-1")
             self.assertEqual(saved["sensitivity"], "high")
+            self.assertEqual(saved["wake_ack_delay_ms"], 650)
+            self.assertEqual(saved["submit_silence_ms"], 950)
+            self.assertEqual(saved["follow_up_seconds"], 12)
             self.assertEqual(DesktopState(directory).voice_input["wake_word"], "Petey")
             with self.assertRaises(ValueError):
                 state.update_voice_input({"mode": "secret_recording"})
             with self.assertRaises(ValueError):
                 state.update_voice_input({"sensitivity": "maximum"})
+            with self.assertRaises(ValueError):
+                state.update_voice_input({"wake_ack_delay_ms": 50})
+            with self.assertRaises(ValueError):
+                state.update_voice_input({"follow_up_seconds": 60})
 
 
 if __name__ == "__main__":

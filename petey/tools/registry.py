@@ -18,6 +18,12 @@ class ToolSpec:
     handler: Callable[[dict], dict]
     available_when: Callable[[str], bool] = lambda _message: True
     required_when: Callable[[str], bool] = lambda _message: False
+    authorize_when: Callable[[str], None] = lambda _message: None
+    explicit_when: Callable[[str], bool] = lambda _message: False
+    control_capability: str = ""
+    control_label: str = ""
+    metered: bool = False
+    default_daily_limit: int = 0
 
     def schema(self) -> dict:
         return {
@@ -64,6 +70,7 @@ class ToolRegistry:
         ]
         if missing:
             raise ToolError(f"Missing required tool argument: {missing[0]}")
+        tool.authorize_when(user_message)
         result = tool.handler(arguments)
         if not isinstance(result, dict):
             raise ToolError("The tool returned an invalid result.")

@@ -44,6 +44,7 @@ local memory, voice, media creation, and work inside folders you approve.
 - [Troubleshooting](Troubleshooting)
 - [Development](Development)
 
-PETEY currently reports version **0.18.2**. See the
+PETEY's stable release is **v0.18.2**. The opt-in experimental prerelease is
+**v0.19.0-experimental.1**. See the
 [repository](https://github.com/bizzomephisto/PETEY-DESKTOP) for source code and
 the latest changes.

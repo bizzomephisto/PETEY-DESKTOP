@@ -1,9 +1,20 @@
 # Discord bridge
 
 PETEY can join one Discord server channel through an official Discord bot account.
-The bot uses PETEY's selected personality and chat model, follows channel activity,
+The bot uses its explicitly selected saved Petey profile and the configured chat model, follows channel activity,
 offers occasional games or made-up trivia, and accepts private instructions from
 the desktop app. Discord displays the account with an **APP** badge.
+Its prompt explicitly identifies the current surface as Discord. Discord starts in
+**Room only** memory mode; the owner can separately allow Discord messages to enter
+PETEY's shared SQLite memory and allow public Discord replies to search it.
+
+Choose **Discord personality** on the Discord page to assign a saved Petey profile.
+This assignment is independent of desktop chats: switching chats or changing a
+chat's profile never changes Discord. **Discord default** uses the built-in room
+personality without inheriting the system profile. The room prompt adds Discord
+behavior and boundaries to the selected profile.
+Earlier room replies remain conversational context, but the selected Discord profile
+is always authoritative for identity, traits, tone, and communication style.
 
 ## Set up the bot
 
@@ -53,7 +64,7 @@ Clearing a saved token does not change an environment token.
 
 ## Conversation behavior
 
-The Discord bridge uses activity-aware pacing and bounded room-only context:
+The Discord bridge uses activity-aware pacing and bounded room context:
 
 - It ignores existing history at connection time and listens for a minute before
   contributing on its own. Direct mentions, replies to PETEY, PETEY's name, watched
@@ -82,6 +93,34 @@ earlier conflicting guidance. **Pause PETEY** keeps reading but suppresses repli
 app startup to the last server and channel it successfully joined. The saved token
 must still be available. Turning the switch off leaves the last location saved but
 stops startup reconnection.
+
+## Memory access
+
+Desktop Petey and Mobile Petey are two interfaces to the same installation, so they
+already share the same SQLite memory. **Discord memory access** controls whether the
+Discord bridge joins that shared pool:
+
+| Setting | Save new Discord messages | Desktop/Mobile can recall Discord | Discord can search Desktop/Mobile memory |
+| --- | --- | --- | --- |
+| Room only | No | No | No |
+| Store Discord, no private recall | Yes | Yes | No |
+| Full shared memory | Yes | Yes | Yes |
+
+The default is **Room only**. In either storage mode, PETEY stores new human messages
+and successfully delivered PETEY replies with the Discord surface label and a stable
+server/channel conversation ID. Existing messages from before the setting was enabled
+are not imported. Repeated poll results are ignored, so a Discord message is stored
+once per connection. Returning to **Room only** stops future Discord storage and
+recall; it does not erase Discord rows already in the database. The global memory
+reset under **Memory & privacy** removes them along with the rest of PETEY's memory.
+
+**Full shared memory** is an explicit public-output choice. A Discord reply may use
+relevant facts from Desktop, Mobile, knowledge documents, or other Discord rooms.
+The prompt forbids exposing credentials, keys, exact private messages, and unrelated
+personal details, but relevant recalled information may still appear publicly to
+everyone who can read the selected channel. Use **Store Discord, no private recall**
+when Desktop/Mobile should remember Discord without giving the room access to private
+chat memory. Changes apply immediately and do not require reconnecting.
 
 ## Watched topics and spontaneous participation
 
@@ -127,9 +166,12 @@ time are additional. The four-second Discord polling interval also bounds how so
 PETEY sees a new message. Direct questions and watched topics use a delay of at most
 two seconds regardless of the slider.
 
-Channel context and instructions remain in memory only for the current connection.
-They do not read or write PETEY's personal chat memory and cannot use desktop tools.
-Messages are sent to the configured model provider to generate replies.
+Channel context and instructions remain in memory only for the current connection
+unless the owner selects a shared-memory policy. Discord never receives Workspace
+or filesystem tools. Compatible add-on capabilities and the core deAPI image tool
+remain blocked until the owner enables **Allow Petey to control** and the Discord
+surface for that integration. Messages are sent to the configured model provider
+to generate replies.
 
 PETEY polls Discord's official HTTPS API every four seconds. If access is denied,
 the channel disappears, or delivery is uncertain, the bridge stops rather than

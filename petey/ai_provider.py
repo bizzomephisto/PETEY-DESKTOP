@@ -308,7 +308,10 @@ class AIProvider:
             declaration = {
                 "name": function["name"],
                 "description": str(function.get("description") or ""),
-                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+                "parameters": self._gemini_tool_schema(
+                    function.get("parameters")
+                    or {"type": "object", "properties": {}}
+                ),
             }
             declarations.append(declaration)
         if not declarations:
@@ -341,6 +344,13 @@ class AIProvider:
                 )
                 response.raise_for_status()
                 parts = response.json()["candidates"][0]["content"].get("parts", [])
+            except requests.HTTPError as exc:
+                response = exc.response
+                detail = str(response.text or "")[:500] if response is not None else ""
+                status = response.status_code if response is not None else "unknown"
+                raise AIProviderError(
+                    f"Gemini returned HTTP {status}: {detail or 'The request was rejected.'}"
+                ) from exc
             except requests.RequestException as exc:
                 raise AIProviderError(f"Could not reach Gemini: {exc}") from exc
             except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
@@ -376,6 +386,19 @@ class AIProvider:
             final = events[-1]["result"]
             return str(final.get("message") or final.get("error") or "The tool request finished."), events
         raise AIProviderError("Gemini did not finish its tool request.")
+
+    @staticmethod
+    def _gemini_tool_schema(value):
+        """Remove JSON Schema keywords unsupported by Gemini function declarations."""
+        if isinstance(value, list):
+            return [AIProvider._gemini_tool_schema(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        return {
+            key: AIProvider._gemini_tool_schema(item)
+            for key, item in value.items()
+            if key not in {"additionalProperties", "default"}
+        }
 
     @staticmethod
     def _message_content(content) -> str:

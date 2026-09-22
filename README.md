@@ -1,6 +1,6 @@
 # PETEY
 
-Current release: **v0.18.2** · [Release notes](CHANGELOG.md)
+Stable release: **v0.18.2** · Experimental prerelease: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
@@ -46,15 +46,17 @@ speed, and hardware setup.
 ## Highlights
 
 - Gemini, OpenAI, LM Studio, Ollama, and other OpenAI-compatible chat providers
-- Local SQLite conversation memory with configurable local or hosted embeddings
+- Local SQLite conversation memory with source labels, correction-aware retrieval, and configurable local or hosted embeddings
 - Temporary chats that do not read or write memory
+- Chat deletion can permanently remove its messages or preserve them as searchable memory
 - Built-in personality templates, editable system prompts, and five complete Petey profile slots
 - RAG uploads, retrieval testing, vector rebuilding, and local database controls
 - Parallel image, video, music, speech, background-removal, and upscale jobs
 - Streaming Gemini text to speech with OpenAI fallback, named voices, and delivery direction
 - Per-reply Speak controls and optional automatic playback for new chat responses
-- Push-to-talk, always-on microphone, and wake-name input with deAPI transcription and Gemini fallback
+- Provider transcription for push-to-talk, always-on, and wake-name microphone input
 - Replaceable per-voice wake acknowledgements that play only after the wake name is followed by a pause
+- Adjustable wake acknowledgement, silence-to-send, and follow-up listening timing
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
 - Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
 - Build Your Plan preview from $5 in $5 steps, with rollover balance, capability mix, and live usage estimates
@@ -97,8 +99,8 @@ interface with your phone while PETEY is running.
 - Python 3.12 or newer
 - FFmpeg for browser-compatible generated-video previews
 - A language-model provider: Gemini, OpenAI, or a local OpenAI-compatible server
-- A Gemini API key if you want image inspection, Gemini speech, or transcription fallback
-- A deAPI key if you want media generation or low-cost microphone transcription
+- A Gemini API key if you want image inspection, Gemini speech, or microphone transcription fallback
+- A deAPI key if you want media generation or microphone transcription
 - Node.js with `npx` if you want to enable the Filesystem tool
 - OpenSSL if you want trusted HTTPS phone access and live phone microphone capture
 
@@ -124,8 +126,7 @@ cp .env.example .env
 python run_desktop.py
 ```
 
-On Windows, activate the environment with `.venv\Scripts\activate`. For
-browser-based development, run:
+On Windows, activate the environment with `.venv\Scripts\activate`. For browser-based development, run:
 
 ```bash
 python run_desktop.py --browser
@@ -222,19 +223,23 @@ python run_desktop.py --cloudflare
 
 PETEY opens its normal desktop window, listens only on the configured loopback port, and leaves the existing
 `cloudflared` service in charge of the tunnel. Cloudflare supplies the public HTTPS
-certificate, while the local origin remains inaccessible from the LAN. Open the
-stable hostname directly; named-tunnel mode does not add PETEY's LAN private-link
-token or session cookie. Configure a Cloudflare Access policy when the hostname
-should require an identity login.
+certificate, while the local origin remains inaccessible from the LAN. PETEY creates
+one durable private pairing link and prints it at every launch. Open it once on a
+phone to create a one-year HttpOnly, SameSite, Secure cookie; the bare hostname
+returns `401`. The pairing survives PETEY restarts. To revoke every paired browser
+and replace the link, launch once with `--cloudflare --rotate-mobile-access`.
+Keep a Cloudflare Access policy in front of PETEY as an additional identity check.
 
 To make the installed PETEY application launcher start this Cloudflare mode, run:
 
 ```bash
-python run_desktop.py --install-shortcut --cloudflare
+python run_desktop.py --install-shortcut --cloudflare --cloudflare-hostname meetpetey.com
 ```
 
-The launcher reads the same `PETEY_CLOUDFLARE_HOSTNAME` and
-`PETEY_CLOUDFLARE_PORT` values whenever it starts.
+The launcher saves the resolved Cloudflare hostname and port in its launch command.
+When PETEY is already running in Cloudflare mode, its in-app **Restart PETEY** button
+relaunches with that same hostname and port. The `--install-shortcut` option only
+updates the launcher; it does not start PETEY.
 
 For a free temporary address without a Cloudflare account or domain, start PETEY
 and `cloudflared` in two terminals as described in
@@ -290,10 +295,10 @@ When a hosted chat or embedding provider is selected, relevant prompts, selected
 workspace-file context, or memory text are sent to that provider. Local-provider
 mode keeps those model requests on the configured local endpoint. Chat image
 attachments are sent to the independently selected Gemini vision model, and its
-text description is passed to the active chat provider. Microphone activity is
-detected locally; completed utterance clips are sent to deAPI for transcription,
-with Gemini used only when configured directly or as a fallback. Recordings are not
-stored in the gallery or memory. Media-generation requests are sent to deAPI.
+text description is passed to the active chat provider. Microphone activity and
+the wake name are detected locally; completed recordings from every listening mode
+use the selected deAPI or Gemini transcription path. Recordings are not stored in
+the gallery or memory. Media-generation requests are sent to deAPI.
 
 ## Workspace safety
 

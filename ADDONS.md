@@ -48,12 +48,14 @@ filesystem and network permissions, so they are trusted local code.
 - Enable/disable changes are saved immediately and applied after PETEY restarts.
 - Core routes and databases exist before external `setup(context)` runs.
 - Optional panel assets are served only from an enabled, successfully loaded
-  add-on folder and cannot escape that folder.
+  add-on folder and cannot escape that folder. Their URLs change when the add-on's
+  panel, script, or stylesheet changes so remote browser caches refresh.
 - A returned object may expose `tool_specs()` and `close()`. PETEY namespaces tool
   names as `addon_<id>__<tool>` and closes add-ons before shared workers/runtimes.
-- Desktop chat can receive a loaded add-on's narrowly gated tools. Discord access
-  is a separate per-add-on **Allow in Discord** permission, defaults off, takes
-  effect immediately, and clears when the add-on is disabled.
+- Model tools stay unavailable until **Allow Petey to control** is enabled. The
+  user grants Desktop, Mobile, Discord, and Petey Life separately, can disable
+  individual capabilities, and can cap autonomous daily use of metered actions.
+  Direct user requests may bypass only the daily limit.
 
 ## MCP connector rules
 

@@ -35,7 +35,7 @@ from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.voice_cues import VoiceCueLibrary
 from petey.wake_detector import LocalWakeDetector, WakeDetectorError
-from petey.tools import ToolRegistry, build_desktop_tool_registry
+from petey.tools import ToolRegistry, build_desktop_tool_registry, build_media_tools
 from petey.subscription_plans import estimate_plan
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
@@ -159,8 +159,13 @@ def create_desktop_app(
         app.config["PETEY_DISCORD"] = DiscordBridge(
             app.config["PETEY_STATE"], media_jobs_getter=get_media_jobs,
             addon_tools_getter=lambda: ToolRegistry(
-                app.config["PETEY_ADDONS"].tool_specs(for_discord=True)
+                build_media_tools(
+                    app.config["PETEY_STATE"], get_media_jobs,
+                    app.config["PETEY_MEMORY"], surface="discord",
+                )
+                + app.config["PETEY_ADDONS"].tool_specs(surface="discord")
             ),
+            memory_getter=lambda: app.config["PETEY_MEMORY"],
         )
 
     def gallery_json(item: dict) -> dict:
@@ -240,9 +245,9 @@ def create_desktop_app(
                 addon = app.config["PETEY_ADDONS"].set_enabled(
                     addon_id, payload.get("enabled")
                 )
-            elif "discord_tools_enabled" in payload:
-                addon = app.config["PETEY_ADDONS"].set_discord_tools_enabled(
-                    addon_id, payload.get("discord_tools_enabled")
+            elif "petey_control" in payload:
+                addon = app.config["PETEY_ADDONS"].set_petey_control(
+                    addon_id, payload.get("petey_control")
                 )
             else:
                 raise ValueError("Choose an add-on setting to update.")
@@ -327,6 +332,10 @@ def create_desktop_app(
                 result = bridge.set_room_prompt(
                     payload.get("prompt", ""), reset=payload.get("reset") is True
                 )
+            elif action == "persona":
+                result = bridge.set_persona(payload.get("persona_slot"))
+            elif action == "memory-policy":
+                result = bridge.set_memory_policy(payload.get("policy"))
             elif action == "auto-connect":
                 result = bridge.set_auto_connect(payload.get("enabled"))
             elif action == "enhance-room-prompt":
@@ -516,6 +525,28 @@ def create_desktop_app(
             ]
         )
 
+    @app.post("/api/desktop/messages/notification")
+    def desktop_message_notification():
+        current: DesktopState = app.config["PETEY_STATE"]
+        payload = request.get_json(silent=True) or {}
+        source = str(payload.get("source") or "")
+        message = str(payload.get("message") or "").strip()
+        conversation_id = str(payload.get("conversation_id") or current.conversation_id)
+        if source != "petey-opencode" or not message.startswith("OpenCode run #"):
+            return jsonify({"error": "Unsupported notification."}), 400
+        if not message or len(message) > 5000:
+            return jsonify({"error": "Notification is invalid."}), 400
+        if conversation_id not in {str(item.get("id")) for item in current.conversations}:
+            return jsonify({"error": "Conversation not found."}), 404
+        surface = str(payload.get("surface") or "petey_desktop")
+        if surface not in {"petey_desktop", "mobile_petey"}:
+            surface = "petey_desktop"
+        app.config["PETEY_MEMORY"].store_memory(
+            current.installation_id, conversation_id, PETEY_USER_ID, message,
+            source_surface=surface, metadata={"notification_source": source},
+        )
+        return jsonify({"status": "saved"}), 201
+
     @app.post("/api/desktop/image-browser/open")
     def desktop_open_image_browser():
         payload = request.get_json(silent=True) or {}
@@ -570,6 +601,12 @@ def create_desktop_app(
             conversation_id=current.conversation_id,
             person_id=current.person_id,
             display_name=current.display_name,
+            surface=(
+                request.form.get("surface", "petey_desktop")
+                if request.form.get("surface", "petey_desktop")
+                in {"petey_desktop", "mobile_petey"}
+                else "petey_desktop"
+            ),
         )
         temporary = request.form.get("temporary", "").lower() in {"1", "true", "yes"}
         tools = build_desktop_tool_registry(
@@ -579,6 +616,7 @@ def create_desktop_app(
             temporary=temporary,
             mcp_manager=app.config["PETEY_MCP"],
             addon_manager=app.config["PETEY_ADDONS"],
+            surface=identity.surface,
         )
         service = AssistantService(
             current.conversation_system_prompt,
@@ -863,13 +901,19 @@ def create_desktop_app(
             deleted, active_id = current.delete_conversation(conversation_id)
         except KeyError as exc:
             return jsonify({"error": str(exc).strip("'")}), 404
-        removed_messages = app.config["PETEY_MEMORY"].clear_conversation(
-            current.installation_id, conversation_id
-        )
+        preserve_memory = request.args.get("preserve_memory", "").lower() in {
+            "1", "true", "yes"
+        }
+        removed_messages = 0
+        if not preserve_memory:
+            removed_messages = app.config["PETEY_MEMORY"].clear_conversation(
+                current.installation_id, conversation_id
+            )
         return jsonify(
             {
                 "deleted": deleted,
                 "deleted_messages": removed_messages,
+                "memory_preserved": preserve_memory,
                 "conversation_id": active_id,
                 "conversations": current.conversations,
                 "conversation_persona": current.conversation_persona,

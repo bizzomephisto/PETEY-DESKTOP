@@ -96,7 +96,9 @@ class DesktopMemory:
                     embedding_json TEXT,
                     embedding_provider TEXT,
                     embedding_model TEXT,
-                    embedding_dimensions INTEGER
+                    embedding_dimensions INTEGER,
+                    source_surface TEXT NOT NULL DEFAULT 'petey_desktop',
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE INDEX IF NOT EXISTS idx_memory_conversation
                     ON memory_items(installation_id, conversation_id, id);
@@ -118,6 +120,19 @@ class DesktopMemory:
                 INSERT OR REPLACE INTO metadata(key, value) VALUES ('schema_version', '1');
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(memory_items)").fetchall()
+            }
+            if "source_surface" not in columns:
+                connection.execute(
+                    "ALTER TABLE memory_items ADD COLUMN source_surface TEXT NOT NULL "
+                    "DEFAULT 'petey_desktop'"
+                )
+            if "metadata_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE memory_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def _insert_item(
         self,
@@ -127,13 +142,16 @@ class DesktopMemory:
         kind: str,
         content: str,
         source_name: str | None = None,
+        source_surface: str = "petey_desktop",
+        metadata: dict | None = None,
     ) -> int:
         with self._write_lock, self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO memory_items(
-                    installation_id, conversation_id, user_id, kind, source_name, content, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    installation_id, conversation_id, user_id, kind, source_name, content,
+                    created_at, source_surface, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(installation_id),
@@ -143,6 +161,10 @@ class DesktopMemory:
                     source_name,
                     content.strip(),
                     dt.datetime.now(dt.timezone.utc).isoformat(),
+                    source_surface if source_surface in {
+                        "petey_desktop", "mobile_petey", "discord", "petey_life"
+                    } else "petey_desktop",
+                    json.dumps(metadata or {}, separators=(",", ":")),
                 ),
             )
             return int(cursor.lastrowid)
@@ -177,20 +199,28 @@ class DesktopMemory:
 
         _EMBEDDING_EXECUTOR.submit(work)
 
-    def store_memory(self, installation_id, conversation_id, user_id, content: str) -> None:
+    def store_memory(
+        self, installation_id, conversation_id, user_id, content: str,
+        source_surface: str = "petey_desktop",
+        metadata: dict | None = None,
+    ) -> None:
         item_id = self.store_memory_deferred(
-            installation_id, conversation_id, user_id, content
+            installation_id, conversation_id, user_id, content,
+            source_surface=source_surface, metadata=metadata,
         )
         if item_id is not None:
             self.queue_embedding(item_id, content)
 
     def store_memory_deferred(
-        self, installation_id, conversation_id, user_id, content: str
+        self, installation_id, conversation_id, user_id, content: str,
+        source_surface: str = "petey_desktop",
+        metadata: dict | None = None,
     ) -> int | None:
         if not content or not content.strip():
             return None
         return self._insert_item(
-            str(installation_id), str(conversation_id), str(user_id), "message", content
+            str(installation_id), str(conversation_id), str(user_id), "message", content,
+            source_surface=source_surface, metadata=metadata,
         )
 
     def queue_embedding(self, item_id: int, content: str) -> None:
@@ -261,7 +291,7 @@ class DesktopMemory:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, user_id, content, created_at FROM memory_items
+                SELECT id, user_id, content, created_at, source_surface, metadata_json FROM memory_items
                 WHERE installation_id=? AND kind='message' AND conversation_id=?
                 ORDER BY id DESC LIMIT ?
                 """,
@@ -273,9 +303,19 @@ class DesktopMemory:
                 "user_id": row["user_id"],
                 "message": row["content"],
                 "timestamp": row["created_at"],
+                "source_surface": row["source_surface"],
+                "metadata": self._metadata(row["metadata_json"]),
             }
             for row in reversed(rows)
         ]
+
+    @staticmethod
+    def _metadata(value: str) -> dict:
+        try:
+            parsed = json.loads(value or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
     @staticmethod
     def _cosine(left: list[float], right: list[float]) -> float:
@@ -321,9 +361,14 @@ class DesktopMemory:
     def search_memories(
         self, query: str, installation_id: str, limit=5,
         exclude_conversation_id: str | None = None,
+        exclude_contents: list[str] | tuple[str, ...] = (),
     ) -> str:
         if not query or not query.strip():
             return ""
+        excluded_content = [
+            value for value in exclude_contents
+            if isinstance(value, str) and value
+        ][:40]
         with self._connect() as connection:
             if exclude_conversation_id is None:
                 available = connection.execute(
@@ -360,13 +405,22 @@ class DesktopMemory:
                 if exclude_conversation_id is not None:
                     conversation_clause = "AND (conversation_id IS NULL OR conversation_id<>?)"
                     parameters.append(str(exclude_conversation_id))
+                content_clause = ""
+                if excluded_content:
+                    content_clause = (
+                        "AND content NOT IN ("
+                        + ",".join("?" for _ in excluded_content)
+                        + ")"
+                    )
+                    parameters.extend(excluded_content)
                 rows = connection.execute(
                     f"""
-                    SELECT id, content, created_at, kind, source_name, embedding_json
+                    SELECT id, user_id, content, created_at, kind, source_name,
+                           embedding_json, source_surface
                     FROM memory_items
                     WHERE installation_id=? AND embedding_provider=? AND embedding_model=?
                       AND embedding_dimensions=? AND embedding_json IS NOT NULL
-                      {conversation_clause}
+                      {conversation_clause} {content_clause}
                     ORDER BY id DESC LIMIT 3000
                     """,
                     parameters,
@@ -389,16 +443,35 @@ class DesktopMemory:
                 if exclude_conversation_id is not None:
                     conversation_clause = "AND (conversation_id IS NULL OR conversation_id<>?)"
                     parameters.append(str(exclude_conversation_id))
+                content_clause = ""
+                if excluded_content:
+                    content_clause = (
+                        "AND content NOT IN ("
+                        + ",".join("?" for _ in excluded_content)
+                        + ")"
+                    )
+                    parameters.extend(excluded_content)
                 parameters.append(int(limit))
                 selected = connection.execute(
                     f"""
-                    SELECT content, created_at, kind, source_name FROM memory_items
-                    WHERE installation_id=? AND ({clauses}) {conversation_clause}
+                    SELECT id, user_id, content, created_at, kind, source_name,
+                           source_surface
+                    FROM memory_items
+                    WHERE installation_id=? AND ({clauses}) {conversation_clause} {content_clause}
                     ORDER BY id DESC LIMIT ?
                     """,
                     parameters,
                 ).fetchall()
 
+        # Present facts chronologically so a later direct correction has the final
+        # word while older text remains available as an audit trail.
+        selected = sorted(selected, key=lambda row: int(row["id"]))
+        surface_labels = {
+            "petey_desktop": "Petey Desktop",
+            "mobile_petey": "Mobile Petey",
+            "discord": "Discord",
+            "petey_life": "Petey Life",
+        }
         lines = []
         for row in selected:
             try:
@@ -408,7 +481,10 @@ class DesktopMemory:
             label = (
                 f"[📄 {row['source_name']} — {timestamp}]"
                 if row["kind"] == "document"
-                else f"[{timestamp}]"
+                else (
+                    f"[{surface_labels.get(row['source_surface'], 'Petey Desktop')} — "
+                    f"{'Petey' if row['user_id'] == 'PETEY' else 'User'} — {timestamp}]"
+                )
             )
             lines.append(f"{label} {row['content']}")
         return "\n".join(lines)

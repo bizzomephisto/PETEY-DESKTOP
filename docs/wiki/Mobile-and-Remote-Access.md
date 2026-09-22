@@ -2,8 +2,18 @@
 
 PETEY's mobile layout keeps the conversation, visual animation, saved Petey profile,
 speech voice, microphone mode, animation picker, and fullscreen control available on a phone.
+The chat header stays compact: choose the profile for the current conversation
+from **Settings → Chat profile**. If Quick Actions is installed, tap **⚡** to show
+its configured buttons and tap an action to close the menu.
 Cloudflare supplies trusted HTTPS, so mobile browsers can grant microphone access
 without installing PETEY's local certificate.
+
+In Visual Mode, captions appear in the upper third of the screen and fade away
+five seconds after a reply finishes. The mic,
+push-to-talk, and speaker controls sit above PETEY at the bottom. A red X marks a
+muted mic or speaker. Muting the mic stops an active recording or continuous
+listening session. Tap **PETEY** beneath the chevron to show **Chat** on the left
+and **Fullscreen** and **Settings** on the right; tap PETEY again to hide them.
 
 Choose one of these setups:
 
@@ -75,8 +85,11 @@ Start PETEY:
 python run_desktop.py --cloudflare
 ```
 
-PETEY opens on the computer and prints both the local origin and public address.
-Open the HTTPS address on the phone and allow microphone access when prompted.
+PETEY opens on the computer and prints a private public URL containing its pairing
+token. Open that complete HTTPS URL on the phone once and allow microphone access
+when prompted. PETEY removes the token from the address and saves a one-year Secure,
+HttpOnly browser cookie. The same phone and home-screen shortcut remain paired across
+PETEY restarts, and PETEY prints the same private pairing link on later launches.
 
 On Linux, make the normal PETEY application-menu icon start this mode:
 
@@ -87,13 +100,21 @@ python run_desktop.py --install-shortcut --cloudflare
 Run the shortcut installer again without `--cloudflare` if you later want the
 application icon to return to local-only mode.
 
-### 4. Restrict who can open it
+### 4. Access protection and revocation
 
-A published hostname is public unless a Cloudflare Access policy protects it.
-PETEY's Cloudflare mode does not add the private-link token used by local LAN mode.
-For an everyday remote setup, create a Cloudflare Access self-hosted application
-for the PETEY hostname and allow only your email address or chosen identity
-provider. After the Access login, PETEY works in the same browser tab.
+PETEY rejects the bare hostname with `401`, even if the Cloudflare route itself is
+public. Keep the pairing link private. For a second layer, create a Cloudflare Access
+self-hosted application for the PETEY hostname and allow only your email address or
+chosen identity provider. After the Access login, PETEY works in the same browser tab.
+
+If a phone is lost or the pairing link is exposed, stop PETEY and restart it with:
+
+```bash
+python run_desktop.py --cloudflare --rotate-mobile-access
+```
+
+PETEY creates a new private link. Old links and every existing PETEY pairing cookie
+are rejected. Open the newly printed link on each phone you still trust.
 
 ## Free temporary Cloudflare address
 
@@ -125,12 +146,13 @@ python run_desktop.py --cloudflare \
 ```
 
 On Windows PowerShell, activate with `.venv\Scripts\activate` and put the PETEY
-command on one line. Open the generated HTTPS URL on the phone. Stop both PETEY
-and `cloudflared` when finished.
+command on one line. Open the complete tokenized HTTPS URL printed by PETEY on the
+phone. Stop both PETEY and `cloudflared` when finished.
 
-The random URL grants access to the whole PETEY interface and Quick Tunnels cannot
-be configured with Cloudflare Access. Treat it like a password: do not post it,
-reuse it in screenshots, or send it to someone you do not trust.
+The random tunnel address alone does not pass PETEY's pairing gate, but Quick Tunnels
+cannot be configured with Cloudflare Access. Treat PETEY's printed pairing link like
+a password: do not post it, reuse it in screenshots, or send it to someone you do
+not trust.
 
 Quick Tunnels may refuse to start when a `config.yaml` file exists in the local
 `.cloudflared` directory. Rename that file temporarily or use the stable named
@@ -138,16 +160,24 @@ tunnel setup instead.
 
 ## Add PETEY to the phone's home screen
 
-Open PETEY's Cloudflare HTTPS address first, then:
+Open PETEY's complete private pairing link first, then:
 
 - **Android Chrome:** open the three-dot menu and choose **Add to Home screen** or
   **Install app**.
 - **iPhone or iPad Safari:** tap **Share**, choose **Add to Home Screen**, edit the
   name if desired, and tap **Add**.
 
-The home-screen icon reopens the saved address. A stable custom domain continues
-to work across restarts. A free Quick Tunnel icon becomes stale when the temporary
-URL changes.
+The home-screen icon reopens the clean saved address using the browser's pairing
+cookie. A stable custom domain continues to work across restarts. A free Quick
+Tunnel icon becomes stale when the temporary URL changes.
+
+### PETEY says the private link is required
+
+- Open the complete `https://.../?access_token=...` link printed by the current
+  PETEY installation, not only the bare hostname.
+- Make sure the browser accepts cookies and is not using a temporary private tab.
+- Pair again if browser data was cleared, the one-year cookie expired, or mobile
+  access was rotated.
 
 ## Troubleshooting
 

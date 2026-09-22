@@ -38,8 +38,36 @@ def _number(arguments: dict, key: str, default: float, minimum: float, maximum: 
 
 
 def build_media_tools(
-    state, media_jobs_getter, memory, record_memory: bool = True
+    state, media_jobs_getter, memory, record_memory: bool = True,
+    surface: str = "petey_desktop",
 ) -> list[ToolSpec]:
+    capability_definitions = [{
+        "id": "generate_image", "label": "Generate images",
+        "metered": True, "default_daily_limit": 5,
+    }]
+
+    def control_available(message: str) -> bool:
+        try:
+            state.authorize_petey_control(
+                "deapi-media", "generate_image", surface,
+                explicit=explicit_image_request(message),
+                capabilities=capability_definitions,
+            )
+            return True
+        except ValueError:
+            return False
+
+    def authorize_control(message: str) -> None:
+        try:
+            state.authorize_petey_control(
+                "deapi-media", "generate_image", surface,
+                explicit=explicit_image_request(message),
+                capabilities=capability_definitions,
+                consume=True,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
     def generate_image(arguments: dict) -> dict:
         if not (state.ai_provider.get("deapi", {}).get("api_key") or os.getenv("DEAPI_KEY", "").strip()):
             raise ToolError("Media generation is not configured. Add the media service key before generating images.")
@@ -69,7 +97,7 @@ def build_media_tools(
             "prompt": prompt,
             "message": (
                 f"Image generation queued as {job['id'][:8]}. "
-                "Progress is available in Media and the result will appear in Gallery."
+                "The result will appear in this chat and remain available in Gallery."
             ),
         }
 
@@ -77,8 +105,10 @@ def build_media_tools(
         ToolSpec(
             name="generate_image",
             description=(
-                "Generate a new image. Use only when the user explicitly asks to "
-                "create or generate an image. Do not call it merely because an image might be useful."
+                "Generate a new image through deAPI. An explicit user request always "
+                "overrides Petey's autonomous daily allowance. When autonomous access is "
+                "enabled and available, you may also create an image when it clearly adds "
+                "value to the conversation; use that allowance thoughtfully."
             ),
             parameters={
                 "type": "object",
@@ -96,6 +126,12 @@ def build_media_tools(
                 "additionalProperties": False,
             },
             handler=generate_image,
-            available_when=explicit_image_request,
+            available_when=control_available,
+            authorize_when=authorize_control,
+            explicit_when=explicit_image_request,
+            control_capability="generate_image",
+            control_label="Generate images",
+            metered=True,
+            default_daily_limit=5,
         )
     ]

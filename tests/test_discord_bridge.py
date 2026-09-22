@@ -19,6 +19,10 @@ class State:
     discord_pace = "auto"
     discord_watched_topics = []
     discord_room_prompt = ROOM_PROMPT
+    discord_persona_slot = None
+    discord_persona_options = [{"slot": None, "name": "Discord default"}]
+    discord_system_prompt = ROOM_PROMPT
+    discord_memory_policy = "room_only"
     discord_auto_connect = False
     discord_last_location = {}
 
@@ -39,13 +43,28 @@ class State:
 
     def update_discord_room_prompt(self, prompt="", reset=False):
         self.discord_room_prompt = ROOM_PROMPT if reset else prompt
+        self.discord_system_prompt = self.discord_room_prompt
         return self.discord_room_prompt
+
+    def update_discord_persona(self, persona_slot=None):
+        self.discord_persona_slot = persona_slot
+        self.discord_system_prompt = (
+            "Discord saved persona\n\n" + self.discord_room_prompt
+            if persona_slot is not None else self.discord_room_prompt
+        )
+        return self.discord_persona_slot
 
     def update_discord_auto_connect(self, enabled):
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a bool")
         self.discord_auto_connect = enabled
         return enabled
+
+    def update_discord_memory_policy(self, policy):
+        if policy not in {"room_only", "store", "shared"}:
+            raise ValueError("bad policy")
+        self.discord_memory_policy = policy
+        return policy
 
     def update_discord_last_location(self, guild_id, channel_id, guild="", channel=""):
         self.discord_last_location = {
@@ -59,10 +78,13 @@ class DiscordBridgeTests(unittest.TestCase):
     def setUp(self):
         self.transport = Mock()
         self.provider = Mock()
+        self.memory = Mock()
+        self.memory.search_memories.return_value = "[Mobile Petey — User] The porch light is blue."
         self.state = State()
         self.bridge = DiscordBridge(
             self.state, lambda token: self.transport, lambda _: self.provider,
             typing_interval=0.01,
+            memory_getter=lambda: self.memory,
         )
         self.bridge.selection = {
             "guild_id": "222222222222222222", "channel_id": "333333333333333333",
@@ -89,11 +111,21 @@ class DiscordBridgeTests(unittest.TestCase):
 
     def test_discord_uses_room_prompt_without_desktop_persona(self):
         self.state.system_prompt = "desktop persona must stay private"
-        self.bridge.room_prompt = "Discord room identity only"
+        self.bridge.set_room_prompt("Discord room identity only")
         self.run_turn()
         system = self.provider.complete.call_args.args[1]
         self.assertIn("Discord room identity only", system)
         self.assertNotIn("desktop persona must stay private", system)
+
+    def test_discord_persona_is_selected_independently(self):
+        status = self.bridge.set_persona(2)
+        self.assertEqual(status["persona_slot"], 2)
+        self.assertIn("Discord saved persona", self.bridge.system_prompt)
+        self.state.system_prompt = "active desktop chat persona"
+        self.run_turn()
+        system = self.provider.complete.call_args.args[1]
+        self.assertIn("Discord saved persona", system)
+        self.assertNotIn("active desktop chat persona", system)
 
     def test_worker_reads_generates_sends_and_closes(self):
         self.run_turn()
@@ -105,6 +137,35 @@ class DiscordBridgeTests(unittest.TestCase):
         self.assertEqual(status["phase"], "disconnected")
         self.assertNotIn("secret-token", str(status))
         self.assertEqual(self.state.discord_last_location["channel_id"], "333333333333333333")
+
+    def test_room_only_does_not_read_or_write_shared_memory(self):
+        self.run_turn(messages=[RoomMessage("1", "Guest", "PETEY, remember this", addressed=True)])
+        self.memory.store_memory.assert_not_called()
+        self.memory.search_memories.assert_not_called()
+
+    def test_store_policy_saves_discord_messages_for_desktop_without_private_recall(self):
+        self.bridge.set_memory_policy("store")
+        self.run_turn(messages=[RoomMessage("1", "Guest", "PETEY, the code is blue", addressed=True)])
+        self.assertEqual(self.memory.store_memory.call_count, 2)
+        first = self.memory.store_memory.call_args_list[0]
+        self.assertEqual(first.args[:4], (
+            "desktop-test", "discord:222222222222222222:333333333333333333",
+            "discord:Guest", "Guest: PETEY, the code is blue",
+        ))
+        self.assertEqual(first.kwargs["source_surface"], "discord")
+        self.assertEqual(self.memory.store_memory.call_args_list[1].args[2:4], ("PETEY", "Hello Discord!"))
+        self.memory.search_memories.assert_not_called()
+
+    def test_shared_policy_retrieves_cross_surface_memory_for_public_reply(self):
+        self.bridge.set_memory_policy("shared")
+        self.run_turn(messages=[RoomMessage("1", "Guest", "PETEY, what color is the porch light?", addressed=True)])
+        self.memory.search_memories.assert_called_once_with(
+            "PETEY, what color is the porch light?", "desktop-test", limit=5,
+            exclude_contents=("Guest: PETEY, what color is the porch light?",),
+        )
+        system = self.provider.complete.call_args.args[1]
+        self.assertIn("The porch light is blue", system)
+        self.assertIn("response is public", system)
 
     def test_worker_registers_media_commands_when_queue_is_available(self):
         self.bridge.media_jobs_getter = Mock()

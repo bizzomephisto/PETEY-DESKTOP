@@ -223,6 +223,64 @@ class AIProviderTests(unittest.TestCase):
         followup = post.call_args_list[1].kwargs["json"]["contents"][-1]
         self.assertEqual(followup["parts"][0]["functionResponse"]["response"], {"result": "hello"})
 
+    def test_gemini_tool_declarations_strip_unsupported_json_schema_fields(self):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "Hello."}]}}]
+        }
+        provider = AIProvider({
+            "provider": "gemini",
+            "gemini": {"model": "gemini-3.5-flash", "api_key": "test-key"},
+        })
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "generate_image",
+                "description": "Generate an image.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "width": {
+                            "type": "integer", "minimum": 128,
+                            "maximum": 2048, "default": 1024,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        }]
+
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
+            text, events = provider.complete_with_tools(
+                "Hello", "You are Petey", [], tools, MagicMock()
+            )
+
+        self.assertEqual((text, events), ("Hello.", []))
+        schema = post.call_args.kwargs["json"]["tools"][0]["functionDeclarations"][0]["parameters"]
+        self.assertNotIn("additionalProperties", schema)
+        self.assertNotIn("default", schema["properties"]["width"])
+        self.assertEqual(schema["properties"]["width"]["maximum"], 2048)
+
+    def test_gemini_tool_http_error_includes_provider_detail(self):
+        response = MagicMock(status_code=400, text='{"error":"Unknown field"}')
+        response.raise_for_status.side_effect = requests.HTTPError(response=response)
+        provider = AIProvider({
+            "provider": "gemini",
+            "gemini": {"model": "gemini-3.5-flash", "api_key": "test-key"},
+        })
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "test_tool", "description": "Test.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }]
+
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response):
+            with self.assertRaisesRegex(AIProviderError, "HTTP 400.*Unknown field"):
+                provider.complete_with_tools("Hello", "You are Petey", [], tools, MagicMock())
+
     def test_qwen_tool_call_markup_is_normalized(self):
         calls = AIProvider._normalize_tool_calls(
             None,

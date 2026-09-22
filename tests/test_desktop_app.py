@@ -18,6 +18,32 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_discord_model_media_tool_respects_its_surface_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            capabilities = [{
+                "id": "generate_image", "label": "Generate images",
+                "metered": True, "default_daily_limit": 5,
+            }]
+            app = create_desktop_app(
+                state=state, memory=MagicMock(), job_manager=MagicMock()
+            )
+            bridge = app.config["PETEY_DISCORD"]
+            request = "Generate an image of Petey in a tiny spaceship"
+
+            self.assertEqual(bridge.addon_tools_getter().schemas_for(request), [])
+            state.update_petey_control(
+                "deapi-media", {
+                    "enabled": True,
+                    "surfaces": {"discord": True},
+                }, capabilities,
+            )
+            names = [
+                item["function"]["name"]
+                for item in bridge.addon_tools_getter().schemas_for(request)
+            ]
+            self.assertIn("generate_image", names)
+
     def test_discord_panel_credentials_catalog_and_controls(self):
         bridge = MagicMock()
         credential = {"has_token": True, "has_saved_token": True, "source": "saved"}
@@ -31,6 +57,8 @@ class DesktopAppTests(unittest.TestCase):
         bridge.set_pace.return_value = {"phase": "connected", "pace": "fast"}
         bridge.set_watched_topics.return_value = {"phase": "connected", "watched_topics": ["linux"]}
         bridge.set_room_prompt.return_value = {"phase": "connected", "room_prompt": "Custom"}
+        bridge.set_persona.return_value = {"phase": "connected", "persona_slot": 2}
+        bridge.set_memory_policy.return_value = {"phase": "connected", "memory_policy": "store"}
         bridge.set_auto_connect.return_value = {"phase": "disconnected", "auto_connect": True}
         bridge.enhance_room_prompt.return_value = {"prompt": "Enhanced room behavior"}
         bridge.resolve_admin_proposal.return_value = {"phase": "connected", "admin_proposals": []}
@@ -42,6 +70,9 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn('id="view-discord"', html)
             self.assertIn('id="discord-topics"', html)
             self.assertIn('id="discord-room-prompt"', html)
+            self.assertIn('id="discord-persona"', html)
+            self.assertIn('id="discord-memory-policy"', html)
+            self.assertIn('id="discord-memory-warning"', html)
             self.assertIn('id="discord-auto-connect"', html)
             self.assertIn('id="discord-enhance-room-prompt"', html)
             self.assertIn('id="discord-admin-status"', html)
@@ -66,6 +97,14 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(
                 client.post('/api/desktop/discord/room-prompt', json={"prompt": "Custom"}).json['room_prompt'],
                 'Custom',
+            )
+            self.assertEqual(
+                client.post('/api/desktop/discord/persona', json={"persona_slot": 2}).json['persona_slot'],
+                2,
+            )
+            self.assertEqual(
+                client.post('/api/desktop/discord/memory-policy', json={"policy": "store"}).json['memory_policy'],
+                'store',
             )
             self.assertTrue(client.post(
                 '/api/desktop/discord/auto-connect', json={"enabled": True}
@@ -417,12 +456,17 @@ class DesktopAppTests(unittest.TestCase):
                 )
                 app = create_desktop_app(state=state, runtime=AsyncRuntime())
                 response = app.test_client().post(
-                    "/api/desktop/chat", data={"message": "Continue"}
+                    "/api/desktop/chat",
+                    data={"message": "Continue", "surface": "mobile_petey"},
                 )
 
             self.assertEqual(response.status_code, 200)
             self.assertIn("old lighthouse", service_type.call_args.args[0])
             self.assertNotEqual(service_type.call_args.args[0], state.system_prompt)
+            self.assertEqual(
+                service_type.return_value.respond.call_args.args[1].surface,
+                "mobile_petey",
+            )
 
     def test_conversation_management_and_preferences(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -434,6 +478,9 @@ class DesktopAppTests(unittest.TestCase):
                 client = app.test_client()
                 created = client.post("/api/desktop/conversations", json={"title": "Ideas"})
                 conversation_id = created.get_json()["conversation_id"]
+                disposable = client.post(
+                    "/api/desktop/conversations", json={"title": "Disposable"}
+                ).get_json()["conversation_id"]
                 saved = client.put(
                     "/api/desktop/preferences",
                     json={"always_on_top": True, "ui_scale": 1.3},
@@ -442,14 +489,24 @@ class DesktopAppTests(unittest.TestCase):
                     f"/api/desktop/conversations/{conversation_id}",
                     json={"title": "Named ideas"},
                 )
-                deleted = client.delete(f"/api/desktop/conversations/{conversation_id}")
+                preserved = client.delete(
+                    f"/api/desktop/conversations/{conversation_id}?preserve_memory=true"
+                )
+                deleted = client.delete(
+                    f"/api/desktop/conversations/{disposable}?preserve_memory=false"
+                )
 
             self.assertEqual(created.status_code, 201)
             self.assertEqual(created.get_json()["conversation"]["title"], "Ideas")
             self.assertTrue(saved.get_json()["preferences"]["always_on_top"])
             self.assertEqual(saved.get_json()["preferences"]["ui_scale"], 1.3)
             self.assertEqual(renamed.get_json()["conversation"]["title"], "Named ideas")
+            self.assertTrue(preserved.get_json()["memory_preserved"])
+            self.assertFalse(deleted.get_json()["memory_preserved"])
             self.assertNotEqual(deleted.get_json()["conversation_id"], conversation_id)
+            memory_store.clear_conversation.assert_called_once_with(
+                state.installation_id, disposable
+            )
 
     def test_conversation_persona_can_be_chosen_when_created_and_changed_in_chat(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -477,6 +534,9 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn('id="chat-persona"', shell)
             self.assertIn('id="jump-to-latest"', shell)
             self.assertIn('id="new-chat-dialog"', shell)
+            self.assertIn('id="delete-chat-dialog"', shell)
+            self.assertIn('id="delete-chat-keep-memory"', shell)
+            self.assertIn('id="delete-chat-with-memory"', shell)
             self.assertEqual(created.status_code, 201)
             self.assertEqual(created.get_json()["conversation"]["persona_slot"], 1)
             self.assertEqual(created.get_json()["conversation_persona"]["name"], "Story Petey")
