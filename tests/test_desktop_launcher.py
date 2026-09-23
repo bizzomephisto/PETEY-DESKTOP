@@ -422,6 +422,27 @@ class DesktopLauncherTests(unittest.TestCase):
                 "generated.png",
             )
 
+    def test_desktop_bridge_downloads_only_files_inside_requested_addon_data(self):
+        with TemporaryDirectory() as directory:
+            data_dir = Path(directory)
+            source = data_dir / "addon-data" / "petey-conference" / "sessions" / "one" / "transcript.md"
+            source.parent.mkdir(parents=True)
+            source.write_text("meeting notes", encoding="utf-8")
+            destination = data_dir / "saved.md"
+            bridge = run_desktop.DesktopBridge(data_dir=data_dir)
+            bridge.window = MagicMock()
+            bridge.window.create_file_dialog.return_value = (str(destination),)
+
+            result = bridge.download_addon_file(
+                "petey-conference", "sessions/one/transcript.md"
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(destination.read_text(encoding="utf-8"), "meeting notes")
+            self.assertFalse(
+                bridge.download_addon_file("petey-conference", "../../settings.json")["ok"]
+            )
+
     def test_linux_backend_detection_accepts_qt(self):
         def find_spec(name):
             return object() if name == "PySide6" else None

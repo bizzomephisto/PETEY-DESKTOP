@@ -16,17 +16,24 @@
                 <button id="collapse-sidebar" class="collapse-button" type="button" title="Collapse sidebar">‹</button>
             </div>
             <nav class="desktop-nav" aria-label="Petey sections">
+                <span class="nav-section-heading">Chats</span>
                 <button class="nav-button active" data-view="chat" type="button"><span class="nav-icon">●</span><span class="nav-label">Chat</span></button>
                 <div class="chat-tools">
                     <button id="new-chat" class="new-chat-button" type="button">＋ New chat</button>
                     <div id="conversation-list" class="conversation-list" aria-label="Saved chats"></div>
                 </div>
+                <span class="nav-section-heading">Create</span>
                 <button class="nav-button" data-view="media" type="button"><span class="nav-icon">◆</span><span class="nav-label">Media</span></button>
                 <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon">▦</span><span class="nav-label">Gallery</span></button>
                 <button class="nav-button" data-view="workspace" type="button"><span class="nav-icon">⌘</span><span class="nav-label">Workspace</span></button>
-                {% if discord_enabled %}<button class="nav-button" data-view="discord" type="button"><span class="nav-icon">◉</span><span class="nav-label">Discord</span></button>{% endif %}
-                {% for addon in addon_views %}<button class="nav-button" data-view="{{ addon.id }}" type="button"><span class="nav-icon">{{ addon.icon }}</span><span class="nav-label">{{ addon.label }}</span></button>{% endfor %}
-                <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">▧</span><span class="nav-label">Add-ons</span></button>
+                <details class="nav-integrations">
+                    <summary><span class="nav-icon">◇</span><span class="nav-label">Integrations</span><span class="nav-disclosure">⌄</span></summary>
+                    <div class="nav-integrations-list">
+                        {% if discord_enabled %}<button class="nav-button" data-view="discord" type="button"><span class="nav-icon">◉</span><span class="nav-label">Discord</span></button>{% endif %}
+                        {% for addon in addon_views %}<button class="nav-button" data-view="{{ addon.id }}" type="button"><span class="nav-icon">{{ addon.icon }}</span><span class="nav-label">{{ addon.label }}</span></button>{% endfor %}
+                        <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">▧</span><span class="nav-label">Manage add-ons</span></button>
+                    </div>
+                </details>
                 <button class="nav-button plus-nav" data-view="plan" type="button"><span class="nav-icon">✦</span><span class="nav-label">PETEY Plus</span></button>
                 <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
                 <button class="nav-button" data-view="help" type="button"><span class="nav-icon">?</span><span class="nav-label">Help</span></button>
@@ -34,6 +41,7 @@
             <div class="coming-next">
                 <a id="project-link" href="{{ project_url }}" target="_blank" rel="noopener">GitHub · PETEY-DESKTOP ↗</a>
                 <a id="media-provider-link" href="{{ media_provider_url }}" target="_blank" rel="noopener">Media powered by deAPI ↗</a>
+                <span class="sidebar-version">PETEY v{{ app_version }}</span>
             </div>
         </aside>
 
@@ -41,25 +49,27 @@
             <header class="chat-header">
                 <div class="chat-heading">
                     <div class="chat-title-line">
-                        <h1>PETEY</h1>
-                        <label class="chat-persona-picker" title="Persona assigned to this chat">
-                            <span class="sr-only">Chat persona</span>
-                            <select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select>
-                        </label>
+                        <img class="mobile-brand-logo" src="{{ url_for('static', filename='petey_avatar.png') }}" alt="">
+                        <h1 id="chat-name">New chat</h1>
                     </div>
-                    <p><span id="chat-name">New chat</span><span id="status" class="chat-runtime-status">Starting up…</span></p>
+                    <p><span id="status" class="chat-runtime-status">Starting up…</span></p>
                 </div>
                 <div class="mobile-chat-actions" aria-label="Mobile chat controls">
                     <button id="mobile-visual-mode" type="button" title="Open visual mode">Visual</button>
                     <button id="mobile-settings-toggle" type="button" title="Mobile settings" aria-expanded="false">⚙</button>
                 </div>
-                <div class="chat-header-actions">
-                    <select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style" hidden><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option></select>
-                    <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
-                    <button id="visual-mode-toggle" class="visual-mode-toggle" type="button">Visual mode</button>
-                    <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary</span></label>
-                    <span class="version-badge">v{{ app_version }}</span>
-                </div>
+                <details id="chat-header-menu" class="chat-header-menu">
+                    <summary aria-label="Open chat controls" title="Chat controls"><span aria-hidden="true">⌄</span></summary>
+                    <div class="chat-header-menu-panel">
+                        <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Petey profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
+                        <div class="chat-header-actions">
+                            <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
+                            <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
+                            <button id="visual-mode-toggle" class="visual-mode-toggle" type="button">Visual mode</button>
+                            <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary chat</span></label>
+                        </div>
+                    </div>
+                </details>
             </header>
 
             <div id="messages" class="messages" aria-live="polite">
@@ -92,13 +102,14 @@
 
             <div id="visual-chat" class="visual-chat" hidden>
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
+                <div id="visual-state-heading" class="visual-state-heading" aria-hidden="true">PRESENT</div>
                 <div id="mobile-visual-actions" class="mobile-visual-actions" hidden>
                     <button id="mobile-show-chat" type="button">Chat</button>
                     <button id="mobile-visual-fullscreen" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
                     <button id="mobile-visual-settings" type="button" aria-label="Open mobile settings">⚙</button>
                 </div>
                 <div id="visual-caption" class="visual-caption" aria-live="polite"></div>
-                <button id="mobile-visual-menu-toggle" class="visual-chat-identity" type="button" aria-label="Show visual controls" aria-expanded="false" aria-controls="mobile-visual-actions"><span class="visual-menu-chevron" aria-hidden="true">⌃</span><strong>PETEY</strong><span id="visual-chat-state">Present</span></button>
+                <button id="mobile-visual-menu-toggle" class="visual-chat-identity" type="button" aria-label="Show visual controls" aria-expanded="false" aria-controls="mobile-visual-actions"><span class="visual-menu-chevron" aria-hidden="true">⌃</span><img src="/static/petey_avatar.png" alt=""><strong>PETEY</strong><span id="visual-chat-state">Present</span></button>
                 <div class="visual-voice-control">
                     <div class="visual-voice-buttons">
                         <button id="visual-mic-mute-button" class="visual-mic-mute-button" type="button" aria-label="Mute microphone" aria-pressed="false" hidden><span aria-hidden="true">🎙</span></button>
@@ -122,19 +133,35 @@
             <aside id="mobile-settings-panel" class="mobile-settings-panel" hidden aria-label="Mobile settings">
                 <div class="mobile-settings-heading"><div><strong>Mobile settings</strong><span>Only the essentials.</span></div><button id="mobile-settings-close" type="button" aria-label="Close settings">×</button></div>
                 <label><span>Chat profile</span><select id="mobile-chat-persona" aria-label="Profile for this chat"><option value="system">System profile</option></select></label>
-                <label><span>Petey profile</span><select id="mobile-persona"><option value="current">Loading profiles…</option></select></label>
-                <label><span>Voice</span><select id="mobile-voice"><option value="">Loading voices…</option></select></label>
                 <label><span>Voice method</span><select id="mobile-voice-method"><option value="always_on">Open mic</option><option value="wake_word">Wait for “Petey”</option><option value="push_to_talk">Push to talk</option></select></label>
-                <label><span>Animation</span><select id="mobile-animation"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option></select></label>
+                <label class="mobile-all-settings-toggle"><span><strong>Show all settings</strong><small>Profiles, providers, tools, memory, and more</small></span><input id="mobile-show-all-settings" type="checkbox" role="switch"></label>
+                <div id="mobile-settings-advanced" class="mobile-settings-advanced" hidden>
+                    <label><span>Petey profile</span><select id="mobile-persona"><option value="current">Loading profiles…</option></select></label>
+                    <label><span>Voice</span><select id="mobile-voice"><option value="">Loading voices…</option></select></label>
+                    <label><span>Animation</span><select id="mobile-animation"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
+                    <nav class="mobile-settings-links" aria-label="All settings">
+                        {% for page in settings_pages %}<button type="button" data-mobile-settings-view="{{ page.id }}"><span aria-hidden="true">{{ page.icon }}</span>{{ page.title }}</button>{% endfor %}
+                    </nav>
+                </div>
                 <button id="mobile-settings-save" class="primary-button" type="button">Save</button>
                 <p id="mobile-settings-status" class="hint" role="status"></p>
             </aside>
+
+            <nav id="mobile-chat-dock" class="mobile-chat-dock" aria-label="Mobile chat actions">
+                <button id="mobile-chat-dock-toggle" class="mobile-chat-dock-toggle" type="button" aria-expanded="false" aria-controls="mobile-chat-dock-actions"><span aria-hidden="true">⌃</span><strong>PETEY</strong></button>
+                <div id="mobile-chat-dock-actions" class="mobile-chat-dock-actions" hidden>
+                    <button type="button" class="active" aria-current="page"><span aria-hidden="true">●</span>Chat</button>
+                    <button id="mobile-dock-visual" type="button"><span aria-hidden="true">◫</span>Visual</button>
+                    <div id="mobile-quick-actions-slot" class="mobile-quick-actions-slot"></div>
+                    <button id="mobile-dock-settings" type="button"><span aria-hidden="true">⚙</span>Settings</button>
+                </div>
+            </nav>
 
             <form id="composer" class="composer">
                 <div id="attachment-chip" class="attachment-chip" hidden></div>
                 <div class="composer-row">
                     <div class="composer-tools">
-                        <label class="attach-button" title="Attach a file">
+                        <label class="attach-button" title="Attach a file" aria-label="Attach a file">
                             <input id="attachment" name="attachment" type="file" hidden>
                             <span aria-hidden="true">＋</span>
                         </label>

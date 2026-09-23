@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.19.0 — 2026-09-23
+
+This stable release promotes the v0.19 experimental preview and includes all of
+its capabilities. The `v0.19.0-experimental.1` tag and prerelease remain available
+for existing testers.
+
+### Faster, clearer conversations
+
+- Streamlined memory retrieval with a smaller vector cache, fewer database reads,
+  and correction-aware context that works consistently across desktop and mobile.
+- Added strict grounding rules so Petey states when live data, memory, or an
+  integration is unavailable instead of inventing an answer.
+- Reduced wake-name acknowledgement and silence-detection delays while preserving
+  the no-interruption path for commands that begin with “Petey.”
+- Combined initial messages, voice cues, and preferences into the startup payload
+  and batched chat rendering for faster startup and saved-chat switching.
+
+### Desktop and mobile interface
+
+- Reworked desktop navigation, chat controls, composer actions, and the responsive
+  mobile dock to keep infrequently used controls out of the conversation area.
+- Added removable pending attachments and kept attachment and push-to-talk actions
+  available on mobile. A quick microphone tap toggles mute; holding records.
+- Rebuilt all six Visual Mode scenes as reactive animations on a black background,
+  with orange listening, blue speaking, and live audio-driven movement.
+- Fixed duplicate mobile responses and made automatic replies, add-on announcements,
+  and wake acknowledgements consistently respect the active speaker mute state.
+
+### Add-ons and tools
+
+- Added an opt-in add-on event channel so integrations can send hidden updates to
+  Petey, receive a normal chat response, and request speech without exposing their
+  internal prompt in the feed.
+- Added secure native downloads for files created inside an add-on's private data
+  directory, supporting conference transcripts and recordings.
+- Hardened Gemini tool declarations and tool argument validation, including empty
+  parameter sets and list-valued arguments used by spreadsheet integrations.
+- Added immutable revisioned asset caching for the core interface and independent
+  cache revisions for installed add-ons.
+
+### Documentation
+
+- Added permanent Cloudflare Tunnel setup, Home Assistant alert relay, and retained
+  experimental-install guides.
+
 ## v0.19.0-experimental.1 — 2026-09-22
 
 This prerelease is published for testing. **v0.18.2 remains the stable release.**

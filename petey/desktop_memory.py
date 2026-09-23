@@ -69,7 +69,7 @@ class DesktopMemory:
         self.embedding_factory = embedding_factory
         self._write_lock = threading.RLock()
         self._vector_cache_lock = threading.Lock()
-        self._vector_cache: OrderedDict[int, tuple[int, array, float]] = OrderedDict()
+        self._vector_cache: OrderedDict[int, tuple[array, float]] = OrderedDict()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -188,6 +188,7 @@ class DesktopMemory:
                     item_id,
                 ),
             )
+        self._discard_cached_vectors((item_id,))
         return True
 
     def _embed_in_background(self, item_id: int, content: str) -> None:
@@ -317,38 +318,62 @@ class DesktopMemory:
         except (json.JSONDecodeError, TypeError):
             return {}
 
-    @staticmethod
-    def _cosine(left: list[float], right: list[float]) -> float:
-        if len(left) != len(right) or not left:
-            return -1.0
-        dot = sum(a * b for a, b in zip(left, right))
-        left_norm = math.sqrt(sum(value * value for value in left))
-        right_norm = math.sqrt(sum(value * value for value in right))
-        return dot / (left_norm * right_norm) if left_norm and right_norm else -1.0
-
-    def _cached_vector(self, row: sqlite3.Row) -> tuple[array, float]:
-        item_id = int(row["id"])
-        encoded = str(row["embedding_json"])
-        signature = hash(encoded)
+    def _cached_vector(self, item_id: int, encoded: str | None = None) -> tuple[array, float] | None:
         with self._vector_cache_lock:
             cached = self._vector_cache.get(item_id)
-            if cached is not None and cached[0] == signature:
+            if cached is not None:
                 self._vector_cache.move_to_end(item_id)
-                return cached[1], cached[2]
-        vector = array("d", (float(value) for value in json.loads(encoded)))
-        norm = math.sqrt(sum(value * value for value in vector))
+                return cached
+        if encoded is None:
+            return None
+        # Embeddings are ranking signals, so single precision retains useful cosine
+        # accuracy while halving the hot cache's memory footprint.
+        vector = array("f", (float(value) for value in json.loads(encoded)))
+        norm = math.sqrt(math.sumprod(vector, vector))
         with self._vector_cache_lock:
-            self._vector_cache[item_id] = (signature, vector, norm)
+            self._vector_cache[item_id] = (vector, norm)
             self._vector_cache.move_to_end(item_id)
             while len(self._vector_cache) > MAX_CACHED_VECTORS:
                 self._vector_cache.popitem(last=False)
         return vector, norm
 
-    def _semantic_score(self, query: tuple[float, ...], query_norm: float, row: sqlite3.Row) -> float:
-        vector, vector_norm = self._cached_vector(row)
+    def _vectors_for_rows(
+        self, connection: sqlite3.Connection, rows: list[sqlite3.Row]
+    ) -> dict[int, tuple[array, float]]:
+        vectors = {}
+        missing = []
+        for row in rows:
+            item_id = int(row["id"])
+            cached = self._cached_vector(item_id)
+            if cached is None:
+                missing.append(item_id)
+            else:
+                vectors[item_id] = cached
+        for offset in range(0, len(missing), 500):
+            chunk = missing[offset:offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            encoded_rows = connection.execute(
+                f"SELECT id, embedding_json FROM memory_items WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for encoded_row in encoded_rows:
+                item_id = int(encoded_row["id"])
+                cached = self._cached_vector(item_id, str(encoded_row["embedding_json"]))
+                if cached is not None:
+                    vectors[item_id] = cached
+        return vectors
+
+    @staticmethod
+    def _semantic_score(
+        query: tuple[float, ...], query_norm: float,
+        vector_data: tuple[array, float] | None,
+    ) -> float:
+        if vector_data is None:
+            return -1.0
+        vector, vector_norm = vector_data
         if len(query) != len(vector) or not query_norm or not vector_norm:
             return -1.0
-        return sum(left * right for left, right in zip(query, vector)) / (query_norm * vector_norm)
+        return math.sumprod(query, vector) / (query_norm * vector_norm)
 
     def _discard_cached_vectors(self, item_ids=None) -> None:
         with self._vector_cache_lock:
@@ -416,7 +441,7 @@ class DesktopMemory:
                 rows = connection.execute(
                     f"""
                     SELECT id, user_id, content, created_at, kind, source_name,
-                           embedding_json, source_surface
+                           source_surface
                     FROM memory_items
                     WHERE installation_id=? AND embedding_provider=? AND embedding_model=?
                       AND embedding_dimensions=? AND embedding_json IS NOT NULL
@@ -425,11 +450,14 @@ class DesktopMemory:
                     """,
                     parameters,
                 ).fetchall()
+                vectors = self._vectors_for_rows(connection, rows)
                 query_vector = tuple(float(value) for value in query_result["values"])
-                query_norm = math.sqrt(sum(value * value for value in query_vector))
+                query_norm = math.sqrt(math.sumprod(query_vector, query_vector))
                 scored = heapq.nlargest(
                     int(limit),
-                    ((self._semantic_score(query_vector, query_norm, row), row) for row in rows),
+                    ((self._semantic_score(
+                        query_vector, query_norm, vectors.get(int(row["id"]))
+                    ), row) for row in rows),
                     key=lambda pair: pair[0],
                 )
                 selected = [row for score, row in scored if score > 0.15]

@@ -313,6 +313,10 @@ class DesktopState:
             and settings["voice_input"].get("provider") == "gemini"
             and "gemini_model" not in settings["voice_input"]
         )
+        legacy_voice_latency = (
+            isinstance(settings.get("voice_input"), dict)
+            and "latency_tuning_version" not in settings["voice_input"]
+        )
         voice_input_defaults = {
             "mode": "disabled",
             "provider": "deapi",
@@ -321,9 +325,11 @@ class DesktopState:
             "wake_word": "Petey",
             "device_id": "",
             "sensitivity": "normal",
-            "wake_ack_delay_ms": 500,
-            "submit_silence_ms": 800,
+            "wake_ack_style": "fast",
+            "wake_ack_delay_ms": 300,
+            "submit_silence_ms": 600,
             "follow_up_seconds": 8,
+            "latency_tuning_version": 1,
         }
         if not isinstance(settings.get("voice_input"), dict):
             settings["voice_input"] = copy.deepcopy(voice_input_defaults)
@@ -332,6 +338,13 @@ class DesktopState:
             if key not in settings["voice_input"]:
                 settings["voice_input"][key] = value
                 changed = True
+        if legacy_voice_latency:
+            if settings["voice_input"].get("wake_ack_delay_ms") == 500:
+                settings["voice_input"]["wake_ack_delay_ms"] = 300
+            if settings["voice_input"].get("submit_silence_ms") == 800:
+                settings["voice_input"]["submit_silence_ms"] = 600
+            settings["voice_input"]["latency_tuning_version"] = 1
+            changed = True
         if legacy_gemini_voice_input:
             settings["voice_input"]["gemini_model"] = settings["voice_input"].get(
                 "model", "gemini-3.5-transcribe"
@@ -588,7 +601,10 @@ class DesktopState:
             preferences["visual_mode"] = bool(changes["visual_mode"])
         if "visual_style" in changes:
             style = str(changes.get("visual_style") or "neural_core")
-            if style not in {"neural_core", "synapse_drift", "orbital_mind", "signal_bloom"}:
+            if style not in {
+                "neural_core", "synapse_drift", "orbital_mind", "signal_bloom",
+                "aurora_flow", "constellation_field",
+            }:
                 raise ValueError("Choose a supported visual style.")
             preferences["visual_style"] = style
         if "ui_scale" in changes:
@@ -1217,9 +1233,14 @@ class DesktopState:
             if sensitivity not in {"high", "normal", "low"}:
                 raise ValueError("Choose a supported microphone sensitivity.")
             current["sensitivity"] = sensitivity
+        if "wake_ack_style" in changes:
+            style = str(changes.get("wake_ack_style") or "fast")
+            if style not in {"fast", "spoken"}:
+                raise ValueError("Choose a supported wake acknowledgement.")
+            current["wake_ack_style"] = style
         for key, minimum, maximum in (
-            ("wake_ack_delay_ms", 200, 2000),
-            ("submit_silence_ms", 400, 3000),
+            ("wake_ack_delay_ms", 150, 2000),
+            ("submit_silence_ms", 350, 3000),
             ("follow_up_seconds", 3, 30),
         ):
             if key in changes:

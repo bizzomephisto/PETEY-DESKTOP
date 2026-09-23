@@ -1,6 +1,6 @@
 # PETEY — Detailed Product and Technical Overview
 
-Prepared September 22, 2026 for experimental prerelease **v0.19.0-experimental.1**. The stable release remains **v0.18.2**. External add-ons have their own installation requirements and release histories.
+Prepared September 22, 2026 for the v0.19 series and updated for stable release **v0.19.0**. The earlier **v0.19.0-experimental.1** preview remains available. External add-ons have their own installation requirements and release histories.
 
 ## 1. What PETEY is
 

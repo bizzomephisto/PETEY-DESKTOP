@@ -28,6 +28,7 @@ class AddonContext:
     addon_id: str
     addon_dir: Path
     data_dir: Path
+    emit_event: object
 
 
 class AddonManager:
@@ -37,6 +38,7 @@ class AddonManager:
         self.state = state
         self.user_dir = Path(user_dir) if user_dir else state.data_dir / "addons"
         self.user_dir.mkdir(parents=True, exist_ok=True)
+        self._event_broker = None
         self._records = {
             "discord": {
                 "id": "discord", "name": "Discord", "version": "1.0",
@@ -132,7 +134,10 @@ class AddonManager:
             addon_id, bool(record.get("default_enabled"))
         )
 
-    def activate_external(self, *, app, memory, gallery, runtime, get_media_jobs):
+    def activate_external(
+        self, *, app, memory, gallery, runtime, get_media_jobs, event_broker=None
+    ):
+        self._event_broker = event_broker
         for record in self._records.values():
             if record["source"] != "user" or not self.enabled(record["id"]) or record["error"]:
                 continue
@@ -153,10 +158,24 @@ class AddonManager:
                     raise RuntimeError("Add-on entrypoint must define setup(context).")
                 data_dir = self.state.data_dir / "addon-data" / record["id"]
                 data_dir.mkdir(parents=True, exist_ok=True)
+                def emit_event(message, *, conversation_id=None, surface="petey_desktop",
+                               speak=False, metadata=None, addon_id=record["id"]):
+                    if self._event_broker is None:
+                        raise RuntimeError("PETEY's add-on event channel is unavailable.")
+                    return self._event_broker.emit(
+                        addon_id,
+                        message,
+                        conversation_id=str(conversation_id or self.state.conversation_id),
+                        surface=surface,
+                        speak=speak,
+                        metadata=metadata,
+                    )
+
                 record["instance"] = setup(AddonContext(
                     app=app, state=self.state, memory=memory, gallery=gallery,
                     runtime=runtime, get_media_jobs=get_media_jobs,
                     addon_id=record["id"], addon_dir=record["path"], data_dir=data_dir,
+                    emit_event=emit_event,
                 ))
                 record["loaded"] = True
             except Exception as exc:
@@ -376,3 +395,6 @@ class AddonManager:
                     close()
                 except Exception:
                     pass
+        if self._event_broker is not None:
+            self._event_broker.close()
+            self._event_broker = None

@@ -131,11 +131,36 @@ add-on ID. Core PETEY routes are registered first and must not be replaced.
 | `addon_id` | Stable ID from the manifest |
 | `addon_dir` | Read-only-by-convention installed module folder |
 | `data_dir` | Dedicated writable data folder for the add-on |
+| `emit_event` | Queue an opt-in hidden event for PETEY to answer in chat |
 
 Do not hold provider keys longer than necessary or return them through an API. Use
 `context.state.ai_provider` only when the add-on explicitly needs configured provider
 access. Paid media work should go through `context.get_media_jobs()` so PETEY retains
 queue limits, isolated provider clients, progress, shutdown, and Gallery capture.
+
+### Hidden add-on events
+
+An add-on may react to an external state change without fabricating a visible user
+message. Call `context.emit_event()` only after the user enables that behavior in
+the add-on. PETEY processes events serially on a bounded queue, hides the event
+prompt, saves the assistant response to the selected conversation, and delivers it
+to connected desktop and mobile clients.
+
+```python
+context.emit_event(
+    "Playback changed to So What by Miles Davis. Announce it briefly.",
+    speak=True,
+    metadata={"track_uri": "spotify:track:example"},
+)
+```
+
+`conversation_id` defaults to the active conversation at emission time. `surface`
+may be `petey_desktop` or `mobile_petey`. `speak=True` requests automatic speech,
+but the browser still respects its speaker mute control. Scalar `metadata` is saved
+on both the hidden event and visible reply so the originating add-on can correlate
+the completed response. Keep events under 5,000
+characters, avoid secrets, suppress repeats at the source, and provide a disabled-
+by-default user toggle because each event can invoke the configured chat provider.
 
 ## Sidebar panels and browser assets
 
@@ -156,6 +181,27 @@ with the add-on ID. Use `textContent` for external values and validate every API
 argument server-side.
 Asset URLs include a revision derived from the add-on's panel, script, and stylesheet
 modification times so browser and tunnel caches refresh after those files change.
+
+### Camera and microphone ownership
+
+Use `window.peteyMediaDevices` when a panel opens browser media hardware. Register a
+stream with an add-on-specific owner ID and release that lease before stopping or
+discarding the stream. A consumer may clone a camera from `findShareable('video')`;
+it must stop only its clone. The original owner remains responsible for its stream.
+
+Long-running recording modes should call `await window.peteyConferenceAudio.prepare()`
+before opening their microphone and `release()` when finished. This pauses and later
+restores PETEY's continuous wake/open-mic capture. Listen for `petey:voice-playback`
+to exclude PETEY's own speech from live transcription while leaving the archive
+recording intact.
+
+### Downloading add-on files
+
+Normal browsers can download a same-origin add-on API response with an `<a>` link.
+PETEY's native window exposes
+`window.pywebview.api.download_addon_file(addonId, relativePath)` for a native Save
+As dialog. The path is restricted to `addon-data/<addonId>/`; use the browser link
+as the fallback when that API is absent.
 
 ## Lifecycle and compatibility
 

@@ -7,11 +7,11 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.19.0-experimental.1**
-- Stable release: **v0.18.2**
-- Base commit before this prerelease: `4e749bf`
+- Release: **v0.19.0**
+- Stable release: **v0.19.0**
+- Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 291 tests
+- Test framework: `unittest`; current full suite contains 313 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 
@@ -25,12 +25,32 @@ separate web service.
 
 - Keep ordinary interaction simple. Advanced providers, tools, and integrations
   belong in settings or dedicated views.
+- The desktop chat header keeps only the conversation title, status, and a chevron
+  visible. Profile, animation, fullscreen, Chat/Visual, and Temporary controls live
+  in its dismissible dropdown so chat and Visual Mode retain focus. The version sits
+  beneath the GitHub and deAPI links in the desktop sidebar footer.
 - Mobile is a focused remote control: chat, visual mode, saved Petey profile, voice,
-  microphone method, animation, and fullscreen.
+  microphone method, animation, and fullscreen. Its compact settings sheet keeps
+  those essentials first and exposes the complete settings views behind an explicit
+  Show all settings switch.
+- Mobile chat keeps attachment and push-to-talk controls visible. In push-to-talk
+  mode, holding the mic records and releasing submits; a quick tap toggles the
+  session microphone mute state and shows the standard red X when muted.
 - Mobile text chat starts with automatic reply speech muted on each page load.
   Entering visual mode enables it for the current session. Speaker buttons beside
-  the microphone expose the same control on desktop and mobile.
-- Wake-name mode uses a small local keyword detector for the fast canned response.
+  the microphone expose the same control on desktop and mobile. Mobile automatic
+  replies use one speech request per answer; queued replies, add-on announcements,
+  and wake acknowledgements re-check and obey the current session mute state.
+- Visual mode renders six distinct, full-canvas reactive scenes on pure black:
+  Neural Core, Synapse Drift, Orbital Mind, Signal Bloom, Aurora Flow, and
+  Constellation Field. Microphone and speech energy drive their motion, scale,
+  light, signals, and particle density. Orange indicates listening, violet/blue
+  indicates thinking, and electric blue follows PETEY's speech. Muted and error
+  states remain distinct, reduced-motion preferences lower the animation, and the
+  current PETEY avatar anchors the frameless bottom controls. Desktop fullscreen
+  captions sit immediately below the speaking/listening state heading.
+- Wake-name mode uses a small local keyword detector and a preloaded voice clip or
+  immediate local chime for its fast acknowledgement.
   Completed utterances in every microphone mode are uploaded to the selected
   transcription provider. Configurable wake-pause and silence-to-send timers
   control acknowledgement and submission.
@@ -109,8 +129,9 @@ services.
   microphone re-arms after PETEY finishes speaking. Follow-ups do not require the wake name until the saved
   3–30 second dialogue window expires. The default window is eight seconds and is
   shared by desktop and mobile access.
-- Cue selection follows the active speech voice, then `default/`, then browser
-  speech. Profile/speech API responses carry the resolved catalog, and audio URLs
+- Cue selection follows the active speech voice, then `default/`, then an immediate
+  local chime. The user may opt into browser-spoken fallback, which can start more
+  slowly. Profile/speech API responses carry the resolved catalog, and audio URLs
   include file modification revisions to prevent stale browser playback.
 - PETEY speech and wake acknowledgements must never overlap.
 
@@ -126,6 +147,21 @@ restart-gated. Disabled code is never imported. Their routes live under
 `addon-data/<id>`, and cleanup runs at shutdown. Read `ADDONS.md` and
 `docs/addons.md` before extension work.
 
+Background add-on events are opt-in at the add-on level. The host serializes them
+through a bounded queue, hides their source prompts from chat, persists PETEY's
+visible reply in the transcript, and lets requested speech obey the client mute
+state. Add-ons suppress routine repeats and never include credentials.
+
+Browser-local camera and microphone consumers register bounded ownership through
+`window.peteyMediaDevices`. Add-ons may clone an explicitly shareable camera track;
+recording modes yield PETEY's ordinary continuous microphone and restore it when
+finished rather than opening competing inputs. PETEY Webcam v0.3 and Conference
+v0.2 also broker stable named cameras between paired browsers: one device may host
+the Conference microphone and controls while another records video and answers
+fresh-frame requests. Remote audio/video originals remain separate, with a
+best-effort FFmpeg combined recording and explicit disconnects instead of camera
+fallback.
+
 Model tool schemas and dispatch both enforce availability. Compatible add-ons have
 an off-by-default model-control policy with capability and surface grants. Metered
 capabilities enforce autonomous daily limits; direct requests identified by the
@@ -136,8 +172,10 @@ exact allowlists and bounded results.
 
 - Settings navigation is catalog-driven by `web/settings_pages.py`; preserve stable
   view and section IDs so help links and saved hashes continue to work.
-- Core static assets use a startup mtime query revision. Restart the server and
-  reload remote browsers after JavaScript/CSS changes.
+- The startup bootstrap includes current messages and voice-cue metadata so desktop
+  and mobile need one initial API round trip. Core static assets use a startup mtime
+  query revision and immutable caching. Restart the server and reload remote browsers
+  after JavaScript/CSS changes.
 - The chat header keeps the conversation name and effective persona visible. New
   chats choose a saved profile in the creation dialog, and long chats expose a
   jump-to-latest control only while the reader is away from the bottom.

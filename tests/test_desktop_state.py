@@ -297,7 +297,7 @@ class DesktopStateTests(unittest.TestCase):
                 {
                     "always_on_top": True, "sidebar_collapsed": True,
                     "ui_scale": 1.2, "visual_mode": True,
-                    "visual_style": "orbital_mind",
+                    "visual_style": "aurora_flow",
                 }
             )
 
@@ -312,7 +312,9 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(reloaded.preferences["ui_scale"], 1.2)
             self.assertTrue(reloaded.preferences["always_on_top"])
             self.assertTrue(reloaded.preferences["visual_mode"])
-            self.assertEqual(reloaded.preferences["visual_style"], "orbital_mind")
+            self.assertEqual(reloaded.preferences["visual_style"], "aurora_flow")
+            reloaded.update_preferences({"visual_style": "constellation_field"})
+            self.assertEqual(reloaded.preferences["visual_style"], "constellation_field")
             with self.assertRaises(ValueError):
                 state.update_preferences({"visual_style": "unknown"})
 
@@ -462,19 +464,22 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(state.voice_input["mode"], "disabled")
             self.assertEqual(state.voice_input["provider"], "deapi")
             self.assertEqual(state.voice_input["model"], "WhisperLargeV3")
-            self.assertEqual(state.voice_input["wake_ack_delay_ms"], 500)
-            self.assertEqual(state.voice_input["submit_silence_ms"], 800)
+            self.assertEqual(state.voice_input["wake_ack_style"], "fast")
+            self.assertEqual(state.voice_input["wake_ack_delay_ms"], 300)
+            self.assertEqual(state.voice_input["submit_silence_ms"], 600)
             self.assertEqual(state.voice_input["follow_up_seconds"], 8)
             saved = state.update_voice_input({
                 "mode": "wake_word", "provider": "gemini",
                 "model": "gemini-3.5-transcribe", "gemini_model": "gemini-3.5-transcribe",
                 "wake_word": "Petey", "device_id": "usb-mic-1", "sensitivity": "high",
+                "wake_ack_style": "spoken",
                 "wake_ack_delay_ms": 650, "submit_silence_ms": 950,
                 "follow_up_seconds": 12,
             })
             self.assertEqual(saved["mode"], "wake_word")
             self.assertEqual(saved["device_id"], "usb-mic-1")
             self.assertEqual(saved["sensitivity"], "high")
+            self.assertEqual(saved["wake_ack_style"], "spoken")
             self.assertEqual(saved["wake_ack_delay_ms"], 650)
             self.assertEqual(saved["submit_silence_ms"], 950)
             self.assertEqual(saved["follow_up_seconds"], 12)
@@ -484,9 +489,28 @@ class DesktopStateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 state.update_voice_input({"sensitivity": "maximum"})
             with self.assertRaises(ValueError):
+                state.update_voice_input({"wake_ack_style": "slow"})
+            with self.assertRaises(ValueError):
                 state.update_voice_input({"wake_ack_delay_ms": 50})
             with self.assertRaises(ValueError):
                 state.update_voice_input({"follow_up_seconds": 60})
+
+    def test_legacy_default_voice_timings_are_migrated_to_low_latency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            settings = json.loads(state.settings_path.read_text(encoding="utf-8"))
+            settings["voice_input"].pop("latency_tuning_version", None)
+            settings["voice_input"].pop("wake_ack_style", None)
+            settings["voice_input"]["wake_ack_delay_ms"] = 500
+            settings["voice_input"]["submit_silence_ms"] = 800
+            state.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+            migrated = DesktopState(directory).voice_input
+
+            self.assertEqual(migrated["wake_ack_style"], "fast")
+            self.assertEqual(migrated["wake_ack_delay_ms"], 300)
+            self.assertEqual(migrated["submit_silence_ms"], 600)
+            self.assertEqual(migrated["latency_tuning_version"], 1)
 
 
 if __name__ == "__main__":

@@ -199,11 +199,14 @@ def quick_window_position(cursor_x, cursor_y, screen_x, screen_y, screen_width, 
 class DesktopBridge:
     """Small native-window API exposed to the local web interface."""
 
-    def __init__(self, gallery=None, addons_dir=None, voice_cues_dir=None, restart_args=()):
+    def __init__(
+        self, gallery=None, addons_dir=None, voice_cues_dir=None, restart_args=(), data_dir=None,
+    ):
         self.window = None
         self.gallery = gallery
         self.addons_dir = Path(addons_dir) if addons_dir else None
         self.voice_cues_dir = Path(voice_cues_dir) if voice_cues_dir else None
+        self.data_dir = Path(data_dir) if data_dir else None
         self.restart_args = tuple(restart_args)
         self.fullscreen = False
         self._restart_started = False
@@ -339,6 +342,28 @@ class DesktopBridge:
         source = self.gallery.file_path(str(item_id or ""))
         if source is None:
             return {"ok": False, "error": "The local gallery file could not be found."}
+        return self._save_local_file(source)
+
+    def download_addon_file(self, addon_id, relative_path):
+        """Save a file from one add-on's private data directory through a native dialog."""
+        if self.data_dir is None:
+            return {"ok": False, "error": "The add-on data folder is unavailable."}
+        addon_id = str(addon_id or "")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,63}", addon_id):
+            return {"ok": False, "error": "Invalid add-on identifier."}
+        candidate = Path(str(relative_path or ""))
+        if not str(candidate) or candidate.is_absolute():
+            return {"ok": False, "error": "Invalid add-on file path."}
+        root = (self.data_dir / "addon-data" / addon_id).resolve()
+        source = (root / candidate).resolve()
+        if not source.is_relative_to(root) or not source.is_file():
+            return {"ok": False, "error": "The add-on file could not be found."}
+        return self._save_local_file(source)
+
+    def _save_local_file(self, source):
+        if self.window is None:
+            return {"ok": False, "error": "The native save dialog is unavailable."}
+        source = Path(source)
         import webview
 
         dialog_type = getattr(getattr(webview, "FileDialog", None), "SAVE", None)
@@ -924,6 +949,7 @@ def main():
                 "--cloudflare", "--cloudflare-hostname", cloudflare_hostname,
                 "--port", str(port),
             ) if args.cloudflare else (),
+            data_dir=state.data_dir,
         )
         bridge.window = webview.create_window(
             "PETEY",

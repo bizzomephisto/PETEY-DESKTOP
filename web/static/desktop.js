@@ -12,6 +12,7 @@ const statusText = document.getElementById('status');
 const chatNameText = document.getElementById('chat-name');
 const chatPersonaSelect = document.getElementById('chat-persona');
 const mobileChatPersonaSelect = document.getElementById('mobile-chat-persona');
+const chatHeaderMenu = document.getElementById('chat-header-menu');
 const jumpToLatestButton = document.getElementById('jump-to-latest');
 const newChatDialog = document.getElementById('new-chat-dialog');
 const newChatTitle = document.getElementById('new-chat-title');
@@ -29,7 +30,7 @@ let voiceResponseEnabled = false;
 let voiceResponseInitialized = false;
 let lastAppliedVisualMode = null;
 let voiceInputSettingsLoaded = false;
-let voiceInputConfiguration = {mode: 'disabled', provider: 'deapi', model: 'WhisperLargeV3', gemini_model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal', wake_ack_delay_ms: 500, submit_silence_ms: 800, follow_up_seconds: 8};
+let voiceInputConfiguration = {mode: 'disabled', provider: 'deapi', model: 'WhisperLargeV3', gemini_model: 'gemini-3.5-transcribe', wake_word: 'Petey', device_id: '', sensitivity: 'normal', wake_ack_style: 'fast', wake_ack_delay_ms: 300, submit_silence_ms: 600, follow_up_seconds: 8};
 let planBuilderLoaded = false;
 let planEstimateTimer = null;
 let planEstimateRequest = 0;
@@ -57,6 +58,9 @@ let lastWakeCueIndex = -1;
 let microphoneTestActive = false;
 let pushToTalkHeld = false;
 let mobileVisualMicMuted = false;
+let mobilePushToTalkTimer = null;
+let mobilePushToTalkPointer = null;
+let suppressNextVoiceInputClick = false;
 let wakeWordArmedUntil = 0;
 let wakeCueAcknowledgedUntil = 0;
 let wakeCuePendingTimer = null;
@@ -71,6 +75,8 @@ let voiceConversationAwaitingReply = false;
 let voiceConversationFollowupTimer = null;
 let keyboardPushToTalkActive = false;
 let visualAudioEnergy = 0;
+let visualThinking = false;
+let visualErrorUntil = 0;
 let lastPeteyCaption = '';
 let visualCaptionTimer = null;
 let visualCaptionHideTimer = null;
@@ -90,6 +96,9 @@ let lastMediaJobsSignature = '';
 const displayedMediaJobs = new Set();
 let conversations = [];
 let activeConversationId = '';
+let addonEventCursor = 0;
+let addonEventPolling = false;
+let addonEventSpeechChain = Promise.resolve();
 let conversationPersonaOptions = [];
 let temporaryHistory = [];
 let pendingDeleteConversation = null;
@@ -107,11 +116,58 @@ let speechPlaybackContext = null;
 let speechUnlockAudio = null;
 let neuralAnimationFrame = null;
 let neuralDraw = null;
+let conferenceVoiceWasRunning = false;
+
+window.peteyMediaDevices = (() => {
+    const leases = new Map();
+    const changed = () => window.dispatchEvent(new CustomEvent('petey:media-devices', {
+        detail: {leases: Array.from(leases.values()).map(item => ({
+            owner: item.owner, kinds: item.kinds, label: item.label,
+            deviceId: item.deviceId, shareable: item.shareable,
+        }))},
+    }));
+    return {
+        register(owner, options = {}) {
+            const stream = options.stream;
+            if (!owner || !stream?.getTracks) throw new Error('A media owner and stream are required.');
+            const lease = {
+                owner: String(owner), stream,
+                kinds: Array.isArray(options.kinds)
+                    ? options.kinds : stream.getTracks().map(track => track.kind),
+                label: String(options.label || owner),
+                deviceId: String(options.deviceId || ''),
+                shareable: options.shareable === true,
+            };
+            leases.set(lease.owner, lease);
+            changed();
+            return lease;
+        },
+        release(owner) { const removed = leases.delete(String(owner)); if (removed) changed(); },
+        findShareable(kind, deviceId = '') {
+            return Array.from(leases.values()).find(item =>
+                item.shareable && item.kinds.includes(kind)
+                && (!deviceId || !item.deviceId || item.deviceId === deviceId)
+                && item.stream?.active
+            ) || null;
+        },
+        status() {
+            return Array.from(leases.values()).map(item => ({
+                owner: item.owner, kinds: [...item.kinds], label: item.label,
+                deviceId: item.deviceId, shareable: item.shareable,
+            }));
+        },
+    };
+})();
 
 function ensureNeuralVisualizationRunning() {
     const visual = document.getElementById('visual-chat');
     const chatVisible = document.getElementById('view-chat').classList.contains('active-view');
-    if (neuralAnimationFrame || !neuralDraw || document.hidden || visual.hidden || !chatVisible) return;
+    if (document.hidden || visual.hidden || !chatVisible) return;
+    if (!neuralDraw) {
+        startNeuralVisualization();
+        return;
+    }
+    if (neuralAnimationFrame) return;
     neuralAnimationFrame = window.requestAnimationFrame(neuralDraw);
 }
 
@@ -329,8 +385,10 @@ function appendChatImageJobs(content, toolEvents) {
 }
 
 function addMessage(role, text, options = {}) {
-    const followLatest = options.forceScroll === true || distanceFromLatest() < 100;
-    removeEmptyState();
+    const deferLayout = Boolean(options.deferLayout);
+    const followLatest = !deferLayout
+        && (options.forceScroll === true || distanceFromLatest() < 100);
+    if (!deferLayout) removeEmptyState();
     const item = document.createElement('article');
     item.className = `message ${role}${options.typing ? ' typing' : ''}`;
 
@@ -449,10 +507,12 @@ function addMessage(role, text, options = {}) {
 
     appendChatImageJobs(content, options.toolEvents);
     item.append(avatar, content);
-    messages.append(item);
-    if (followLatest) messages.scrollTop = messages.scrollHeight;
-    updateJumpToLatest();
-    if (role === 'assistant' && !options.typing && text) setLastPeteyCaption(text);
+    (options.container || messages).append(item);
+    if (!deferLayout) {
+        if (followLatest) messages.scrollTop = messages.scrollHeight;
+        updateJumpToLatest();
+        if (role === 'assistant' && !options.typing && text) setLastPeteyCaption(text);
+    }
     return item;
 }
 
@@ -530,6 +590,7 @@ async function loadDesktop() {
         personName = bootstrap.person_name || 'User';
         document.getElementById('user-display-name').value = personName;
         activeConversationId = bootstrap.conversation_id;
+        addonEventCursor = Number(bootstrap.addon_event_cursor || 0);
         conversations = bootstrap.conversations || [];
         conversationPersonaOptions = bootstrap.persona_options || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
@@ -544,13 +605,13 @@ async function loadDesktop() {
         applyPreferences();
         renderConversations();
         updateChatHeader();
-        await loadConversationMessages();
+        renderConversationMessages(bootstrap.messages || []);
         if (mobileLayoutQuery.matches) {
             const emptyCopy = document.querySelector('#empty-state p');
             if (emptyCopy) emptyCopy.textContent = 'Start a conversation.';
         }
         configureVoiceInputUI();
-        await loadWakeCues();
+        applyWakeCueConfiguration(bootstrap.voice_cues);
         if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
             window.setTimeout(() => startContinuousVoiceInput(), 250);
         }
@@ -559,15 +620,28 @@ async function loadDesktop() {
     }
 }
 
-async function loadConversationMessages() {
+function renderConversationMessages(history) {
     messages.innerHTML = '';
-    const history = await apiJson('/api/desktop/messages');
-    history.forEach(item => addMessage(item.role, item.message, {
-        toolEvents: item.metadata?.tool_events || [],
-    }));
+    const fragment = document.createDocumentFragment();
+    let latestPeteyReply = '';
+    history.forEach(item => {
+        addMessage(item.role, item.message, {
+            toolEvents: item.metadata?.tool_events || [],
+            container: fragment,
+            deferLayout: true,
+        });
+        if (item.role === 'assistant' && item.message) latestPeteyReply = item.message;
+    });
+    messages.append(fragment);
     if (!history.length) showEmptyState();
+    else if (latestPeteyReply) setLastPeteyCaption(latestPeteyReply);
     scrollToLatest(false);
     updateChatHeader();
+}
+
+async function loadConversationMessages() {
+    const history = await apiJson('/api/desktop/messages');
+    renderConversationMessages(history);
 }
 
 function renderConversations() {
@@ -731,6 +805,7 @@ document.getElementById('new-chat-form').addEventListener('submit', async event 
 });
 
 chatPersonaSelect.addEventListener('change', async () => {
+    chatHeaderMenu.open = false;
     const conversation = activeConversation();
     if (!conversation) return;
     const previous = conversation.persona_slot ?? null;
@@ -770,25 +845,36 @@ function clearAttachmentPreview() {
     attachmentChip.hidden = true;
 }
 
+function clearSelectedAttachment() {
+    attachmentInput.value = '';
+    clearAttachmentPreview();
+    messageInput.focus();
+}
+
 function renderAttachmentPreview(file) {
     clearAttachmentPreview();
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-        attachmentChip.textContent = `Attached: ${file.name}`;
-        attachmentChip.hidden = false;
-        return;
+    if (file.type.startsWith('image/')) {
+        selectedAttachmentPreviewUrl = URL.createObjectURL(file);
+        const image = document.createElement('img');
+        image.src = selectedAttachmentPreviewUrl;
+        image.alt = `Selected image: ${file.name}`;
+        attachmentChip.append(image);
     }
-    selectedAttachmentPreviewUrl = URL.createObjectURL(file);
-    const image = document.createElement('img');
-    image.src = selectedAttachmentPreviewUrl;
-    image.alt = `Selected image: ${file.name}`;
     const details = document.createElement('span');
     const name = document.createElement('strong');
     name.textContent = file.name;
     const size = document.createElement('small');
     size.textContent = formatFileSize(file.size);
     details.append(name, size);
-    attachmentChip.append(image, details);
+    const remove = document.createElement('button');
+    remove.className = 'attachment-remove';
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = 'Remove attachment';
+    remove.setAttribute('aria-label', `Remove attachment ${file.name}`);
+    remove.addEventListener('click', clearSelectedAttachment);
+    attachmentChip.append(details, remove);
     attachmentChip.hidden = false;
 }
 
@@ -870,11 +956,13 @@ composer.addEventListener('submit', async event => {
     clearAttachmentPreview();
     sendButton.disabled = true;
     statusText.textContent = 'Petey is preparing a reply…';
+    visualThinking = true;
     let partialText = '';
     let spokenPrefix = '';
     let autoSpeechChain = Promise.resolve();
     const autoSpeak = speechConfiguration?.provider !== 'disabled'
         && voiceResponseEnabled;
+    const streamSpeechEarly = autoSpeak && !mobileLayoutQuery.matches;
     try {
         const response = await fetch('/api/desktop/chat', {method: 'POST', body});
         if (!response.ok) {
@@ -888,11 +976,13 @@ composer.addEventListener('submit', async event => {
             typing.classList.remove('typing');
             typing.querySelector('.bubble').textContent = partialText;
             statusText.textContent = 'Petey is replying…';
-            if (autoSpeak && !spokenPrefix) {
-                const segment = firstStreamingSpeechSegment(partialText);
+            if (streamSpeechEarly && !spokenPrefix) {
+                const segment = firstStreamingSpeechSegment(
+                    partialText, continueVoiceConversation ? 12 : 28,
+                );
                 if (segment && !/(?:^|\n)\s*Created files:/i.test(segment)) {
                     spokenPrefix = segment;
-                    autoSpeechChain = autoSpeechChain.then(() => speakChatText(segment));
+                    autoSpeechChain = autoSpeechChain.then(() => speakChatText(segment, null, true));
                 }
             }
             if (follow) messages.scrollTop = messages.scrollHeight;
@@ -903,10 +993,11 @@ composer.addEventListener('submit', async event => {
             toolEvents: payload.tool_events || [],
         });
         if (autoSpeak && payload.text) {
-            const remainder = spokenPrefix && payload.text.startsWith(spokenPrefix)
-                ? payload.text.slice(spokenPrefix.length).trim() : payload.text;
+            const remainder = spokenPrefix
+                ? payload.text.slice(Math.min(spokenPrefix.length, payload.text.length)).trim()
+                : payload.text;
             if (!spokenPrefix || remainder) {
-                autoSpeechChain = autoSpeechChain.then(() => speakChatText(remainder));
+                autoSpeechChain = autoSpeechChain.then(() => speakChatText(remainder, null, true));
             }
         }
         if (continueVoiceConversation) {
@@ -920,6 +1011,7 @@ composer.addEventListener('submit', async event => {
         if (temporary) statusText.textContent = 'Temporary · nothing saved';
         else updateChatHeader();
     } catch (error) {
+        visualErrorUntil = performance.now() + 4000;
         if (partialText) {
             typing.classList.remove('typing');
             typing.querySelector('.bubble').textContent = `${partialText}\n\n[Reply interrupted]`;
@@ -933,21 +1025,49 @@ composer.addEventListener('submit', async event => {
             else openVoiceConversationFollowup();
         }
     } finally {
+        visualThinking = false;
         sendButton.disabled = false;
         messageInput.focus();
     }
 });
 
-function firstStreamingSpeechSegment(text) {
-    if (text.length < 28) return '';
-    const sentence = text.match(/^([\s\S]{28,}?[.!?]["')\]]?)(?:\s|$)/);
+function firstStreamingSpeechSegment(text, minimum = 28) {
+    if (text.length < minimum) return '';
+    const sentence = text.match(new RegExp(`^([\\s\\S]{${minimum},}?[.!?]["')\\]]?)(?:\\s|$)`));
     if (sentence) return sentence[1].trim();
     if (text.length < 180) return '';
     const boundary = text.lastIndexOf(' ', 170);
     return text.slice(0, boundary >= 100 ? boundary : 170).trim();
 }
 
-loadDesktop();
+async function pollAddonEvents() {
+    if (addonEventPolling) return;
+    addonEventPolling = true;
+    try {
+        const payload = await apiJson(`/api/desktop/addon-events?after=${addonEventCursor}`);
+        addonEventCursor = Math.max(addonEventCursor, Number(payload.cursor || 0));
+        for (const event of payload.events || []) {
+            if (event.conversation_id !== activeConversationId
+                    || document.getElementById('temporary-mode').checked) continue;
+            addMessage('assistant', event.text || '', {
+                toolEvents: event.tool_events || [], forceScroll: true,
+            });
+            if (event.speak && voiceResponseEnabled
+                    && speechConfiguration?.provider !== 'disabled' && event.text) {
+                addonEventSpeechChain = addonEventSpeechChain
+                    .then(() => speakChatText(event.text, null, true));
+            }
+        }
+    } catch (_error) {
+        // A later poll catches up from the last successful cursor.
+    } finally {
+        addonEventPolling = false;
+    }
+}
+
+loadDesktop().finally(() => {
+    window.setInterval(pollAddonEvents, 2000);
+});
 
 async function apiJson(url, options = {}) {
     const response = await fetch(url, options);
@@ -983,6 +1103,7 @@ function setVoiceResponseEnabled(enabled) {
     if (voiceResponseEnabled) {
         primeSpeechPlayback();
     } else {
+        stopWakeAcknowledgement();
         if (activeSpeechCancel) activeSpeechCancel();
         activeSpeechCancel = null;
         activeChatAudio = null;
@@ -1018,6 +1139,21 @@ async function toggleVoiceResponse() {
 
 voiceResponseButtons.forEach(button => button.addEventListener('click', toggleVoiceResponse));
 
+chatHeaderMenu.addEventListener('toggle', () => {
+    const summary = chatHeaderMenu.querySelector('summary');
+    summary.setAttribute('aria-label', chatHeaderMenu.open ? 'Close chat controls' : 'Open chat controls');
+    summary.title = chatHeaderMenu.open ? 'Close chat controls' : 'Chat controls';
+});
+document.addEventListener('pointerdown', event => {
+    if (chatHeaderMenu.open && !chatHeaderMenu.contains(event.target)) chatHeaderMenu.open = false;
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && chatHeaderMenu.open) {
+        chatHeaderMenu.open = false;
+        chatHeaderMenu.querySelector('summary').focus();
+    }
+});
+
 function applyPreferences() {
     const theme = preferences.theme || 'midnight';
     document.documentElement.dataset.theme = theme;
@@ -1038,7 +1174,7 @@ function applyPreferences() {
     document.getElementById('visual-mode-toggle').classList.toggle('active', visualMode);
     document.getElementById('visual-mode-toggle').textContent = visualMode ? 'Show chat' : 'Visual mode';
     const styleSelect = document.getElementById('visual-style-select');
-    styleSelect.hidden = !visualMode;
+    document.getElementById('visual-style-field').hidden = !visualMode;
     styleSelect.value = preferences.visual_style || 'neural_core';
     document.getElementById('visual-fullscreen').hidden = !visualMode;
     document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
@@ -1114,10 +1250,12 @@ document.getElementById('always-on-top').addEventListener('change', event => {
     savePreferences({always_on_top: event.target.checked}, true);
 });
 document.getElementById('visual-mode-toggle').addEventListener('click', () => {
+    chatHeaderMenu.open = false;
     if (!preferences.visual_mode) setVoiceResponseEnabled(true);
     savePreferences({visual_mode: !preferences.visual_mode});
 });
 document.getElementById('visual-style-select').addEventListener('change', event => {
+    chatHeaderMenu.open = false;
     savePreferences({visual_style: event.target.value});
 });
 
@@ -1202,7 +1340,10 @@ async function toggleVisualFullscreen() {
     }
 }
 
-document.getElementById('visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
+document.getElementById('visual-fullscreen').addEventListener('click', event => {
+    chatHeaderMenu.open = false;
+    toggleVisualFullscreen(event);
+});
 document.getElementById('mobile-visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
 const mobileVisualActions = document.getElementById('mobile-visual-actions');
 const mobileVisualMenuToggle = document.getElementById('mobile-visual-menu-toggle');
@@ -1229,6 +1370,10 @@ document.addEventListener('fullscreenchange', () => {
 
 const mobileSettingsPanel = document.getElementById('mobile-settings-panel');
 const mobileSettingsToggle = document.getElementById('mobile-settings-toggle');
+const mobileShowAllSettings = document.getElementById('mobile-show-all-settings');
+const mobileSettingsAdvanced = document.getElementById('mobile-settings-advanced');
+const mobileChatDockToggle = document.getElementById('mobile-chat-dock-toggle');
+const mobileChatDockActions = document.getElementById('mobile-chat-dock-actions');
 const mobilePersonaSelect = document.getElementById('mobile-persona');
 const mobileVoiceSelect = document.getElementById('mobile-voice');
 const mobileVoiceMethod = document.getElementById('mobile-voice-method');
@@ -1324,6 +1469,42 @@ function closeMobileSettings() {
     mobileSettingsPanel.hidden = true;
     mobileSettingsToggle.setAttribute('aria-expanded', 'false');
 }
+
+function setMobileChatDockOpen(open) {
+    mobileChatDockActions.hidden = !open;
+    mobileChatDockToggle.setAttribute('aria-expanded', String(open));
+    mobileChatDockToggle.setAttribute('aria-label', open ? 'Hide mobile actions' : 'Show mobile actions');
+}
+
+mobileChatDockToggle.addEventListener('click', () => {
+    setMobileChatDockOpen(mobileChatDockActions.hidden);
+});
+document.getElementById('mobile-dock-visual').addEventListener('click', async () => {
+    setMobileChatDockOpen(false);
+    setVoiceResponseEnabled(true);
+    await savePreferences({visual_mode: true});
+});
+document.getElementById('mobile-dock-settings').addEventListener('click', () => {
+    setMobileChatDockOpen(false);
+    openMobileSettings();
+});
+
+mobileShowAllSettings.addEventListener('change', () => {
+    mobileSettingsAdvanced.hidden = !mobileShowAllSettings.checked;
+});
+document.querySelectorAll('[data-mobile-settings-view]').forEach(button => {
+    button.addEventListener('click', () => {
+        closeMobileSettings();
+        document.body.classList.add('mobile-full-settings');
+        showView(button.dataset.mobileSettingsView);
+    });
+});
+document.querySelectorAll('[data-mobile-settings-back]').forEach(button => {
+    button.addEventListener('click', () => {
+        document.body.classList.remove('mobile-full-settings');
+        showView('chat');
+    });
+});
 
 mobileSettingsToggle.addEventListener('click', () => {
     if (mobileSettingsPanel.hidden) openMobileSettings();
@@ -1429,6 +1610,7 @@ function leaveTemporaryMode() {
 }
 
 document.getElementById('temporary-mode').addEventListener('change', async event => {
+    chatHeaderMenu.open = false;
     const active = event.target.checked;
     event.target.closest('.temporary-toggle').classList.toggle('active', active);
     temporaryHistory = [];
@@ -1445,6 +1627,14 @@ document.getElementById('temporary-mode').addEventListener('change', async event
 });
 
 let addonsLoaded = false;
+const expandedAddonIds = new Set();
+
+async function reloadAddonsInPlace() {
+    const view = document.getElementById('view-addons');
+    const scrollTop = view.scrollTop;
+    await loadAddons(true);
+    view.scrollTop = scrollTop;
+}
 
 function renderAddons(payload) {
     const list = document.getElementById('addons-list');
@@ -1453,34 +1643,51 @@ function renderAddons(payload) {
     for (const addon of payload.addons || []) {
         const row = document.createElement('article');
         row.className = 'addon-row';
+        row.dataset.addonId = addon.id;
+        const summary = document.createElement('div');
+        summary.className = 'addon-summary';
+        const summaryButton = document.createElement('button');
+        summaryButton.className = 'addon-summary-copy';
+        summaryButton.type = 'button';
+        summaryButton.setAttribute('aria-expanded', String(expandedAddonIds.has(addon.id)));
         const copy = document.createElement('div');
         const heading = document.createElement('div');
         heading.className = 'addon-heading';
         const name = document.createElement('strong');
         name.textContent = addon.name;
-        const version = document.createElement('small');
-        version.textContent = [addon.version, addon.source].filter(Boolean).join(' · ');
-        heading.append(name, version);
+        const chevron = document.createElement('span');
+        chevron.className = 'addon-chevron';
+        chevron.textContent = '⌄';
+        chevron.setAttribute('aria-hidden', 'true');
+        heading.append(name, chevron);
         const description = document.createElement('p');
         description.textContent = addon.description;
         copy.append(heading, description);
+        summaryButton.append(copy);
+        const details = document.createElement('div');
+        details.className = 'addon-details';
+        details.id = `addon-details-${addon.id}`;
+        summaryButton.setAttribute('aria-controls', details.id);
+        details.hidden = !expandedAddonIds.has(addon.id);
+        const metadata = document.createElement('small');
+        metadata.className = 'addon-metadata';
+        metadata.textContent = [addon.version, addon.source].filter(Boolean).join(' · ');
+        details.append(metadata);
         if (addon.error) {
             const error = document.createElement('small');
             error.className = 'addon-error';
             error.textContent = addon.error;
-            copy.append(error);
+            details.append(error);
         } else if (addon.restart_required) {
             const restart = document.createElement('small');
             restart.className = 'addon-restart';
             restart.textContent = 'Restart PETEY to apply this change.';
-            copy.append(restart);
+            details.append(restart);
         }
         const controls = document.createElement('div');
         controls.className = 'addon-controls';
         const enabledLabel = document.createElement('label');
-        enabledLabel.className = 'addon-toggle';
-        const enabledText = document.createElement('span');
-        enabledText.textContent = addon.configurable_enabled === false ? 'Available' : 'Enabled';
+        enabledLabel.className = 'addon-enable-toggle';
         const toggle = document.createElement('input');
         toggle.type = 'checkbox';
         toggle.role = 'switch';
@@ -1503,14 +1710,22 @@ function renderAddons(payload) {
                     body: JSON.stringify({enabled: toggle.checked}),
                 });
                 document.getElementById('addons-status').textContent = 'Saved. Restart PETEY to apply add-on changes.';
-                await loadAddons(true);
+                await reloadAddonsInPlace();
             } catch (error) {
                 toggle.checked = !toggle.checked;
                 document.getElementById('addons-status').textContent = error.message;
             } finally { toggle.disabled = false; }
         });
-        enabledLabel.append(enabledText, toggle);
-        controls.append(enabledLabel);
+        enabledLabel.append(toggle);
+        summary.append(summaryButton, enabledLabel);
+        summaryButton.addEventListener('click', () => {
+            const expanded = details.hidden;
+            details.hidden = !expanded;
+            row.classList.toggle('expanded', expanded);
+            summaryButton.setAttribute('aria-expanded', String(expanded));
+            if (expanded) expandedAddonIds.add(addon.id);
+            else expandedAddonIds.delete(addon.id);
+        });
         const control = addon.petey_control;
         if (control) {
             const controlPanel = document.createElement('section');
@@ -1522,10 +1737,10 @@ function renderAddons(payload) {
                         body: JSON.stringify({petey_control: changes}),
                     });
                     document.getElementById('addons-status').textContent = success;
-                    await loadAddons(true);
+                    await reloadAddonsInPlace();
                 } catch (error) {
                     document.getElementById('addons-status').textContent = error.message;
-                    await loadAddons(true);
+                    await reloadAddonsInPlace();
                 }
             };
             const controlLabel = document.createElement('label');
@@ -1611,7 +1826,9 @@ function renderAddons(payload) {
             }
             controls.append(controlPanel);
         }
-        row.append(copy, controls);
+        details.append(controls);
+        row.classList.toggle('expanded', !details.hidden);
+        row.append(summary, details);
         list.append(row);
     }
     if (!(payload.addons || []).length) list.innerHTML = '<p class="muted">No add-ons are installed.</p>';
@@ -1659,8 +1876,13 @@ document.getElementById('restart-petey').addEventListener('click', async event =
 });
 
 function showView(view) {
-    if (mobileLayoutQuery.matches && view !== 'chat') view = 'chat';
+    const targetView = document.getElementById(`view-${view}`);
+    const mobileSettingsAllowed = mobileLayoutQuery.matches
+        && document.body.classList.contains('mobile-full-settings')
+        && targetView?.classList.contains('settings-view');
+    if (mobileLayoutQuery.matches && view !== 'chat' && !mobileSettingsAllowed) view = 'chat';
     if (!document.getElementById(`view-${view}`)) return;
+    if (view === 'chat') document.body.classList.remove('mobile-full-settings');
     document.querySelectorAll('.nav-button').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
@@ -1679,6 +1901,7 @@ function showView(view) {
     if (view === 'providers' && !providerKeysLoaded) loadProviderKeys();
     if (view === 'media' && !mediaCatalogLoaded) loadMediaCatalog();
     if (view === 'media') loadMediaJobs();
+    else stopMediaPolling();
     if (view === 'gallery') loadGallery();
     if (view === 'workspace' && !workspaceLoaded) loadWorkspaces();
     if (view === 'plan' && !planBuilderLoaded) loadPlanBuilder();
@@ -2015,6 +2238,9 @@ function configureVoiceInputUI() {
     if (mobileLayoutQuery.matches && mobileVisualMicMuted && mode !== 'disabled') {
         voiceInputButton.title = 'Microphone muted · tap to unmute';
         voiceInputButton.setAttribute('aria-label', 'Unmute microphone');
+    } else if (mobileLayoutQuery.matches && mode === 'push_to_talk') {
+        voiceInputButton.title = 'Hold to talk · tap to mute';
+        voiceInputButton.setAttribute('aria-label', 'Hold to talk; tap to mute microphone');
     } else {
         voiceInputButton.setAttribute('aria-label', voiceInputButton.title);
     }
@@ -2032,7 +2258,9 @@ function configureVoiceInputUI() {
                 ? 'Listening to you…'
                 : `Speech detected · waiting to hear “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
     } else if (mode === 'push_to_talk') {
-        setVoiceInputStatus('Hold the mic or Space to talk · Enter to send');
+        setVoiceInputStatus(mobileLayoutQuery.matches
+            ? 'Hold the mic to talk · tap to mute'
+            : 'Hold the mic or Space to talk · Enter to send');
     } else if (voiceInputRunning && mode === 'wake_word' && voiceConversationAwaitingReply) {
         setVoiceInputStatus('Petey is responding · microphone stays ready for follow-up…');
     } else if (voiceInputRunning && mode === 'wake_word' && voiceConversationActive) {
@@ -2065,6 +2293,7 @@ function configureVoiceInputSettings() {
     document.getElementById('voice-input-device').disabled = !enabled;
     document.getElementById('voice-input-sensitivity').disabled = !enabled;
     document.getElementById('voice-wake-word-field').hidden = mode !== 'wake_word';
+    document.getElementById('voice-wake-style-field').hidden = mode !== 'wake_word';
     document.getElementById('voice-wake-delay-field').hidden = mode !== 'wake_word';
     document.getElementById('voice-submit-delay-field').hidden = !['always_on', 'wake_word'].includes(mode);
     document.getElementById('voice-follow-up-field').hidden = mode !== 'wake_word';
@@ -2089,8 +2318,9 @@ async function loadVoiceInputSettings() {
         voiceInputProviderSelect.value = voiceInputConfiguration.provider || 'deapi';
         document.getElementById('voice-wake-word').value = voiceInputConfiguration.wake_word || 'Petey';
         document.getElementById('voice-input-sensitivity').value = voiceInputConfiguration.sensitivity || 'normal';
-        document.getElementById('voice-wake-delay').value = voiceInputConfiguration.wake_ack_delay_ms || 500;
-        document.getElementById('voice-submit-delay').value = voiceInputConfiguration.submit_silence_ms || 800;
+        document.getElementById('voice-wake-style').value = voiceInputConfiguration.wake_ack_style || 'fast';
+        document.getElementById('voice-wake-delay').value = voiceInputConfiguration.wake_ack_delay_ms || 300;
+        document.getElementById('voice-submit-delay').value = voiceInputConfiguration.submit_silence_ms || 600;
         document.getElementById('voice-follow-up-seconds').value = voiceInputConfiguration.follow_up_seconds || 8;
         await refreshMicrophoneDevices();
         configureVoiceInputSettings();
@@ -2118,7 +2348,13 @@ document.getElementById('open-voice-cues-folder').addEventListener('click', asyn
         status.textContent = `Add clips on the PETEY computer under ${wakeCueConfiguration.directory}, then reload this page.`;
     }
 });
-window.addEventListener('focus', () => loadWakeCues());
+window.addEventListener('focus', () => {
+    const microphoneSettingsVisible = document.getElementById('view-microphone')
+        ?.classList.contains('active-view');
+    if (microphoneSettingsVisible || voiceInputConfiguration.mode === 'wake_word') {
+        loadWakeCues();
+    }
+});
 
 voiceInputModeSelect.addEventListener('change', configureVoiceInputSettings);
 voiceInputProviderSelect.addEventListener('change', configureVoiceInputSettings);
@@ -2140,6 +2376,7 @@ document.getElementById('save-voice-input').addEventListener('click', async () =
                 wake_word: document.getElementById('voice-wake-word').value,
                 device_id: document.getElementById('voice-input-device').value,
                 sensitivity: document.getElementById('voice-input-sensitivity').value,
+                wake_ack_style: document.getElementById('voice-wake-style').value,
                 wake_ack_delay_ms: Number(document.getElementById('voice-wake-delay').value),
                 submit_silence_ms: Number(document.getElementById('voice-submit-delay').value),
                 follow_up_seconds: Number(document.getElementById('voice-follow-up-seconds').value),
@@ -2202,6 +2439,10 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
         });
         setVoiceInputStatus('Saved microphone unavailable; using the system default.');
     }
+    window.peteyMediaDevices.register('petey-core-voice', {
+        stream: microphoneStream, kinds: ['audio'], label: 'PETEY microphone',
+        deviceId, shareable: false,
+    });
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) throw new Error('This desktop backend does not provide audio capture.');
     try {
@@ -2272,7 +2513,7 @@ function handleMicrophoneAudio(event) {
     }
     microphoneCapture.push(new Float32Array(samples));
     if (rms >= threshold * .55) microphoneLastVoiceAt = now;
-    if ((now - microphoneLastVoiceAt > Number(voiceInputConfiguration.submit_silence_ms || 800)
+    if ((now - microphoneLastVoiceAt > Number(voiceInputConfiguration.submit_silence_ms || 600)
             && now - microphoneCaptureStartedAt > 300)
         || now - microphoneCaptureStartedAt > 30000) {
         finishVoiceCapture();
@@ -2399,20 +2640,18 @@ function applyWakeCueConfiguration(payload, showStatus = false) {
     });
     wakeCueConfiguration = payload;
     wakeCueBuffers = [];
-    wakeCueAudios = (payload.clips || []).map(clip => {
-        const audio = new Audio(clip.url);
-        audio.preload = 'auto';
-        audio.load();
-        return audio;
-    });
+    wakeCueAudios = [];
     prepareWakeCueBuffers();
     document.getElementById('voice-cues-directory').textContent = payload.directory;
     if (showStatus) {
         const source = payload.source_voice === payload.voice
             ? payload.voice : `${payload.source_voice} fallback`;
-        status.textContent = wakeCueAudios.length
-            ? `${wakeCueAudios.length} acknowledgement clip${wakeCueAudios.length === 1 ? '' : 's'} loaded from ${source}.`
-            : 'Using the built-in spoken acknowledgements until audio files are added.';
+        const clipCount = (payload.clips || []).length;
+        status.textContent = clipCount
+            ? `${clipCount} acknowledgement clip${clipCount === 1 ? '' : 's'} loaded from ${source}.`
+            : (voiceInputConfiguration.wake_ack_style || 'fast') === 'fast'
+                ? 'Using the immediate local acknowledgement chime until audio files are added.'
+                : 'Using browser-spoken acknowledgements until audio files are added.';
     }
 }
 
@@ -2483,8 +2722,9 @@ function cancelPendingWakeAcknowledgement() {
     wakeCuePendingAfter = 0;
 }
 
-function scheduleWakeAcknowledgement(continuedSpeechAfter, delay = Number(voiceInputConfiguration.wake_ack_delay_ms || 500)) {
+function scheduleWakeAcknowledgement(continuedSpeechAfter, delay = Number(voiceInputConfiguration.wake_ack_delay_ms || 300)) {
     cancelPendingWakeAcknowledgement();
+    if (!voiceResponseEnabled) return;
     wakeCuePendingAfter = Number(continuedSpeechAfter || performance.now());
     wakeCuePendingTimer = window.setTimeout(() => {
         wakeCuePendingTimer = null;
@@ -2577,14 +2817,50 @@ function speakFallbackWakeCue() {
     window.speechSynthesis.speak(utterance);
 }
 
+function playInstantWakeCue() {
+    const context = microphoneContext || getSpeechPlaybackContext();
+    if (!context || context.state !== 'running') {
+        speakFallbackWakeCue();
+        return;
+    }
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(720, now);
+    oscillator.frequency.exponentialRampToValueAtTime(1080, now + .1);
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.exponentialRampToValueAtTime(.075, now + .012);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + .12);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.onended = finishWakeCuePlayback;
+    wakeCueAudio = oscillator;
+    oscillator.start(now);
+    oscillator.stop(now + .125);
+}
+
 function playWakeAcknowledgement(preserveCapture = false) {
     cancelPendingWakeAcknowledgement();
+    if (!voiceResponseEnabled) return;
     if (wakeCuePlaying || voiceInputPlaybackBlocked || activeSpeechCancel || activeChatAudio) return;
     wakeCueAcknowledgedUntil = Date.now() + 8000;
     setWakeCuePlaybackActive(true, preserveCapture);
-    if (!wakeCueAudios.length) {
-        speakFallbackWakeCue();
+    const clips = wakeCueConfiguration.clips || [];
+    if (!clips.length) {
+        if ((voiceInputConfiguration.wake_ack_style || 'fast') === 'fast') {
+            playInstantWakeCue();
+        } else {
+            speakFallbackWakeCue();
+        }
         return;
+    }
+    if (!wakeCueAudios.length) {
+        wakeCueAudios = clips.map(clip => {
+            const audio = new Audio(clip.url);
+            audio.preload = 'none';
+            return audio;
+        });
     }
     let index = Math.floor(Math.random() * wakeCueAudios.length);
     if (wakeCueAudios.length > 1 && index === lastWakeCueIndex) {
@@ -2660,7 +2936,7 @@ async function flushLocalWakeAudio() {
             setVoiceInputStatus(`Heard “${voiceInputConfiguration.wake_word || 'Petey'}” · listening for your request…`);
             scheduleWakeAcknowledgement(
                 audioSentAt + 100,
-                Number(voiceInputConfiguration.wake_ack_delay_ms || 500),
+                Number(voiceInputConfiguration.wake_ack_delay_ms || 300),
             );
         }
     } catch (_error) {
@@ -2717,6 +2993,7 @@ async function startContinuousVoiceInput() {
         configureVoiceInputUI();
     } catch (error) {
         voiceInputRunning = false;
+        visualErrorUntil = performance.now() + 4000;
         configureVoiceInputUI();
         setVoiceInputStatus(`Microphone unavailable: ${error.message}`);
     }
@@ -2737,12 +3014,27 @@ async function stopVoiceInput() {
     microphoneSilentOutput = null;
     microphoneStream?.getTracks().forEach(track => track.stop());
     microphoneStream = null;
+    window.peteyMediaDevices.release('petey-core-voice');
     if (microphoneContext) await microphoneContext.close().catch(() => {});
     microphoneContext = null;
     document.getElementById('voice-input-meter').style.width = '0';
     document.getElementById('test-voice-input').textContent = 'Test microphone';
     configureVoiceInputUI();
 }
+
+window.peteyConferenceAudio = {
+    async prepare() {
+        conferenceVoiceWasRunning = Boolean(voiceInputRunning || microphoneStream?.active);
+        if (conferenceVoiceWasRunning) await stopVoiceInput();
+    },
+    async release() {
+        const shouldResume = conferenceVoiceWasRunning;
+        conferenceVoiceWasRunning = false;
+        if (shouldResume && ['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+            await startContinuousVoiceInput();
+        }
+    },
+};
 
 document.getElementById('test-voice-input').addEventListener('click', async () => {
     const button = document.getElementById('test-voice-input');
@@ -2785,9 +3077,16 @@ function setVoicePlaybackActive(active) {
     if (active && microphoneCapturing && voiceInputConfiguration.mode !== 'push_to_talk') {
         finishVoiceCapture(true);
     }
+    window.dispatchEvent(new CustomEvent('petey:voice-playback', {
+        detail: {active: Boolean(active)},
+    }));
 }
 
 voiceInputButton.addEventListener('click', async () => {
+    if (suppressNextVoiceInputClick) {
+        suppressNextVoiceInputClick = false;
+        return;
+    }
     if (mobileLayoutQuery.matches && mobileVisualMicMuted) {
         mobileVisualMicMuted = false;
         configureVoiceInputUI();
@@ -2801,18 +3100,20 @@ voiceInputButton.addEventListener('click', async () => {
     else await startContinuousVoiceInput();
 });
 
-visualMicMuteButton.addEventListener('click', async () => {
-    visualMicMuteButton.disabled = true;
+async function toggleMobileMicrophoneMute() {
     mobileVisualMicMuted = !mobileVisualMicMuted;
     try {
         if (mobileVisualMicMuted) await stopVoiceInput();
         else if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
             await startContinuousVoiceInput();
         }
-    } finally {
-        visualMicMuteButton.disabled = false;
-        configureVoiceInputUI();
-    }
+    } finally { configureVoiceInputUI(); }
+}
+
+visualMicMuteButton.addEventListener('click', async () => {
+    visualMicMuteButton.disabled = true;
+    try { await toggleMobileMicrophoneMute(); }
+    finally { visualMicMuteButton.disabled = false; }
 });
 
 async function beginPushToTalk(event) {
@@ -2839,6 +3140,7 @@ async function beginPushToTalk(event) {
         beginVoiceCapture();
     } catch (error) {
         pushToTalkHeld = false;
+        visualErrorUntil = performance.now() + 4000;
         if (!window.isSecureContext) {
             setVoiceInputStatus('Microphone blocked: the phone does not trust this HTTPS certificate yet.');
         } else if (error?.name === 'NotAllowedError') {
@@ -2859,9 +3161,58 @@ async function endPushToTalk(event) {
     await stopVoiceInput();
 }
 
-voiceInputButton.addEventListener('pointerdown', beginPushToTalk);
-voiceInputButton.addEventListener('pointerup', endPushToTalk);
-voiceInputButton.addEventListener('pointercancel', endPushToTalk);
+function composerMicPointerDown(event) {
+    if (!mobileLayoutQuery.matches || voiceInputConfiguration.mode !== 'push_to_talk') {
+        beginPushToTalk(event);
+        return;
+    }
+    event.preventDefault();
+    if (voiceInputBusy || mobilePushToTalkTimer) return;
+    const sourceButton = event.currentTarget;
+    mobilePushToTalkPointer = {sourceButton, pointerId: event.pointerId};
+    mobilePushToTalkTimer = window.setTimeout(() => {
+        mobilePushToTalkTimer = null;
+        if (mobileVisualMicMuted || !mobilePushToTalkPointer) return;
+        beginPushToTalk({
+            preventDefault() {},
+            currentTarget: sourceButton,
+            pointerId: mobilePushToTalkPointer.pointerId,
+        });
+    }, 240);
+}
+
+async function composerMicPointerUp(event) {
+    if (!mobileLayoutQuery.matches || voiceInputConfiguration.mode !== 'push_to_talk') {
+        await endPushToTalk(event);
+        return;
+    }
+    event.preventDefault();
+    suppressNextVoiceInputClick = true;
+    if (mobilePushToTalkTimer) {
+        window.clearTimeout(mobilePushToTalkTimer);
+        mobilePushToTalkTimer = null;
+        mobilePushToTalkPointer = null;
+        await toggleMobileMicrophoneMute();
+        return;
+    }
+    mobilePushToTalkPointer = null;
+    await endPushToTalk(event);
+}
+
+async function composerMicPointerCancel(event) {
+    if (mobilePushToTalkTimer) {
+        window.clearTimeout(mobilePushToTalkTimer);
+        mobilePushToTalkTimer = null;
+        mobilePushToTalkPointer = null;
+        return;
+    }
+    mobilePushToTalkPointer = null;
+    await endPushToTalk(event);
+}
+
+voiceInputButton.addEventListener('pointerdown', composerMicPointerDown);
+voiceInputButton.addEventListener('pointerup', composerMicPointerUp);
+voiceInputButton.addEventListener('pointercancel', composerMicPointerCancel);
 visualVoiceInputButton.addEventListener('pointerdown', beginPushToTalk);
 visualVoiceInputButton.addEventListener('pointerup', endPushToTalk);
 visualVoiceInputButton.addEventListener('pointercancel', endPushToTalk);
@@ -3090,7 +3441,8 @@ function textForChatSpeech(text) {
     return spoken || (heading ? 'Created files are linked in chat.' : '');
 }
 
-async function speakChatText(text, button = null) {
+async function speakChatText(text, button = null, automatic = false) {
+    if (automatic && !voiceResponseEnabled) return;
     text = textForChatSpeech(text);
     if (!text) return;
     primeSpeechPlayback();
@@ -3118,6 +3470,7 @@ async function speakChatText(text, button = null) {
             startVisualCaption(text);
             setVoicePlaybackActive(true);
             try {
+                if (automatic && !voiceResponseEnabled) return;
                 await playGeminiSpeechStream(text, button);
                 return;
             } catch (error) {
@@ -3134,22 +3487,27 @@ async function speakChatText(text, button = null) {
                 setVoicePlaybackActive(false);
             }
         }
+        if (automatic && !voiceResponseEnabled) return;
         const queued = await apiJson('/api/desktop/chat/speech', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({text, skip_gemini: skipGemini}),
         });
         let job = queued.job;
+        const speechStartedAt = performance.now();
         for (let attempt = 0; attempt < 300; attempt += 1) {
+            if (automatic && !voiceResponseEnabled) return;
             if (job.status === 'completed' || job.status === 'failed') break;
-            await new Promise(resolve => window.setTimeout(resolve, 1000));
+            const pollDelay = attempt < 20 ? 250 : attempt < 40 ? 500 : 1000;
+            await new Promise(resolve => window.setTimeout(resolve, pollDelay));
             job = (await apiJson(`/api/desktop/media/jobs/${encodeURIComponent(job.id)}`)).job;
-            const elapsed = attempt + 1;
+            const elapsed = Math.max(1, Math.round((performance.now() - speechStartedAt) / 1000));
             const phase = job.status === 'queued' ? 'Voice queued' : 'Generating voice';
             if (button) button.textContent = `${phase} · ${elapsed}s`;
             statusText.textContent = `Speech: ${phase.toLowerCase()} with ${speechConfiguration?.provider || 'automatic'}…`;
         }
         if (job.status === 'failed') throw new Error(job.error || 'Speech generation failed.');
         if (job.status !== 'completed') throw new Error('Speech generation timed out.');
+        if (automatic && !voiceResponseEnabled) return;
         const source = job.result?.result_url
             || `/api/desktop/media/jobs/${encodeURIComponent(job.id)}/file`;
         const response = await fetch(source);
@@ -3161,6 +3519,7 @@ async function speakChatText(text, button = null) {
             throw new Error('Chrome paused audio playback. Press the microphone once and try again.');
         }
         const audio = await context.decodeAudioData(encodedAudio.slice(0));
+        if (automatic && !voiceResponseEnabled) return;
         const sourceNode = context.createBufferSource();
         sourceNode.buffer = audio;
         sourceNode.connect(context.destination);
@@ -3902,19 +4261,12 @@ async function loadMediaCatalog() {
     const connection = document.getElementById('media-connection');
     setFeedback(connection, 'Connecting…');
     try {
-        const [payload, speechPayload] = await Promise.all([
-            apiJson('/api/desktop/media'), apiJson('/api/desktop/speech'),
-        ]);
-        speechConfiguration = speechPayload.configuration;
-        geminiSpeechModels = speechPayload.gemini_models?.length
-            ? speechPayload.gemini_models : builtInGeminiSpeechModels;
-        geminiSpeechVoices = speechPayload.gemini_voices?.length
-            ? speechPayload.gemini_voices : builtInGeminiSpeechVoices;
-        openaiSpeechModels = speechPayload.openai_models?.length
-            ? speechPayload.openai_models : builtInOpenAISpeechModels;
-        openaiSpeechVoices = speechPayload.openai_voices?.length
-            ? speechPayload.openai_voices : builtInOpenAISpeechVoices;
-        speechSettingsLoaded = true;
+        const payload = await apiJson('/api/desktop/media');
+        speechConfiguration = payload.speech || speechConfiguration;
+        geminiSpeechModels = builtInGeminiSpeechModels;
+        geminiSpeechVoices = builtInGeminiSpeechVoices;
+        openaiSpeechModels = builtInOpenAISpeechModels;
+        openaiSpeechVoices = builtInOpenAISpeechVoices;
         mediaSelectedModels = payload.selected_models || {};
         const speechOption = mediaOperation.querySelector('option[value="txt2audio"]');
         speechOption.disabled = speechConfiguration.provider === 'disabled';
@@ -5003,29 +5355,43 @@ function startNeuralVisualization() {
     const canvas = document.getElementById('neural-canvas');
     const context = canvas.getContext('2d');
     const stateLabel = document.getElementById('visual-chat-state');
+    const stateHeading = document.getElementById('visual-state-heading');
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const nodes = Array.from({length: reducedMotion ? 48 : 82}, (_, index) => {
-        const angle = Math.random() * Math.PI * 2;
-        const radius = Math.pow(Math.random(), .62) * .92;
+    const nodeCount = reducedMotion ? 52 : 104;
+    const nodes = Array.from({length: nodeCount}, (_, index) => {
+        const angle = index * 2.399963 + Math.random() * .18;
+        const radius = Math.pow((index + .5) / nodeCount, .58);
         return {
             x: Math.cos(angle) * radius,
             y: Math.sin(angle) * radius,
-            z: (Math.random() * 2 - 1) * Math.sqrt(Math.max(0, 1 - radius * radius)),
-            vx: (Math.random() - .5) * .00006,
-            vy: (Math.random() - .5) * .00006,
+            z: Math.sin(index * 1.731) * Math.sqrt(Math.max(0, 1 - radius * radius)),
+            vx: (Math.random() - .5) * .00008,
+            vy: (Math.random() - .5) * .00008,
             phase: Math.random() * Math.PI * 2,
             colorIndex: index % 4,
-            orbitRadius: .12 + Math.random() * .85,
-            orbitSpeed: (.000035 + Math.random() * .000085) * (index % 2 ? 1 : -1),
-            size: 1.1 + Math.random() * 2.2,
-            hot: index % 11 === 0,
+            orbitRadius: .1 + Math.random() * .9,
+            orbitSpeed: (.00004 + Math.random() * .0001) * (index % 2 ? 1 : -1),
+            size: .8 + Math.random() * 2.5,
+            hot: index % 9 === 0,
         };
     });
+    const bloomPalettes = {
+        idle: {primary: [45, 174, 255], secondary: [154, 91, 255], label: 'Present'},
+        listening: {primary: [255, 133, 31], secondary: [255, 211, 91], label: 'Listening'},
+        thinking: {primary: [142, 79, 255], secondary: [42, 180, 255], label: 'Thinking'},
+        speaking: {primary: [26, 137, 255], secondary: [92, 232, 255], label: 'Speaking'},
+        muted: {primary: [143, 45, 42], secondary: [255, 81, 72], label: 'Microphone muted'},
+        error: {primary: [221, 35, 69], secondary: [255, 132, 68], label: 'Needs attention'},
+    };
+    let currentPrimary = [...bloomPalettes.idle.primary];
+    let currentSecondary = [...bloomPalettes.idle.secondary];
+    let smoothEnergy = .08;
     let width = 1;
     let height = 1;
     let pixelRatio = 1;
     let previousTime = performance.now();
-    const frameInterval = 1000 / (reducedMotion ? 20 : 40);
+    let previousStyle = '';
+    const frameInterval = 1000 / (reducedMotion ? 20 : 45);
 
     const resize = () => {
         const bounds = canvas.getBoundingClientRect();
@@ -5040,6 +5406,348 @@ function startNeuralVisualization() {
     else window.addEventListener('resize', resize);
     resize();
 
+    const visualState = time => {
+        if (time < visualErrorUntil) return 'error';
+        if (voiceInputPlaybackBlocked) return 'speaking';
+        if (visualThinking || voiceInputBusy) return 'thinking';
+        if (mobileVisualMicMuted) return 'muted';
+        if (microphoneCapturing || voiceInputRunning) return 'listening';
+        return 'idle';
+    };
+    const rgba = (color, alpha) => `rgba(${color},${Math.max(0, Math.min(1, alpha))})`;
+    const glowDot = (x, y, radius, color, intensity = 1) => {
+        const outer = Math.max(2, radius * (3.2 + intensity * 2.2));
+        const gradient = context.createRadialGradient(x, y, 0, x, y, outer);
+        gradient.addColorStop(0, `rgba(255,255,255,${.72 * intensity})`);
+        gradient.addColorStop(.16, rgba(color, .72 * intensity));
+        gradient.addColorStop(1, rgba(color, 0));
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(x, y, outer, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = `rgba(245,252,255,${.7 + intensity * .28})`;
+        context.beginPath();
+        context.arc(x, y, Math.max(.65, radius * .45), 0, Math.PI * 2);
+        context.fill();
+    };
+    const drawEnergyRings = (time, cx, cy, radius, energy, primary, secondary, count = 3) => {
+        for (let ring = 0; ring < count; ring += 1) {
+            const progress = (time * (.0001 + energy * .00012) + ring / count) % 1;
+            context.strokeStyle = rgba(ring % 2 ? secondary : primary, (.2 + energy * .28) * (1 - progress));
+            context.lineWidth = .7 + energy * 1.8;
+            context.beginPath();
+            context.arc(cx, cy, radius * (.2 + progress * .9), 0, Math.PI * 2);
+            context.stroke();
+        }
+    };
+
+    const drawNeuralCore = scene => {
+        const {time, energy, cx, cy, scale, primary, secondary, state} = scene;
+        const rotation = time * (.00005 + energy * .000035);
+        const projected = nodes.map(node => {
+            const rx = node.x * Math.cos(rotation) - node.z * Math.sin(rotation);
+            const depth = node.x * Math.sin(rotation) + node.z * Math.cos(rotation);
+            const brainWidth = 1 - Math.max(0, node.y) * .23;
+            const breathe = 1 + Math.sin(time * .0016 + node.phase) * (.025 + energy * .065);
+            return {
+                node, depth,
+                x: cx + rx * brainWidth * scale * 1.24 * breathe,
+                y: cy + (node.y + Math.abs(rx) * .045) * scale * .86 * breathe,
+            };
+        });
+        const linkDistance = scale * (.5 + energy * .1);
+        for (let left = 0; left < projected.length; left += 1) {
+            for (let right = left + 1; right < projected.length; right += 1) {
+                const a = projected[left];
+                const b = projected[right];
+                const distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (distance > linkDistance) continue;
+                const signal = Math.max(0, Math.sin(time * .005 + a.node.phase + right * .14));
+                context.strokeStyle = rgba((left + right) % 3 ? primary : secondary,
+                    (1 - distance / linkDistance) * (.1 + energy * .36 + signal * energy * .12));
+                context.lineWidth = .45 + energy * 1.15;
+                context.beginPath();
+                context.moveTo(a.x, a.y);
+                context.lineTo(b.x, b.y);
+                context.stroke();
+            }
+        }
+        context.strokeStyle = rgba(secondary, .16 + energy * .16);
+        context.lineWidth = 1 + energy;
+        context.beginPath();
+        context.moveTo(cx, cy + scale * .94);
+        context.bezierCurveTo(cx - scale * 1.15, cy + scale * .75, cx - scale * 1.3, cy - scale * .2, cx - scale * .48, cy - scale * .88);
+        context.bezierCurveTo(cx - scale * .18, cy - scale * 1.06, cx - scale * .04, cy - scale * .94, cx, cy - scale * .82);
+        context.bezierCurveTo(cx + scale * .04, cy - scale * .94, cx + scale * .18, cy - scale * 1.06, cx + scale * .48, cy - scale * .88);
+        context.bezierCurveTo(cx + scale * 1.3, cy - scale * .2, cx + scale * 1.15, cy + scale * .75, cx, cy + scale * .94);
+        context.stroke();
+        projected.forEach(({node, x, y, depth}, index) => {
+            const beat = Math.max(0, Math.sin(time * (.003 + energy * .009) + node.phase));
+            const ignition = ((time * (.00022 + energy * .0005) + node.orbitRadius) % 1);
+            const flash = Math.max(0, 1 - Math.abs(ignition - node.orbitRadius) * 16) * energy;
+            const radius = (node.size + beat * (1 + energy * 3.8) + flash * 3) * (.78 + (depth + 1) * .18);
+            glowDot(x, y, radius, index % 3 ? primary : secondary, .42 + energy * .52 + flash * .32);
+        });
+        const tendrils = projected.filter(({node}) => node.hot);
+        tendrils.forEach(({node, x, y}, index) => {
+            const angle = Math.atan2(y - cy, x - cx) + Math.sin(time * .0005 + node.phase) * .18;
+            const reach = scale * (1.5 + index % 3 * .24) * (1 + energy * .13);
+            const endX = x + Math.cos(angle) * reach;
+            const endY = y + Math.sin(angle) * reach * .7;
+            context.strokeStyle = rgba(index % 2 ? secondary : primary, .08 + energy * .26);
+            context.lineWidth = .6 + energy * 1.2;
+            context.beginPath();
+            context.moveTo(x, y);
+            context.bezierCurveTo(x + Math.cos(angle + .8) * reach * .32, y + Math.sin(angle + .8) * reach * .22,
+                x + Math.cos(angle - .5) * reach * .68, y + Math.sin(angle - .5) * reach * .48, endX, endY);
+            context.stroke();
+        });
+        drawEnergyRings(time, cx, cy, scale * 1.15, energy, primary, secondary, state === 'speaking' ? 4 : 2);
+    };
+
+    const drawSynapseDrift = scene => {
+        const {time, delta, energy, cx, cy, primary, secondary} = scene;
+        const points = nodes.map(node => {
+            const movement = reducedMotion ? .2 : 1;
+            node.vx += (Math.sin(time * .0007 + node.phase) + Math.cos(node.y * 5)) * .000001 * delta * movement;
+            node.vy += (Math.cos(time * .00062 + node.phase) - Math.sin(node.x * 4)) * .000001 * delta * movement;
+            node.vx *= .992;
+            node.vy *= .992;
+            node.x += node.vx * delta * (1 + energy * 2.5);
+            node.y += node.vy * delta * (1 + energy * 2.5);
+            if (Math.abs(node.x) > 1.05) { node.x = Math.sign(node.x) * 1.05; node.vx *= -.8; }
+            if (Math.abs(node.y) > 1.05) { node.y = Math.sign(node.y) * 1.05; node.vy *= -.8; }
+            return {node, x: cx + node.x * width * .46, y: cy + node.y * height * .43};
+        });
+        const threshold = Math.min(width, height) * (.16 + energy * .04);
+        points.forEach((a, left) => {
+            for (let right = left + 1; right < points.length; right += 1) {
+                const b = points[right];
+                const distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (distance >= threshold) continue;
+                const alpha = (1 - distance / threshold) * (.14 + energy * .4);
+                context.strokeStyle = rgba((left + right) % 2 ? primary : secondary, alpha);
+                context.lineWidth = .45 + energy;
+                context.beginPath();
+                context.moveTo(a.x, a.y);
+                context.quadraticCurveTo((a.x + b.x) / 2 + Math.sin(time * .001 + left) * 10 * energy,
+                    (a.y + b.y) / 2 + Math.cos(time * .001 + right) * 10 * energy, b.x, b.y);
+                context.stroke();
+            }
+            const ghostCount = reducedMotion ? 1 : 4;
+            for (let ghost = ghostCount; ghost >= 1; ghost -= 1) {
+                context.fillStyle = rgba(left % 3 ? primary : secondary, (.03 + energy * .07) * (ghostCount - ghost + 1));
+                context.beginPath();
+                context.arc(a.x - a.node.vx * delta * ghost * 1800, a.y - a.node.vy * delta * ghost * 1800,
+                    a.node.size * (.5 + energy), 0, Math.PI * 2);
+                context.fill();
+            }
+            glowDot(a.x, a.y, a.node.size + energy * (a.node.hot ? 4 : 2), left % 3 ? primary : secondary, .4 + energy * .55);
+        });
+    };
+
+    const drawOrbitalMind = scene => {
+        const {time, energy, cx, cy, scale, primary, secondary} = scene;
+        const ringCount = 7;
+        for (let ring = ringCount; ring >= 1; ring -= 1) {
+            const radius = scale * (.28 + ring * .2) * (1 + energy * .06);
+            const tilt = .25 + ring * .065;
+            const rotation = time * .00004 * (ring % 2 ? 1 : -1) + ring * .38;
+            context.save();
+            context.translate(cx, cy);
+            context.rotate(rotation);
+            context.scale(1, tilt);
+            context.strokeStyle = rgba(ring % 2 ? primary : secondary, .11 + energy * .24);
+            context.lineWidth = .6 + energy * 1.4;
+            context.beginPath();
+            context.arc(0, 0, radius, 0, Math.PI * 2);
+            context.stroke();
+            context.restore();
+            const beads = ring + 2;
+            for (let bead = 0; bead < beads; bead += 1) {
+                const angle = time * (.0003 + energy * .00035) * (ring % 2 ? 1 : -1) + bead / beads * Math.PI * 2 + ring;
+                const rawX = Math.cos(angle) * radius;
+                const rawY = Math.sin(angle) * radius * tilt;
+                const cos = Math.cos(rotation);
+                const sin = Math.sin(rotation);
+                const x = cx + rawX * cos - rawY * sin;
+                const y = cy + rawX * sin + rawY * cos;
+                const near = .55 + (Math.sin(angle) + 1) * .22;
+                glowDot(x, y, 1.2 + energy * 3.2 * near, bead % 3 ? primary : secondary, near + energy * .34);
+            }
+        }
+        const coreRadius = scale * (.12 + energy * .08);
+        const core = context.createRadialGradient(cx, cy, 0, cx, cy, coreRadius * 2.8);
+        core.addColorStop(0, 'rgba(255,255,255,.94)');
+        core.addColorStop(.12, rgba(secondary, .9));
+        core.addColorStop(.48, rgba(primary, .25 + energy * .35));
+        core.addColorStop(1, rgba(primary, 0));
+        context.fillStyle = core;
+        context.beginPath();
+        context.arc(cx, cy, coreRadius * 2.8, 0, Math.PI * 2);
+        context.fill();
+        drawEnergyRings(time, cx, cy, scale * 1.7, energy, primary, secondary, 4);
+    };
+
+    const drawSignalBloom = scene => {
+        const {time, energy, cx, cy, scale, primary, secondary, state} = scene;
+        const arms = reducedMotion ? 12 : 22;
+        context.lineCap = 'round';
+        for (let arm = 0; arm < arms; arm += 1) {
+            const base = arm / arms * Math.PI * 2 + time * .000035;
+            const reach = scale * (1.18 + Math.sin(time * .0015 + arm) * .08 + energy * .28);
+            const bend = Math.sin(time * .0007 + arm * 1.73) * (.25 + energy * .22);
+            const endX = cx + Math.cos(base + bend) * reach;
+            const endY = cy + Math.sin(base + bend) * reach * .82;
+            const c1x = cx + Math.cos(base - .32) * reach * .36;
+            const c1y = cy + Math.sin(base - .32) * reach * .24;
+            const c2x = cx + Math.cos(base + .24) * reach * .72;
+            const c2y = cy + Math.sin(base + .24) * reach * .58;
+            const color = arm % 3 ? primary : secondary;
+            context.strokeStyle = rgba(color, .1 + energy * .34);
+            context.lineWidth = .65 + energy * 1.9;
+            context.beginPath();
+            context.moveTo(cx, cy);
+            context.bezierCurveTo(c1x, c1y, c2x, c2y, endX, endY);
+            context.stroke();
+            const sparks = reducedMotion ? 2 : 5;
+            for (let spark = 0; spark < sparks; spark += 1) {
+                let progress = (time * (.00012 + energy * .00032) + spark / sparks + arm * .037) % 1;
+                if (state === 'listening') progress = 1 - progress;
+                const inverse = 1 - progress;
+                const x = inverse ** 3 * cx + 3 * inverse ** 2 * progress * c1x + 3 * inverse * progress ** 2 * c2x + progress ** 3 * endX;
+                const y = inverse ** 3 * cy + 3 * inverse ** 2 * progress * c1y + 3 * inverse * progress ** 2 * c2y + progress ** 3 * endY;
+                glowDot(x, y, .8 + energy * 2.6, color, .35 + energy * .62);
+            }
+        }
+        for (let petal = 0; petal < 8; petal += 1) {
+            const angle = petal / 8 * Math.PI * 2 + time * .00009;
+            context.save();
+            context.translate(cx, cy);
+            context.rotate(angle);
+            context.strokeStyle = rgba(petal % 2 ? secondary : primary, .13 + energy * .28);
+            context.lineWidth = .8 + energy * 1.6;
+            context.beginPath();
+            context.ellipse(scale * .26, 0, scale * (.28 + energy * .12), scale * (.105 + energy * .04), 0, 0, Math.PI * 2);
+            context.stroke();
+            context.restore();
+        }
+        glowDot(cx, cy, 7 + energy * 15, secondary, .58 + energy * .4);
+        drawEnergyRings(time, cx, cy, scale * 1.25, energy, primary, secondary, state === 'speaking' ? 5 : 3);
+    };
+
+    const drawAuroraFlow = scene => {
+        const {time, energy, cx, cy, primary, secondary} = scene;
+        context.save();
+        context.globalCompositeOperation = 'lighter';
+        context.lineCap = 'round';
+        const ribbons = reducedMotion ? 5 : 9;
+        for (let ribbon = 0; ribbon < ribbons; ribbon += 1) {
+            const color = ribbon % 2 ? secondary : primary;
+            const baseline = height * (.18 + ribbon / Math.max(1, ribbons - 1) * .64);
+            const amplitude = height * (.045 + energy * .075) * (1 + (ribbon % 3) * .18);
+            const gradient = context.createLinearGradient(0, 0, width, 0);
+            gradient.addColorStop(0, rgba(color, 0));
+            gradient.addColorStop(.2, rgba(color, .04 + energy * .1));
+            gradient.addColorStop(.5, rgba(color, .16 + energy * .28));
+            gradient.addColorStop(.8, rgba(color, .04 + energy * .1));
+            gradient.addColorStop(1, rgba(color, 0));
+            context.strokeStyle = gradient;
+            context.lineWidth = 8 + ribbon * 2.4 + energy * 15;
+            context.shadowColor = `rgb(${color})`;
+            context.shadowBlur = 12 + energy * 26;
+            context.beginPath();
+            for (let step = 0; step <= 52; step += 1) {
+                const progress = step / 52;
+                const x = width * progress;
+                const y = baseline
+                    + Math.sin(progress * (5.5 + ribbon * .13) + time * (.00035 + ribbon * .000018) + ribbon) * amplitude
+                    + Math.sin(progress * 13 - time * .00022 + ribbon * .7) * amplitude * .28;
+                if (!step) context.moveTo(x, y);
+                else context.lineTo(x, y);
+            }
+            context.stroke();
+        }
+        context.shadowBlur = 0;
+        const particleCount = reducedMotion ? 28 : 70;
+        for (let index = 0; index < particleCount; index += 1) {
+            const seed = Math.abs(Math.sin(index * 78.233));
+            const travel = (seed + time * (.000025 + energy * .00008) * (1 + index % 5)) % 1;
+            const x = travel * width;
+            const y = cy + Math.sin(travel * 7 + time * .00045 + index) * height * (.2 + energy * .08)
+                + (Math.sin(index * 11.7) * height * .18);
+            glowDot(x, y, .55 + seed * 1.5 + energy * 1.8, index % 3 ? primary : secondary, .24 + energy * .48);
+        }
+        context.restore();
+    };
+
+    const drawConstellationField = scene => {
+        const {time, energy, cx, cy, primary, secondary} = scene;
+        const rotation = time * (.000018 + energy * .000015);
+        const points = nodes.map((node, index) => {
+            const depthCycle = (node.z + time * (.00002 + energy * .00004) * (index % 3 + 1) + 1) % 2 - 1;
+            const perspective = 1.02 + depthCycle * .2;
+            const rx = node.x * Math.cos(rotation) - node.y * Math.sin(rotation);
+            const ry = node.x * Math.sin(rotation) + node.y * Math.cos(rotation);
+            return {
+                node, depth: depthCycle,
+                x: cx + rx * width * .46 * perspective,
+                y: cy + ry * height * .43 * perspective,
+            };
+        });
+        const threshold = Math.min(width, height) * (.17 + energy * .025);
+        points.forEach((a, left) => {
+            const nearest = [];
+            for (let right = left + 1; right < points.length; right += 1) {
+                const b = points[right];
+                const distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (distance < threshold) nearest.push({b, distance, right});
+            }
+            nearest.sort((one, two) => one.distance - two.distance).slice(0, 2).forEach(({b, distance, right}) => {
+                const alpha = (1 - distance / threshold) * (.1 + energy * .32);
+                context.strokeStyle = rgba((left + right) % 3 ? primary : secondary, alpha);
+                context.lineWidth = .45 + energy * .8;
+                context.beginPath();
+                context.moveTo(a.x, a.y);
+                context.lineTo(b.x, b.y);
+                context.stroke();
+                if ((left + right) % 11 === 0) {
+                    const travel = (time * (.00018 + energy * .00035) + left * .07) % 1;
+                    glowDot(a.x + (b.x - a.x) * travel, a.y + (b.y - a.y) * travel,
+                        1 + energy * 2.5, secondary, .4 + energy * .5);
+                }
+            });
+            const twinkle = .35 + Math.max(0, Math.sin(time * (.002 + energy * .006) + a.node.phase)) * .65;
+            glowDot(a.x, a.y, a.node.size * (.7 + twinkle * .45) + energy * (a.node.hot ? 3 : 1),
+                left % 4 ? primary : secondary, .3 + twinkle * .35 + energy * .35);
+        });
+        const meteors = reducedMotion ? 1 : 3;
+        for (let meteor = 0; meteor < meteors; meteor += 1) {
+            const travel = (time * (.000055 + meteor * .000011) + meteor * .34) % 1.3 - .15;
+            const x = width * travel;
+            const y = height * (.18 + meteor * .24) + Math.sin(time * .0003 + meteor) * 35;
+            const trail = width * (.05 + energy * .06);
+            const gradient = context.createLinearGradient(x - trail, y + trail * .35, x, y);
+            gradient.addColorStop(0, rgba(primary, 0));
+            gradient.addColorStop(1, rgba(secondary, .25 + energy * .6));
+            context.strokeStyle = gradient;
+            context.lineWidth = 1 + energy * 2;
+            context.beginPath();
+            context.moveTo(x - trail, y + trail * .35);
+            context.lineTo(x, y);
+            context.stroke();
+        }
+    };
+
+    const renderers = {
+        neural_core: drawNeuralCore,
+        synapse_drift: drawSynapseDrift,
+        orbital_mind: drawOrbitalMind,
+        signal_bloom: drawSignalBloom,
+        aurora_flow: drawAuroraFlow,
+        constellation_field: drawConstellationField,
+    };
+
     const draw = time => {
         neuralAnimationFrame = null;
         const chatVisible = document.getElementById('view-chat').classList.contains('active-view');
@@ -5048,280 +5756,50 @@ function startNeuralVisualization() {
             neuralAnimationFrame = window.requestAnimationFrame(draw);
             return;
         }
-        const delta = Math.min(34, time - previousTime);
+        const delta = Math.min(40, time - previousTime);
         previousTime = time;
-        visualAudioEnergy *= .91;
+        visualAudioEnergy *= .9;
+        const state = visualState(time);
         const syntheticSpeech = voiceInputPlaybackBlocked
-            ? .22 + Math.max(0, Math.sin(time * .021)) * .34 + Math.random() * .16
+            ? .18 + Math.max(0, Math.sin(time * .022)) * .38 + Math.random() * .14
             : 0;
-        const activity = Math.min(1, Math.max(visualAudioEnergy, syntheticSpeech));
-        const visible = !document.getElementById('visual-chat').hidden;
-        if (visible) {
-            context.clearRect(0, 0, width, height);
-            context.fillStyle = '#010204';
-            context.fillRect(0, 0, width, height);
-            const centerX = width * .5;
-            const centerY = height * .47;
-            const style = preferences.visual_style || 'neural_core';
-            const clusterRadius = Math.min(width, height) * (.29 + activity * .035);
-                       const points = nodes.map(node => {
-                if (style === 'orbital_mind') {
-                    const angle = node.phase + time * node.orbitSpeed * (1 + activity * 2.2);
-                    const radius = node.orbitRadius * Math.min(width, height) * (.34 + activity * .035);
-                    return {
-                        node,
-                        x: centerX + Math.cos(angle) * radius,
-                        y: centerY + Math.sin(angle) * radius * .48,
-                    };
-                }
-                if (style === 'signal_bloom') {
-                    const angle = node.phase + Math.sin(time * .00024 + node.orbitRadius * 8) * .16;
-                    const wave = Math.sin(time * .0022 - node.orbitRadius * 15 + node.phase) * (8 + activity * 24);
-                    const radius = node.orbitRadius * Math.min(width, height) * .38 + wave;
-                    return {
-                        node,
-                        x: centerX + Math.cos(angle) * radius,
-                        y: centerY + Math.sin(angle) * radius * .78,
-                    };
-                }
-                if (style === 'synapse_drift') {
-                    const movement = reducedMotion ? .18 : 1;
-                    node.vx += Math.sin(time * .00042 + node.phase) * .0000007 * delta * movement;
-                    node.vy += Math.cos(time * .00037 + node.phase) * .0000007 * delta * movement;
-                    node.vx *= .998;
-                    node.vy *= .998;
-                    node.x += node.vx * delta * (1 + activity * 1.8);
-                    node.y += node.vy * delta * (1 + activity * 1.8);
-                    if (node.x > 1.08) node.x = -1.08;
-                    if (node.x < -1.08) node.x = 1.08;
-                    if (node.y > 1.08) node.y = -1.08;
-                    if (node.y < -1.08) node.y = 1.08;
-                    return {
-                        node,
-                        x: centerX + node.x * width * .46,
-                        y: centerY + node.y * height * .43,
-                    };
-                }
-                const movement = reducedMotion ? .18 : 1;
-                node.vx += (-node.x * .0000017 + Math.sin(time * .0007 + node.phase) * .0000018 * (1 + activity * 2.8)) * delta * movement;
-                node.vy += (-node.y * .0000017 + Math.cos(time * .00061 + node.phase) * .0000018 * (1 + activity * 2.8)) * delta * movement;
-                node.vx *= .992;
-                node.vy *= .992;
-                node.x += node.vx * delta;
-                node.y += node.vy * delta;
-                const distance = Math.hypot(node.x, node.y);
-                if (distance > 1.04) {
-                    node.x *= .985;
-                    node.y *= .985;
-                    node.vx *= -.35;
-                    node.vy *= -.35;
-                }
-                const breathing = 1 + Math.sin(time * .0015 + node.phase) * (.025 + activity * .055);
-                const rotation = time * .000085;
-                const rotatedX = node.x * Math.cos(rotation) - node.z * Math.sin(rotation);
-                const depth = node.x * Math.sin(rotation) + node.z * Math.cos(rotation);
-                const brainWidth = 1 - Math.max(0, node.y) * .27;
-                const perspective = .88 + (depth + 1) * .09;
-                return {
-                    node,
-                    depth,
-                    x: centerX + rotatedX * brainWidth * clusterRadius * 1.22 * breathing * perspective,
-                    y: centerY + (node.y + Math.abs(rotatedX) * .045) * clusterRadius * .88 * breathing * perspective,
-                };
-            });
-
-            if (style === 'neural_core') {
-                const outlineAlpha = .055 + activity * .06;
-                context.strokeStyle = `rgba(115,200,255,${outlineAlpha})`;
-                context.lineWidth = .8;
-                context.beginPath();
-                context.moveTo(centerX, centerY + clusterRadius * .92);
-                context.bezierCurveTo(
-                    centerX - clusterRadius * .98, centerY + clusterRadius * .76,
-                    centerX - clusterRadius * 1.24, centerY - clusterRadius * .15,
-                    centerX - clusterRadius * .5, centerY - clusterRadius * .82,
-                );
-                context.bezierCurveTo(
-                    centerX - clusterRadius * .2, centerY - clusterRadius * 1.03,
-                    centerX - clusterRadius * .05, centerY - clusterRadius * .94,
-                    centerX, centerY - clusterRadius * .82,
-                );
-                context.bezierCurveTo(
-                    centerX + clusterRadius * .05, centerY - clusterRadius * .94,
-                    centerX + clusterRadius * .2, centerY - clusterRadius * 1.03,
-                    centerX + clusterRadius * .5, centerY - clusterRadius * .82,
-                );
-                context.bezierCurveTo(
-                    centerX + clusterRadius * 1.24, centerY - clusterRadius * .15,
-                    centerX + clusterRadius * .98, centerY + clusterRadius * .76,
-                    centerX, centerY + clusterRadius * .92,
-                );
-                context.stroke();
-
-                for (let particle = 0; particle < 76; particle += 1) {
-                    const seed = Math.abs(Math.sin(particle * 91.733));
-                    const angle = particle * 2.39996 + Math.sin(time * .00018 + particle) * .045;
-                    const radius = clusterRadius * (.22 + seed * 1.18);
-                    const flicker = .16 + Math.max(0, Math.sin(time * .004 + particle * 1.7)) * (.22 + activity * .42);
-                    context.fillStyle = `rgba(${particle % 5 ? '150,213,255' : '255,190,119'},${flicker})`;
-                    context.beginPath();
-                    context.arc(
-                        centerX + Math.cos(angle) * radius * 1.13,
-                        centerY + Math.sin(angle) * radius * .72,
-                        .35 + seed * .8 + activity * .45,
-                        0, Math.PI * 2,
-                    );
-                    context.fill();
-                }
-
-                const hotPoints = points.filter(({node}) => node.hot);
-                hotPoints.forEach(({node, x, y}, tendrilIndex) => {
-                    const direction = Math.atan2(y - centerY, x - centerX) + Math.sin(node.phase + time * .0003) * .22;
-                    const reach = Math.max(width, height) * (.38 + (tendrilIndex % 3) * .08);
-                    const endX = x + Math.cos(direction) * reach;
-                    const endY = y + Math.sin(direction) * reach * .65;
-                    const bend = (tendrilIndex % 2 ? 1 : -1) * (32 + tendrilIndex * 3);
-                    const control1X = x + Math.cos(direction) * reach * .3 - Math.sin(direction) * bend;
-                    const control1Y = y + Math.sin(direction) * reach * .18 + Math.cos(direction) * bend;
-                    const control2X = x + Math.cos(direction) * reach * .7 + Math.sin(direction) * bend * .7;
-                    const control2Y = y + Math.sin(direction) * reach * .48 - Math.cos(direction) * bend * .7;
-                    context.strokeStyle = `rgba(${tendrilIndex % 2 ? '34,225,230' : '136,91,246'},${.09 + activity * .2})`;
-                    context.lineWidth = .55 + activity * .85;
-                    context.beginPath();
-                    context.moveTo(x, y);
-                    context.bezierCurveTo(control1X, control1Y, control2X, control2Y, endX, endY);
-                    context.stroke();
-                    for (let particle = 0; particle < 7; particle += 1) {
-                        const progress = (particle / 7 + time * (.00008 + tendrilIndex * .000002)) % 1;
-                        const inverse = 1 - progress;
-                        const particleX = inverse ** 3 * x
-                            + 3 * inverse ** 2 * progress * control1X
-                            + 3 * inverse * progress ** 2 * control2X
-                            + progress ** 3 * endX;
-                        const particleY = inverse ** 3 * y
-                            + 3 * inverse ** 2 * progress * control1Y
-                            + 3 * inverse * progress ** 2 * control2Y
-                            + progress ** 3 * endY;
-                        context.fillStyle = `rgba(190,230,255,${(.18 + activity * .65) * (1 - progress * .55)})`;
-                        context.beginPath();
-                        context.arc(particleX, particleY, .7 + activity * 1.5, 0, Math.PI * 2);
-                        context.fill();
-                    }
-                });
-            }
-
-            if (style === 'orbital_mind') {
-                context.strokeStyle = `rgba(186,143,255,${.08 + activity * .13})`;
-                context.lineWidth = .65;
-                for (let ring = 1; ring <= 4; ring += 1) {
-                    context.beginPath();
-                    context.ellipse(
-                        centerX, centerY,
-                        clusterRadius * ring * .75,
-                        clusterRadius * ring * .36,
-                        time * .000025 * (ring % 2 ? 1 : -1), 0, Math.PI * 2,
-                    );
-                    context.stroke();
-                }
-            } else if (style === 'signal_bloom') {
-                context.lineWidth = .6 + activity;
-                points.forEach(({x, y}, index) => {
-                    if (index % 3) return;
-                    context.strokeStyle = `rgba(211,77,216,${.06 + activity * .18})`;
-                    context.beginPath();
-                    context.moveTo(centerX, centerY);
-                    context.lineTo(x, y);
-                    context.stroke();
-                });
-            }
-
-            const connectionDistance = style === 'synapse_drift'
-                ? Math.min(width, height) * (.17 + activity * .025)
-                : style === 'orbital_mind'
-                    ? clusterRadius * .33
-                    : clusterRadius * (style === 'neural_core' ? .49 + activity * .07 : .38 + activity * .06);
-            context.lineWidth = .7 + activity * .45;
-            for (let left = 0; left < points.length; left += 1) {
-                for (let right = left + 1; right < points.length; right += 1) {
-                    const dx = points[left].x - points[right].x;
-                    const dy = points[left].y - points[right].y;
-                    const distance = Math.hypot(dx, dy);
-                    if (distance >= connectionDistance) continue;
-                    const alpha = (1 - distance / connectionDistance) * (.12 + activity * .28);
-                    const neuralColors = ['32,218,255', '137,91,246', '255,172,74', '239,91,221'];
-                    const connectionColor = {
-                        neural_core: neuralColors[points[left].node.colorIndex],
-                        synapse_drift: activity > .5 ? '63,225,207' : '42,132,154',
-                        orbital_mind: activity > .5 ? '247,189,104' : '136,91,206',
-                        signal_bloom: activity > .5 ? '248,106,226' : '135,66,190',
-                    }[style];
-                    context.strokeStyle = `rgba(${connectionColor},${alpha})`;
-                    context.beginPath();
-                    context.moveTo(points[left].x, points[left].y);
-                    context.lineTo(points[right].x, points[right].y);
-                    context.stroke();
-                }
-            }
-
-            const palette = {
-                neural_core: {bright: '224,211,255', glow: '137,91,246', fade: '84,42,160', solid: '#a986f4'},
-                synapse_drift: {bright: '193,255,247', glow: '48,210,194', fade: '15,105,120', solid: '#68e1d2'},
-                orbital_mind: {bright: '255,235,199', glow: '242,168,76', fade: '111,55,167', solid: '#efbd78'},
-                signal_bloom: {bright: '255,215,251', glow: '225,75,207', fade: '101,32,150', solid: '#e77cdb'},
-            }[style];
-            points.forEach(({node, x, y, depth}) => {
-                const neuralNodePalettes = [
-                    {bright: '210,250,255', glow: '20,210,255', fade: '10,100,160', solid: '#35dfff'},
-                    {bright: '235,220,255', glow: '137,91,246', fade: '72,30,150', solid: '#a986f4'},
-                    {bright: '255,240,205', glow: '255,164,55', fade: '145,72,20', solid: '#ffb55b'},
-                    {bright: '255,218,250', glow: '231,83,214', fade: '121,28,129', solid: '#ec72dc'},
-                ];
-                const nodePalette = style === 'neural_core'
-                    ? neuralNodePalettes[node.colorIndex]
-                    : palette;
-                const pulse = Math.max(0, Math.sin(time * (.002 + activity * .006) + node.phase));
-                const depthScale = style === 'neural_core' ? .82 + ((depth || 0) + 1) * .19 : 1;
-                const radius = (node.size + pulse * (1.2 + activity * 3.2) + (node.hot ? activity * 1.8 : 0)) * depthScale;
-                const glow = context.createRadialGradient(x, y, 0, x, y, radius * 4.2);
-                glow.addColorStop(0, `rgba(${nodePalette.bright},${.72 + activity * .25})`);
-                glow.addColorStop(.24, `rgba(${nodePalette.glow},${.46 + activity * .34})`);
-                glow.addColorStop(1, `rgba(${nodePalette.fade},0)`);
-                context.fillStyle = glow;
-                context.beginPath();
-                context.arc(x, y, radius * 4.2, 0, Math.PI * 2);
-                context.fill();
-                context.fillStyle = node.hot && activity > .32 ? `rgb(${nodePalette.bright})` : nodePalette.solid;
-                context.beginPath();
-                context.arc(x, y, Math.max(1, radius * .52), 0, Math.PI * 2);
-                context.fill();
-            });
-
-            const coreRadius = (style === 'synapse_drift' ? 7 : 18) + activity * (style === 'signal_bloom' ? 31 : 23);
-            const core = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreRadius * 3.2);
-            core.addColorStop(0, `rgba(${palette.bright},${.25 + activity * .4})`);
-            core.addColorStop(.28, `rgba(${palette.glow},${.16 + activity * .34})`);
-            core.addColorStop(1, `rgba(${palette.fade},0)`);
-            context.fillStyle = core;
-            context.beginPath();
-            context.arc(centerX, centerY, coreRadius * 3.2, 0, Math.PI * 2);
-            context.fill();
+        const stateEnergy = state === 'thinking' ? .24 + Math.sin(time * .004) * .08
+            : state === 'listening' ? .17 : state === 'speaking' ? .2 : .035;
+        const targetEnergy = Math.min(1, Math.max(visualAudioEnergy, syntheticSpeech) + stateEnergy);
+        smoothEnergy += (targetEnergy - smoothEnergy) * (1 - Math.exp(-delta / 105));
+        const palette = bloomPalettes[state];
+        const colorBlend = 1 - Math.exp(-delta / 220);
+        for (let channel = 0; channel < 3; channel += 1) {
+            currentPrimary[channel] += (palette.primary[channel] - currentPrimary[channel]) * colorBlend;
+            currentSecondary[channel] += (palette.secondary[channel] - currentSecondary[channel]) * colorBlend;
         }
-        stateLabel.textContent = voiceInputPlaybackBlocked
-            ? 'Speaking'
-            : microphoneCapturing
-                ? 'Listening'
-                : voiceInputBusy
-                    ? 'Understanding'
-                    : voiceInputRunning
-                        ? 'Ready · microphone active'
-                        : 'Present';
+        const primary = currentPrimary.map(Math.round).join(',');
+        const secondary = currentSecondary.map(Math.round).join(',');
+        const style = preferences.visual_style || 'neural_core';
+        if (style !== previousStyle) {
+            context.clearRect(0, 0, width, height);
+            previousStyle = style;
+        }
+        context.globalCompositeOperation = 'source-over';
+        context.shadowBlur = 0;
+        context.fillStyle = '#000';
+        context.fillRect(0, 0, width, height);
+        context.globalCompositeOperation = 'lighter';
+        const cx = width * .5;
+        const cy = height * .5;
+        const scale = Math.min(width, height) * (.27 + smoothEnergy * .035);
+        const renderer = renderers[style] || drawNeuralCore;
+        renderer({time, delta, energy: smoothEnergy, cx, cy, scale, primary, secondary, state});
+        context.globalCompositeOperation = 'source-over';
+        stateLabel.textContent = palette.label;
+        stateHeading.textContent = palette.label.toUpperCase();
+        stateHeading.style.color = rgba(secondary, .86);
         neuralAnimationFrame = window.requestAnimationFrame(draw);
     };
     neuralDraw = draw;
     ensureNeuralVisualizationRunning();
 }
 
-startNeuralVisualization();
 document.addEventListener('visibilitychange', ensureNeuralVisualizationRunning);
 
 

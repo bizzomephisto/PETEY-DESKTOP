@@ -308,11 +308,17 @@ class AIProvider:
             declaration = {
                 "name": function["name"],
                 "description": str(function.get("description") or ""),
-                "parameters": self._gemini_tool_schema(
-                    function.get("parameters")
-                    or {"type": "object", "properties": {}}
-                ),
             }
+            parameters = function.get("parameters")
+            if not (
+                isinstance(parameters, dict)
+                and parameters.get("type") == "object"
+                and not parameters.get("properties")
+                and not parameters.get("required")
+            ):
+                declaration["parameters"] = self._gemini_tool_schema(
+                    parameters or {"type": "object", "properties": {}}
+                )
             declarations.append(declaration)
         if not declarations:
             return self._gemini(prompt, system_message, history or []), []

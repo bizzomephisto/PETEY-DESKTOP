@@ -262,6 +262,35 @@ class AIProviderTests(unittest.TestCase):
         self.assertNotIn("default", schema["properties"]["width"])
         self.assertEqual(schema["properties"]["width"]["maximum"], 2048)
 
+    def test_gemini_omits_empty_parameters_for_no_argument_tool(self):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "Read complete."}]}}]
+        }
+        provider = AIProvider({
+            "provider": "gemini",
+            "gemini": {"model": "gemini-test", "api_key": "test-key"},
+        })
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "read_google_sheet",
+                "description": "Read the configured sheet.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }]
+
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
+            text, events = provider.complete_with_tools(
+                "Read the sheet", "You are Petey", [], tools, MagicMock(),
+                require_tool=True,
+            )
+
+        self.assertEqual((text, events), ("Read complete.", []))
+        declaration = post.call_args.kwargs["json"]["tools"][0]["functionDeclarations"][0]
+        self.assertNotIn("parameters", declaration)
+
     def test_gemini_tool_http_error_includes_provider_detail(self):
         response = MagicMock(status_code=400, text='{"error":"Unknown field"}')
         response.raise_for_status.side_effect = requests.HTTPError(response=response)

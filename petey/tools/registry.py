@@ -64,10 +64,11 @@ class ToolRegistry:
             raise ToolError("That tool is unavailable for this request.")
         if not isinstance(arguments, dict):
             raise ToolError("Tool arguments must be a JSON object.")
-        missing = [
-            key for key in tool.parameters.get("required", [])
-            if arguments.get(key) in {None, ""}
-        ]
+        missing = []
+        for key in tool.parameters.get("required", []):
+            value = arguments.get(key)
+            if value is None or value == "":
+                missing.append(key)
         if missing:
             raise ToolError(f"Missing required tool argument: {missing[0]}")
         tool.authorize_when(user_message)

@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+import tempfile
 from unittest.mock import MagicMock, patch
 
 from petey.assistant import (
@@ -7,6 +9,7 @@ from petey.assistant import (
     AssistantService,
     PETEY_USER_ID,
 )
+from petey.desktop_memory import DesktopMemory
 
 
 class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -78,6 +81,41 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm.call_args.args[2][1]["role"], "assistant")
         self.assertIn("PROFILE BOUNDARY", llm.call_args.args[1])
         self.assertIn("facts and continuity only", llm.call_args.args[1])
+        memory.search_memories.assert_called_once_with(
+            "Hello", "desktop-test", 5,
+            exclude_contents=("Earlier message", "Earlier answer"),
+        )
+
+    async def test_addon_event_metadata_is_saved_and_hidden_history_is_labeled(self):
+        memory = MagicMock()
+        memory.get_conversation_messages.return_value = [{
+            "id": 1,
+            "user_id": "ADDON:spotify",
+            "message": "Track changed to So What.",
+            "timestamp": "2026-01-01T00:00:00",
+            "metadata": {
+                "hidden_from_chat": True,
+                "addon_event_source": "spotify",
+            },
+        }]
+        memory.search_memories.return_value = ""
+        memory.store_memory_deferred.return_value = None
+        service = AssistantService("You are Petey.", memory=memory)
+        with patch("petey.assistant.AIProvider.complete", return_value="Now playing So What.") as llm:
+            await service.respond(
+                "BACKGROUND ADD-ON EVENT",
+                AssistantIdentity("desktop-test", "main", "ADDON:spotify", "spotify"),
+                user_metadata={"hidden_from_chat": True, "addon_event_source": "spotify"},
+                reply_metadata={"addon_event_source": "spotify", "auto_speak": True},
+            )
+        self.assertEqual(
+            llm.call_args.args[2][0]["content"],
+            "Background event from the spotify add-on: Track changed to So What.",
+        )
+        self.assertEqual(
+            memory.store_memory.call_args.kwargs["metadata"],
+            {"addon_event_source": "spotify", "auto_speak": True},
+        )
 
     async def test_empty_message_is_rejected(self):
         service = AssistantService("You are Petey.")
@@ -98,9 +136,37 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("CURRENT SURFACE", llm.call_args.args[1])
         self.assertIn("Mobile Petey", llm.call_args.args[1])
+        self.assertIn("GROUNDING RULE", llm.call_args.args[1])
+        self.assertIn("previous Petey reply", llm.call_args.args[1])
+        self.assertIn("No relevant stored memory was retrieved", llm.call_args.args[1])
+        self.assertIn("Only tools explicitly offered", llm.call_args.args[1])
+        self.assertIn("No connected tools are available", llm.call_args.args[1])
         self.assertEqual(
             memory.store_memory.call_args.kwargs["source_surface"], "mobile_petey"
         )
+
+    async def test_mobile_rag_can_retrieve_older_messages_from_the_active_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            memory = DesktopMemory(Path(directory) / "memory.sqlite3", lambda _text: None)
+            memory.init_db()
+            memory.store_memory(
+                "desktop-test", "main", "owner",
+                "The mobile vault phrase is orchid.",
+                source_surface="petey_desktop",
+            )
+            for index in range(8):
+                memory.store_memory(
+                    "desktop-test", "main", "owner", f"Recent filler message {index}",
+                    source_surface="mobile_petey",
+                )
+            service = AssistantService("You are Petey.", memory=memory)
+            identity = AssistantIdentity(
+                "desktop-test", "main", "owner", "Pat", surface="mobile_petey"
+            )
+            with patch("petey.assistant.AIProvider.complete", return_value="Orchid") as llm:
+                await service.respond("What is the mobile vault phrase?", identity)
+
+            self.assertIn("The mobile vault phrase is orchid.", llm.call_args.args[1])
 
     async def test_explicit_request_uses_registered_model_tools(self):
         registry = MagicMock()
@@ -121,6 +187,10 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
             "call it instead of refusing",
             complete.call_args.args[1],
         )
+        self.assertEqual(
+            complete.call_args.args[1].count("call it instead of refusing"), 1
+        )
+        self.assertNotIn("desktop-test", complete.call_args.args[1])
         self.assertIn(
             "A connected tool can perform this request.",
             complete.call_args.args[0],

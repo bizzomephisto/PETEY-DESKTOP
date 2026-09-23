@@ -52,6 +52,13 @@ filesystem and network permissions, so they are trusted local code.
   panel, script, or stylesheet changes so remote browser caches refresh.
 - A returned object may expose `tool_specs()` and `close()`. PETEY namespaces tool
   names as `addon_<id>__<tool>` and closes add-ons before shared workers/runtimes.
+- Enabled add-ons receive a bounded `emit_event()` channel for user-opted-in
+  background updates. Event prompts stay hidden; PETEY's reply enters the selected
+  chat and optional speech respects the client speaker mute state.
+- Browser add-ons share camera and microphone ownership through
+  `window.peteyMediaDevices`. Recording add-ons use `window.peteyConferenceAudio`
+  to yield and restore PETEY's ordinary continuous microphone instead of competing
+  for the same input.
 - Model tools stay unavailable until **Allow Petey to control** is enabled. The
   user grants Desktop, Mobile, Discord, and Petey Life separately, can disable
   individual capabilities, and can cap autonomous daily use of metered actions.

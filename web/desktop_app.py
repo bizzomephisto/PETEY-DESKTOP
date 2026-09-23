@@ -17,6 +17,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file,
 
 from petey.assistant import AssistantAttachment, AssistantIdentity, AssistantService, PETEY_USER_ID
 from petey.addons import AddonManager
+from petey.addon_events import AddonEventBroker
 from web.settings_pages import SETTINGS_GROUPS, SETTINGS_PAGES
 from petey.ai_provider import AIProvider, AIProviderError
 from petey.discord_bridge import DiscordBridge
@@ -89,6 +90,17 @@ def create_desktop_app(
     app.config["PETEY_ASSET_REVISION"] = str(max(
         (Path(app.static_folder) / name).stat().st_mtime_ns for name in core_assets
     ))
+
+    @app.after_request
+    def cache_revisioned_core_assets(response):
+        if (
+            request.method in {"GET", "HEAD"}
+            and response.status_code == 200
+            and request.path.startswith("/static/")
+            and request.args.get("v") == app.config["PETEY_ASSET_REVISION"]
+        ):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
     def voice_cue_payload(speech: dict | None = None) -> dict:
         library: VoiceCueLibrary = app.config["PETEY_VOICE_CUES"]
@@ -183,7 +195,62 @@ def create_desktop_app(
             ),
         }
 
+    def conversation_messages_json(current: DesktopState, limit: int = 100) -> list[dict]:
+        messages = app.config["PETEY_MEMORY"].get_conversation_messages(
+            current.installation_id, current.conversation_id, limit
+        )
+        return [
+            {
+                **item,
+                "role": "assistant" if item["user_id"] == PETEY_USER_ID else "user",
+            }
+            for item in messages
+            if not bool((item.get("metadata") or {}).get("hidden_from_chat"))
+        ]
+
     app.config["PETEY_MEMORY"].init_db()
+
+    def handle_addon_event(event: dict) -> dict:
+        current: DesktopState = app.config["PETEY_STATE"]
+        conversation_id = str(event["conversation_id"])
+        if conversation_id not in {str(item.get("id")) for item in current.conversations}:
+            raise ValueError("The target conversation no longer exists.")
+        addon_id = str(event["addon_id"])
+        prompt = (
+            f"BACKGROUND ADD-ON EVENT from {addon_id}. The user did not type this event, so do "
+            "not imply that they did and do not mention a hidden prompt. Respond directly to the "
+            "user with the useful update requested by the event. Do not call tools or claim any "
+            f"action beyond the event data.\n\nEVENT DATA:\n{event['message']}"
+        )
+        identity = AssistantIdentity(
+            installation_id=current.installation_id,
+            conversation_id=conversation_id,
+            person_id=f"ADDON:{addon_id}",
+            display_name=addon_id,
+            surface=event["surface"],
+        )
+        service = AssistantService(
+            current.conversation_system_prompt,
+            current.ai_provider,
+            app.config["PETEY_MEMORY"],
+        )
+        reply = app.config["PETEY_RUNTIME"].call(service.respond(
+            prompt,
+            identity,
+            user_metadata={
+                **event.get("metadata", {}),
+                "hidden_from_chat": True,
+                "addon_event_source": addon_id,
+            },
+            reply_metadata={
+                **event.get("metadata", {}),
+                "addon_event_source": addon_id,
+                "auto_speak": bool(event["speak"]),
+            },
+        ))
+        return {"text": reply.text, "tool_events": list(reply.tool_events)}
+
+    app.config["PETEY_ADDON_EVENTS"] = AddonEventBroker(handle_addon_event)
     app.config["PETEY_ADDONS"].mark_builtin_loaded(
         "discord", app.config["PETEY_DISCORD"] is not None
     )
@@ -208,6 +275,7 @@ def create_desktop_app(
     @app.get("/api/desktop/bootstrap")
     def desktop_bootstrap():
         current: DesktopState = app.config["PETEY_STATE"]
+        speech = current.conversation_speech
         return jsonify(
             {
                 "name": "Petey",
@@ -220,17 +288,24 @@ def create_desktop_app(
                 "persona_options": current.conversation_persona_options,
                 "preferences": current.preferences,
                 "plan_preview": current.plan_preview,
-                "speech": current.conversation_speech,
+                "speech": speech,
                 "voice_input": current.voice_input,
                 "installation_id": current.installation_id,
                 "workspaces": current.workspaces,
                 "active_workspace_id": current.active_workspace_id,
+                "messages": conversation_messages_json(current),
+                "addon_event_cursor": app.config["PETEY_ADDON_EVENTS"].latest_id,
+                "voice_cues": voice_cue_payload(speech),
             }
         )
 
     @app.get("/api/desktop/addons")
     def desktop_addons():
         return jsonify(app.config["PETEY_ADDONS"].public_status())
+
+    @app.get("/api/desktop/addon-events")
+    def desktop_addon_events():
+        return jsonify(app.config["PETEY_ADDON_EVENTS"].events_after(request.args.get("after", 0)))
 
     @app.put("/api/desktop/addons/<addon_id>")
     def desktop_addon_update(addon_id):
@@ -512,18 +587,7 @@ def create_desktop_app(
     @app.get("/api/desktop/messages")
     def desktop_messages():
         current: DesktopState = app.config["PETEY_STATE"]
-        messages = app.config["PETEY_MEMORY"].get_conversation_messages(
-            current.installation_id, current.conversation_id, 100
-        )
-        return jsonify(
-            [
-                {
-                    **item,
-                    "role": "assistant" if item["user_id"] == PETEY_USER_ID else "user",
-                }
-                for item in messages
-            ]
-        )
+        return jsonify(conversation_messages_json(current))
 
     @app.post("/api/desktop/messages/notification")
     def desktop_message_notification():
@@ -1356,18 +1420,20 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         operations = MediaService.operation_catalog()
         service = MediaService()
+        speech = current.speech
+        ai_provider = current.ai_provider
         selected_models = {
             operation: current.selected_model(operation) for operation in operations
         }
-        if current.speech.get("provider") == "gemini":
+        if speech.get("provider") == "gemini":
             if selected_models["txt2audio"] not in GEMINI_TTS_MODELS:
-                selected_models["txt2audio"] = current.speech.get("gemini_model", "")
+                selected_models["txt2audio"] = speech.get("gemini_model", "")
         return jsonify(
             {
                 "operations": operations,
-                "configured": bool(current.ai_provider.get("deapi", {}).get("api_key") or service.client.api_key),
+                "configured": bool(ai_provider.get("deapi", {}).get("api_key") or service.client.api_key),
                 "selected_models": selected_models,
-                "speech": current.speech,
+                "speech": speech,
             }
         )
 
@@ -1586,6 +1652,7 @@ def create_desktop_app(
         gallery=app.config["PETEY_GALLERY"],
         runtime=app.config["PETEY_RUNTIME"],
         get_media_jobs=get_media_jobs,
+        event_broker=app.config["PETEY_ADDON_EVENTS"],
     )
 
     return app

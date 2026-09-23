@@ -78,6 +78,8 @@ class AssistantService:
         temporary: bool = False,
         temporary_history: list[dict] | None = None,
         on_text=None,
+        user_metadata: dict | None = None,
+        reply_metadata: dict | None = None,
     ) -> AssistantReply:
         cleaned = (message or "").strip()
         if cleaned.endswith("+++"):
@@ -97,7 +99,10 @@ class AssistantService:
             cleaned or attachment.filename,
             identity.installation_id,
             5,
-            exclude_conversation_id=identity.conversation_id,
+            exclude_contents=tuple(
+                str(item.get("message") or "") for item in messages
+                if isinstance(item, dict) and item.get("message")
+            ),
         )
         image_description = await self._describe_image(attachment, cleaned)
 
@@ -114,12 +119,17 @@ class AssistantService:
                 role = "assistant" if item["user_id"] == PETEY_USER_ID else "user"
                 content = item["message"]
                 if role == "user":
-                    history_surface = SURFACE_LABELS.get(
-                        item.get("source_surface"), "Petey Desktop"
-                    )
-                    content = (
-                        f"User {identity.display_name} said through {history_surface}: {content}"
-                    )
+                    metadata = item.get("metadata") or {}
+                    if metadata.get("hidden_from_chat"):
+                        source = str(metadata.get("addon_event_source") or "add-on")
+                        content = f"Background event from the {source} add-on: {content}"
+                    else:
+                        history_surface = SURFACE_LABELS.get(
+                            item.get("source_surface"), "Petey Desktop"
+                        )
+                        content = (
+                            f"User {identity.display_name} said through {history_surface}: {content}"
+                        )
                 history.append({"role": role, "content": content})
 
         stored_user_text = cleaned
@@ -138,6 +148,7 @@ class AssistantService:
                     identity.person_id,
                     stored_user_text,
                     source_surface=surface,
+                    metadata=user_metadata,
                 )
                 if item_id is not None:
                     deferred_user_embedding = (item_id, stored_user_text)
@@ -148,6 +159,7 @@ class AssistantService:
                     identity.person_id,
                     stored_user_text,
                     source_surface=surface,
+                    metadata=user_metadata,
                 )
 
         if image_description:
@@ -168,8 +180,8 @@ class AssistantService:
             "OPERATION RULE: The connected tools offered for this turn are real capabilities "
             "available to you now. Personality controls how you speak, never whether you carry "
             "out the user's requested action. If an offered tool can directly perform that "
-            "action, call it before responding. Do not roleplay inability, reluctance, or lack "
-            "of access to an offered tool."
+            "action, call it instead of refusing or only talking about it. Never claim success "
+            "until the tool result confirms it, and do not repeat an identical call."
             if tool_schemas else ""
         )
         system_parts = [
@@ -191,22 +203,35 @@ class AssistantService:
                 "knowledge. Retrieved entries are timestamped and ordered oldest to newest. "
                 "Acknowledge uncertainty only when the user has not supplied a clear correction."
             ),
-            f"This is Petey's standalone desktop installation {identity.installation_id}.",
+            (
+                "GROUNDING RULE: For claims about the user, their history, files, devices, "
+                "home, accounts, spreadsheets, schedules, integrations, or any current/live "
+                "state, use only the newest user statement, recent conversation history, the "
+                "Relevant past context block, an attached file or image, or a successful tool "
+                "result from this turn. If none of those provides the answer, plainly say you "
+                "do not know or do not have access and ask for the missing source. Never invent, "
+                "estimate, or roleplay a factual answer. A previous Petey reply, whether in recent "
+                "history or retrieved memory, is not independent evidence unless corroborated by "
+                "the user, a document, an attachment, or a successful tool result. General knowledge "
+                "and clearly requested creative writing do not require stored evidence."
+            ),
+            (
+                "TOOL ACCESS RULE: Only tools explicitly offered in this turn are connected and "
+                "available. Never claim access to an integration or live system when its tool is "
+                "not offered. A failed tool result means the action or lookup did not succeed."
+            ),
+            "TOOL STATUS: No connected tools are available for this turn." if not tool_schemas else "",
             "Temporary mode is active. Do not claim to remember this conversation." if temporary else "",
-            f"Relevant past context:\n{semantic_memory}" if semantic_memory else "",
+            (
+                f"Relevant past context:\n{semantic_memory}"
+                if semantic_memory else
+                "MEMORY STATUS: No relevant stored memory was retrieved for this request."
+            ) if not temporary else "",
             (
                 "You are PETEY. Respond only to the last user message. Talk directly to the "
                 "user and never prefix your answer with your own name. You can chat, remember "
                 "past conversations, inspect attached images, read approved workspace files "
                 "when connected tools are offered, and generate media through the desktop application."
-            ),
-            (
-                "Use an offered tool only when it directly fulfills the user's current request. "
-                "Offered tools are connected capabilities available to you now. When an offered "
-                "tool can perform the requested action, call it instead of refusing, claiming you "
-                "lack access, or replacing the action with persona banter. "
-                "Never claim a tool succeeded until its result says so, and never repeat the same "
-                "tool call just because its result is still being processed."
             ),
         ]
         final_system = "\n".join(part for part in system_parts if part)
@@ -272,13 +297,16 @@ class AssistantService:
         if not response:
             response = "I don't have anything to say right now."
         if response and not temporary:
+            stored_reply_metadata = dict(reply_metadata or {})
+            if tool_events:
+                stored_reply_metadata["tool_events"] = tool_events
             self.memory.store_memory(
                 identity.installation_id,
                 identity.conversation_id,
                 PETEY_USER_ID,
                 response,
                 source_surface=surface,
-                metadata={"tool_events": tool_events} if tool_events else None,
+                metadata=stored_reply_metadata or None,
             )
         return AssistantReply(text=response, tool_events=tuple(tool_events))
 

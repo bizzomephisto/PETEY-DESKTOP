@@ -126,6 +126,28 @@ class DesktopMemoryTests(unittest.TestCase):
             self.assertEqual(first_count, 1)
             self.assertEqual(loads.call_count, first_count)
 
+    def test_reembedding_invalidates_the_compact_vector_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = {
+                "provider": "test", "model": "tiny", "dimensions": 2,
+                "values": [1.0, 0.0],
+            }
+            second = {**first, "values": [0.0, 1.0]}
+            store = DesktopMemory(Path(directory) / "memory.sqlite3", lambda _text: first)
+            store.init_db()
+            item_id = store._insert_item(
+                "desktop-1", "main", "owner", "message", "Cache changes"
+            )
+            store._embed_item(item_id, "Cache changes")
+            self.assertIn("Cache changes", store.search_memories("query", "desktop-1", 1))
+            self.assertEqual(store._vector_cache[item_id][0].typecode, "f")
+
+            store.embedding_factory = lambda _text: second
+            store._embed_item(item_id, "Cache changes")
+
+            self.assertIn("Cache changes", store.search_memories("query", "desktop-1", 1))
+            self.assertEqual(list(store._vector_cache[item_id][0]), [0.0, 1.0])
+
     def test_retrieval_can_exclude_messages_already_in_current_chat_history(self):
         with tempfile.TemporaryDirectory() as directory:
             store = DesktopMemory(Path(directory) / "memory.sqlite3", embedding)

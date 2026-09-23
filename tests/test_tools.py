@@ -60,6 +60,20 @@ class ToolRegistryTests(unittest.TestCase):
             registry.execute("echo", {"text": "hi"}, "allowed"), {"text": "hi"}
         )
 
+    def test_required_tool_argument_accepts_nested_lists(self):
+        tool = ToolSpec(
+            name="matrix",
+            description="Accept a cell matrix.",
+            parameters={"type": "object", "required": ["data"]},
+            handler=lambda arguments: {"data": arguments["data"]},
+        )
+        registry = ToolRegistry([tool])
+        data = [[4, 5], ["", ""]]
+        self.assertEqual(
+            registry.execute("matrix", {"data": data}, "update cells"),
+            {"data": data},
+        )
+
     def test_image_intent_gate_requires_an_explicit_creation_request(self):
         self.assertTrue(explicit_image_request("Generate an image of a tiny moon base"))
         self.assertTrue(explicit_image_request("Draw me a portrait of Petey"))

@@ -18,7 +18,7 @@
 {%- endmacro %}
 {% for page in settings_pages %}
 <section id="view-{{ page.id }}" class="tool-view app-view settings-view" data-settings-title="{{ page.title }}" aria-labelledby="settings-title-{{ page.id }}">
-    <header class="tool-header"><div><span class="page-eyebrow">SETTINGS{% if page.group %} / {{ page.group|upper }}{% endif %}</span><h1 id="settings-title-{{ page.id }}" tabindex="-1">{{ page.title }}</h1><p>{{ page.description }}</p></div>{% if page.id == 'personality' %}<span id="personality-status" class="save-status" role="status"></span>{% endif %}</header>
+    <header class="tool-header"><button class="mobile-settings-back" type="button" data-mobile-settings-back>← Chat</button><div><span class="page-eyebrow">SETTINGS{% if page.group %} / {{ page.group|upper }}{% endif %}</span><h1 id="settings-title-{{ page.id }}" tabindex="-1">{{ page.title }}</h1><p>{{ page.description }}</p></div>{% if page.id == 'personality' %}<span id="personality-status" class="save-status" role="status"></span>{% endif %}</header>
     {{ settings_navigation(page.id) }}
     <div class="tool-content">
         <div class="settings-page-content">

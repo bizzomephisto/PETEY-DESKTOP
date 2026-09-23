@@ -4,6 +4,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import tempfile
+import time
 import unittest
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from petey.assistant import AssistantReply
 from petey.desktop_state import DesktopState
+from petey.desktop_memory import DesktopMemory
 from petey.deapi_stt import DeapiSTTError
 from petey.media_jobs import MediaGallery
 from web.desktop_app import AsyncRuntime, create_desktop_app
@@ -363,6 +365,19 @@ class DesktopAppTests(unittest.TestCase):
                 bootstrap.get_json()["installation_id"], state.installation_id
             )
             self.assertEqual(bootstrap.get_json()["version"], __version__)
+            self.assertIn("messages", bootstrap.get_json())
+            self.assertIn("voice_cues", bootstrap.get_json())
+
+            revision = app.config["PETEY_ASSET_REVISION"]
+            cached_asset = client.head(f"/static/desktop.js?v={revision}")
+            self.assertEqual(
+                cached_asset.headers["Cache-Control"],
+                "public, max-age=31536000, immutable",
+            )
+            uncached_asset = client.head("/static/desktop.js")
+            self.assertNotIn("immutable", uncached_asset.headers.get("Cache-Control", ""))
+            cached_asset.close()
+            uncached_asset.close()
 
     def test_user_can_save_their_display_name(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -382,7 +397,9 @@ class DesktopAppTests(unittest.TestCase):
     def test_messages_are_labeled_by_speaker(self):
         rows = [
             {"id": 1, "user_id": "owner", "message": "Hi", "timestamp": "now"},
-            {"id": 2, "user_id": "PETEY", "message": "Hey", "timestamp": "now"},
+            {"id": 2, "user_id": "ADDON:spotify", "message": "Hidden track event",
+             "timestamp": "now", "metadata": {"hidden_from_chat": True}},
+            {"id": 3, "user_id": "PETEY", "message": "Hey", "timestamp": "now"},
         ]
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -392,6 +409,38 @@ class DesktopAppTests(unittest.TestCase):
             response = app.test_client().get("/api/desktop/messages")
 
             self.assertEqual([item["role"] for item in response.get_json()], ["user", "assistant"])
+            updates = app.test_client().get("/api/desktop/addon-events?after=0").get_json()
+            self.assertEqual(updates, {"cursor": 0, "events": []})
+
+    def test_addon_event_hides_prompt_and_publishes_petey_reply(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            memory = DesktopMemory(Path(directory) / "event-memory.sqlite3", lambda _text: None)
+            app = create_desktop_app(state=state, memory=memory)
+            client = app.test_client()
+            with patch("petey.assistant.AIProvider.complete", return_value="Now playing So What."):
+                queued = app.config["PETEY_ADDON_EVENTS"].emit(
+                    "spotify",
+                    "Spotify changed to So What by Miles Davis.",
+                    conversation_id=state.conversation_id,
+                    speak=True,
+                    metadata={"conference_session_id": "session-1"},
+                )
+                self.assertEqual(queued["status"], "queued")
+                deadline = time.time() + 2
+                updates = {"events": []}
+                while time.time() < deadline and not updates["events"]:
+                    time.sleep(0.02)
+                    updates = client.get("/api/desktop/addon-events?after=0").get_json()
+
+            self.assertEqual(updates["events"][0]["text"], "Now playing So What.")
+            self.assertTrue(updates["events"][0]["speak"])
+            messages = client.get("/api/desktop/messages").get_json()
+            self.assertEqual([item["message"] for item in messages], ["Now playing So What."])
+            self.assertEqual(
+                messages[0]["metadata"]["conference_session_id"], "session-1"
+            )
+            app.config["PETEY_ADDONS"].close()
 
     def test_gallery_exposes_qt_compatible_video_preview(self):
         with tempfile.TemporaryDirectory() as directory:
