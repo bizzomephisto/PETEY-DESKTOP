@@ -122,7 +122,13 @@ class AssistantService:
                     metadata = item.get("metadata") or {}
                     if metadata.get("hidden_from_chat"):
                         source = str(metadata.get("addon_event_source") or "add-on")
-                        content = f"Background event from the {source} add-on: {content}"
+                        if metadata.get("user_initiated_addon_action"):
+                            content = (
+                                f"User {identity.display_name} privately activated the {source} "
+                                f"add-on action: {content}"
+                            )
+                        else:
+                            content = f"Background event from the {source} add-on: {content}"
                     else:
                         history_surface = SURFACE_LABELS.get(
                             item.get("source_surface"), "Petey Desktop"
@@ -230,7 +236,7 @@ class AssistantService:
             (
                 "You are PETEY. Respond only to the last user message. Talk directly to the "
                 "user and never prefix your answer with your own name. You can chat, remember "
-                "past conversations, inspect attached images, read approved workspace files "
+                "past conversations, inspect attached images, read approved folder files "
                 "when connected tools are offered, and generate media through the desktop application."
             ),
         ]

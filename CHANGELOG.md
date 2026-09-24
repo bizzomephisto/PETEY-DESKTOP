@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+- Removed the Workspace IDE, editor, command runner, proposal APIs, and navigation.
+- Moved read-only Filesystem folder approvals into Settings → Tools & integrations,
+  including automatic migration of previously approved folders.
+- Hid PETEY Plus from the rendered app and navigation while retaining its dormant
+  implementation for future product work.
+- Moved saved Petey profiles to the top of Personality & voice. Saving an edited
+  profile now asks for a destination slot and activates the saved result.
+- Persisted microphone and speaker mute states across restarts and made chat,
+  Visual Mode, desktop, and mobile use the same saved state.
+- Exposed the current speaker-enabled state to add-on panels so their own spoken
+  cues follow PETEY's global speaker mute.
+- Updated PETEY Conference Mode with fast local wake-name detection, silence-ended
+  transcription segments, permission before topic-triggered contributions, common
+  yes/no replies, and a three-second conversational follow-up window.
+- Conference permission cue folders now accept any number of recordings, choose
+  one randomly, and derive matching transcript text from each clip filename.
+- Split microphone transcription into explicit Automatic, deAPI-only, Gemini-only,
+  and Local Whisper choices.
+- Added optional, fully private Local Whisper transcription through faster-whisper,
+  with explicit model downloads, CPU/CUDA selection, setup links, and Conference support.
+- Added Linux startup discovery for pip-installed NVIDIA CUDA libraries so Local
+  Whisper can use the GPU without a system-wide CUDA installation.
+- Made the wake name interrupt active PETEY speech immediately, play a random
+  user-replaceable interruption cue, and return to listening.
+- Fixed Media text-to-speech with explicit deAPI Media and Gemini choices, each
+  with the correct models and voices independently from PETEY's conversational
+  voice, and show complete job errors.
+- Added deAPI as a conversational speech provider with profile-aware model and
+  voice settings across desktop, mobile, chat, Visual Mode, and wake cues.
+
 ## v0.19.0 — 2026-09-23
 
 This stable release promotes the v0.19 experimental preview and includes all of

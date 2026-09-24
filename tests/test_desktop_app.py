@@ -153,6 +153,28 @@ class DesktopAppTests(unittest.TestCase):
         manager.set_enabled.assert_called_once_with(True)
         manager.test_connection.assert_called_once_with()
 
+    def test_filesystem_folders_are_managed_inside_tools(self):
+        manager = MagicMock()
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as folder:
+            state = DesktopState(directory)
+            client = create_desktop_app(
+                state=state, memory=MagicMock(), job_manager=MagicMock(), mcp_manager=manager,
+            ).test_client()
+
+            added = client.post(
+                "/api/desktop/tools/filesystem/folders", json={"path": folder}
+            )
+            folder_id = added.json["folder"]["id"]
+            listed = client.get("/api/desktop/tools/filesystem/folders")
+            removed = client.delete(
+                f"/api/desktop/tools/filesystem/folders/{folder_id}"
+            )
+
+        self.assertEqual(added.status_code, 201)
+        self.assertEqual(listed.json["folders"][0]["path"], str(Path(folder).resolve()))
+        self.assertEqual(removed.json["folders"], [])
+        self.assertEqual(manager.disconnect.call_count, 2)
+
     def test_theme_api_and_initial_html_use_saved_theme(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -354,9 +376,15 @@ class DesktopAppTests(unittest.TestCase):
             self.assertNotIn("deAPI Media", shell.get_data(as_text=True))
             self.assertIn('id="view-providers"', shell.get_data(as_text=True))
             self.assertIn('id="view-help"', shell.get_data(as_text=True))
-            self.assertIn('id="view-plan"', shell.get_data(as_text=True))
-            self.assertEqual(shell.get_data(as_text=True).count('data-plan-quality='), 3)
-            self.assertIn('id="plan-live-impact"', shell.get_data(as_text=True))
+            self.assertNotIn('id="view-plan"', shell.get_data(as_text=True))
+            self.assertNotIn('data-view="plan"', shell.get_data(as_text=True))
+            self.assertNotIn('data-view="workspace"', shell.get_data(as_text=True))
+            self.assertNotIn('id="view-workspace"', shell.get_data(as_text=True))
+            dormant_plan = (
+                Path(__file__).parents[1] / "web/templates/dormant/petey_plus.html"
+            ).read_text(encoding="utf-8")
+            self.assertEqual(dormant_plan.count('data-plan-quality='), 3)
+            self.assertIn('id="plan-live-impact"', dormant_plan)
             self.assertIn("https://aistudio.google.com/apikey", shell.get_data(as_text=True))
             self.assertIn("https://platform.openai.com/api-keys", shell.get_data(as_text=True))
             self.assertIn("https://docs.deapi.ai/quickstart", shell.get_data(as_text=True))
@@ -435,6 +463,9 @@ class DesktopAppTests(unittest.TestCase):
 
             self.assertEqual(updates["events"][0]["text"], "Now playing So What.")
             self.assertTrue(updates["events"][0]["speak"])
+            self.assertEqual(
+                updates["events"][0]["metadata"]["conference_session_id"], "session-1"
+            )
             messages = client.get("/api/desktop/messages").get_json()
             self.assertEqual([item["message"] for item in messages], ["Now playing So What."])
             self.assertEqual(
@@ -822,6 +853,38 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(source.content_type, "image/png")
             self.assertEqual(source.data, b"local-image-bytes")
 
+    def test_media_text_to_speech_supports_deapi_and_gemini_independently(self):
+        queued = {
+            "id": "speech-media", "status": "queued", "kind": "audio",
+            "operation": "txt2audio", "prompt": "Hello", "model_slug": "deapi-tts",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_speech({"provider": "gemini"})
+            jobs = MagicMock()
+            jobs.submit.return_value = queued
+            client = create_desktop_app(
+                state=state, runtime=object(), job_manager=jobs,
+            ).test_client()
+            response = client.post("/api/desktop/media/generate", data={
+                "operation": "txt2audio", "prompt": "Hello",
+                "model_slug": "deapi-tts", "parameters": '{"voice":"Vivian"}',
+            })
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(
+                jobs.submit.call_args.kwargs["speech_settings"]["provider"], "deapi",
+            )
+
+            response = client.post("/api/desktop/media/generate", data={
+                "operation": "txt2audio", "prompt": "Hello",
+                "model_slug": "gemini-3.1-flash-tts-preview",
+                "parameters": '{"voice":"Kore","tts_provider":"gemini"}',
+            })
+            self.assertEqual(response.status_code, 202)
+            speech = jobs.submit.call_args.kwargs["speech_settings"]
+            self.assertEqual(speech["provider"], "gemini")
+            self.assertEqual(speech["gemini_model"], "gemini-3.1-flash-tts-preview")
+
     def test_media_balance_is_returned_without_exposing_key(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -856,6 +919,8 @@ class DesktopAppTests(unittest.TestCase):
             self.assertFalse(payload["openai_has_api_key"])
             self.assertIn("gpt-4o-mini-tts", payload["openai_models"])
             self.assertIn("marin", payload["openai_voices"])
+            self.assertIn("Qwen3_TTS_12Hz_1_7B_CustomVoice", payload["deapi_models"])
+            self.assertIn("Vivian", [voice["name"] for voice in payload["deapi_voices"]])
             self.assertTrue(payload["configuration"]["consistent_voice"])
             self.assertFalse(payload["balance_available_via_api"])
             self.assertIn("Kore", [voice["name"] for voice in payload["gemini_voices"]])
@@ -869,13 +934,15 @@ class DesktopAppTests(unittest.TestCase):
             client = app.test_client()
 
             saved = client.put("/api/desktop/voice-input", json={
-                "mode": "wake_word", "provider": "gemini",
+                "mode": "wake_word", "muted": True, "provider": "gemini",
                 "model": "gemini-3.5-transcribe", "wake_word": "Petey",
                 "device_id": "usb-mic-1", "sensitivity": "high",
             })
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["configuration"]["mode"], "wake_word")
+            self.assertTrue(saved.get_json()["configuration"]["muted"])
             self.assertEqual(saved.get_json()["configuration"]["device_id"], "usb-mic-1")
+            self.assertTrue(client.get("/api/desktop/bootstrap").get_json()["voice_input"]["muted"])
             self.assertNotIn("private-key", saved.get_data(as_text=True))
 
             with patch("web.desktop_app.GeminiSTT.transcribe", return_value="Petey hello") as transcribe:
@@ -942,11 +1009,11 @@ class DesktopAppTests(unittest.TestCase):
             self.assertTrue(stopped.get_json()["stopped"])
             detector.stop.assert_called_once_with("wake-session")
 
-    def test_microphone_uses_deapi_then_falls_back_to_gemini(self):
+    def test_automatic_microphone_uses_deapi_then_falls_back_to_gemini(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             state.update_voice_input({
-                "mode": "push_to_talk", "provider": "deapi",
+                "mode": "push_to_talk", "provider": "automatic",
                 "model": "WhisperLargeV3",
             })
             app = create_desktop_app(state=state, runtime=object())
@@ -974,6 +1041,61 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(response.get_json()["provider"], "gemini")
             self.assertEqual(response.get_json()["transcript"], "fallback transcript")
 
+            state.update_voice_input({"provider": "deapi", "model": "WhisperLargeV3"})
+            with patch(
+                "web.desktop_app.DeapiSTT.transcribe",
+                side_effect=DeapiSTTError("media transcription unavailable"),
+            ), patch("web.desktop_app.GeminiSTT.transcribe") as gemini:
+                response = client.post(
+                    "/api/desktop/voice-input/transcribe",
+                    data={"audio": (BytesIO(b"RIFF-audio"), "microphone.wav")},
+                    content_type="multipart/form-data",
+                )
+            self.assertEqual(response.status_code, 502)
+            self.assertIn("deAPI", response.get_json()["error"])
+            gemini.assert_not_called()
+
+    def test_local_whisper_status_and_microphone_transcription(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_voice_input({
+                "mode": "push_to_talk", "provider": "local_whisper",
+                "local_whisper_model": "small", "local_whisper_device": "cpu",
+            })
+            client = create_desktop_app(state=state, runtime=object()).test_client()
+            with patch("web.desktop_app.LocalWhisper") as whisper:
+                whisper.return_value.status.return_value = {
+                    "installed": True, "downloaded": True, "model": "small",
+                    "model_directory": str(Path(directory) / "local-whisper-models"),
+                }
+                status = client.get(
+                    "/api/desktop/voice-input/local-whisper?model=small"
+                )
+                whisper.return_value.download.return_value = {
+                    "installed": True, "downloaded": True, "model": "medium",
+                    "model_directory": str(Path(directory) / "local-whisper-models"),
+                }
+                downloaded = client.post(
+                    "/api/desktop/voice-input/local-whisper",
+                    json={"model": "medium", "device": "cpu"},
+                )
+                whisper.return_value.transcribe.return_value = "Private transcript"
+                response = client.post(
+                    "/api/desktop/voice-input/transcribe",
+                    data={"audio": (BytesIO(b"RIFF-audio"), "microphone.wav")},
+                    content_type="multipart/form-data",
+                )
+
+            self.assertTrue(status.get_json()["downloaded"])
+            self.assertIn("faster-whisper", status.get_json()["install_command"])
+            self.assertTrue(downloaded.get_json()["downloaded"])
+            whisper.return_value.download.assert_called_once_with("medium", "cpu")
+            self.assertEqual(state.voice_input["local_whisper_model"], "medium")
+            self.assertEqual(response.get_json()["provider"], "local_whisper")
+            self.assertEqual(response.get_json()["transcript"], "Private transcript")
+            call = whisper.return_value.transcribe.call_args
+            self.assertEqual(call.args[2:4], ("medium", "cpu"))
+
     def test_chat_speech_queues_temporary_audio_outside_gallery(self):
         queued = {"id": "speech-job", "status": "queued", "kind": "audio"}
         with tempfile.TemporaryDirectory() as directory:
@@ -994,6 +1116,30 @@ class DesktopAppTests(unittest.TestCase):
             self.assertFalse(jobs.submit.call_args.kwargs["save_to_gallery"])
             self.assertEqual(jobs.submit.call_args.kwargs["parameters"]["voice"], "Kore")
             self.assertTrue(client.get("/api/desktop/bootstrap").get_json()["speech"]["auto_speak"])
+
+    def test_chat_speech_can_queue_deapi_voice(self):
+        queued = {"id": "deapi-speech-job", "status": "queued", "kind": "audio"}
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_speech({
+                "provider": "deapi",
+                "deapi_model": "Qwen3_TTS_12Hz_1_7B_CustomVoice",
+                "deapi_voice": "Serena",
+            })
+            jobs = MagicMock()
+            jobs.submit.return_value = queued
+            client = create_desktop_app(
+                state=state, runtime=object(), job_manager=jobs,
+            ).test_client()
+
+            response = client.post("/api/desktop/chat/speech", json={"text": "Hello"})
+
+            self.assertEqual(response.status_code, 202)
+            call = jobs.submit.call_args.kwargs
+            self.assertEqual(call["model_slug"], "Qwen3_TTS_12Hz_1_7B_CustomVoice")
+            self.assertEqual(call["parameters"]["voice"], "Serena")
+            self.assertEqual(call["speech_settings"]["provider"], "deapi")
+            self.assertFalse(call["save_to_gallery"])
 
     def test_chat_speech_serves_inline_generated_audio(self):
         jobs = MagicMock()

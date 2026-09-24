@@ -15,6 +15,7 @@ class VoiceCueLibraryTests(unittest.TestCase):
                 {path.name for path in library.root.iterdir() if path.is_dir()},
                 {"default", *GEMINI_TTS_VOICES},
             )
+            self.assertTrue((library.root / "default" / "interrupts").is_dir())
 
     def test_current_voice_clips_override_default_and_fallback(self):
         with TemporaryDirectory() as directory:
@@ -35,6 +36,17 @@ class VoiceCueLibraryTests(unittest.TestCase):
             self.assertEqual(selected["source_voice"], "Kore")
             self.assertEqual(selected["clips"], [voice_clip])
 
+            default_interrupt = library.root / "default" / "interrupts" / "sorry.wav"
+            default_interrupt.write_bytes(b"RIFF")
+            selected = library.catalog({"gemini_voice": "Kore"})
+            self.assertEqual(selected["interrupt_source_voice"], "default")
+            self.assertEqual(selected["interrupt_clips"], [default_interrupt])
+            voice_interrupt = library.root / "Kore" / "interrupts" / "go-ahead.mp3"
+            voice_interrupt.write_bytes(b"ID3")
+            selected = library.catalog({"gemini_voice": "Kore"})
+            self.assertEqual(selected["interrupt_source_voice"], "Kore")
+            self.assertEqual(selected["interrupt_clips"], [voice_interrupt])
+
     def test_resolve_stays_inside_the_cue_library(self):
         with TemporaryDirectory() as directory:
             library = VoiceCueLibrary(directory)
@@ -42,6 +54,11 @@ class VoiceCueLibraryTests(unittest.TestCase):
             clip.parent.mkdir(exist_ok=True)
             clip.write_bytes(b"OggS")
             self.assertEqual(library.resolve("Kore", "yeah.ogg"), clip.resolve())
+            interrupt = library.root / "Kore" / "interrupts" / "sorry.ogg"
+            interrupt.write_bytes(b"OggS")
+            self.assertEqual(
+                library.resolve("Kore", "interrupts/sorry.ogg"), interrupt.resolve()
+            )
             with self.assertRaises(ValueError):
                 library.resolve("Kore", "../secret.wav")
             with self.assertRaises(ValueError):

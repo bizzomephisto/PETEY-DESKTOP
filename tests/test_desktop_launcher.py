@@ -11,6 +11,33 @@ from petey.quick_window import move_x11_window_frame, screenshot_path
 
 
 class DesktopLauncherTests(unittest.TestCase):
+    def test_pip_cuda_runtime_restarts_with_library_paths(self):
+        cublas = SimpleNamespace(submodule_search_locations=["/venv/nvidia/cublas/lib"])
+        cudnn = SimpleNamespace(submodule_search_locations=["/venv/nvidia/cudnn/lib"])
+
+        def find_spec(name):
+            return {"nvidia.cublas.lib": cublas, "nvidia.cudnn.lib": cudnn}.get(name)
+
+        with (
+            patch("run_desktop.importlib.util.find_spec", side_effect=find_spec),
+            patch("run_desktop.sys.platform", "linux"),
+            patch("run_desktop.sys.argv", ["run_desktop.py", "--cloudflare"]),
+            patch("run_desktop.sys.executable", "/venv/bin/python"),
+            patch.dict("run_desktop.os.environ", {"LD_LIBRARY_PATH": "/system/lib"}, clear=True),
+            patch("run_desktop.os.execve") as execute,
+        ):
+            restarted = run_desktop.restart_with_bundled_cuda_runtime()
+
+        self.assertTrue(restarted)
+        executable, arguments, environment = execute.call_args.args
+        self.assertEqual(executable, "/venv/bin/python")
+        self.assertEqual(arguments, ["/venv/bin/python", "run_desktop.py", "--cloudflare"])
+        self.assertEqual(
+            environment["LD_LIBRARY_PATH"],
+            "/venv/nvidia/cublas/lib:/venv/nvidia/cudnn/lib:/system/lib",
+        )
+        self.assertEqual(environment[run_desktop.CUDA_RUNTIME_READY_ENV], "1")
+
     def test_cloudflare_mobile_pairing_token_persists_and_rotates(self):
         with TemporaryDirectory() as directory:
             first = run_desktop.persistent_remote_access_token(directory)
@@ -59,16 +86,49 @@ class DesktopLauncherTests(unittest.TestCase):
             patch("run_desktop.persistent_remote_access_token", return_value="private-token"),
             patch("run_desktop.linux_webview_backend_available", return_value=True),
             patch("run_desktop.preferred_linux_webview_backend", return_value=None),
+            patch("run_desktop.load_desktop_window_size", return_value=(1430, 910)),
+            patch("run_desktop.DesktopWindowSizeStore") as size_store_class,
             patch.dict("sys.modules", {"webview": webview}),
         ):
             run_desktop.main()
 
-        bridge = webview.create_window.call_args.kwargs["js_api"]
+        window_options = webview.create_window.call_args.kwargs
+        bridge = window_options["js_api"]
         self.assertEqual(bridge.restart_args, (
             "--cloudflare", "--cloudflare-hostname", "meetpetey.com",
             "--port", "43909",
         ))
+        self.assertEqual(window_options["width"], 1430)
+        self.assertEqual(window_options["height"], 910)
+        self.assertEqual(window_options["min_size"], (760, 560))
+        size_store_class.return_value.close.assert_called()
         server.close.assert_called_once_with()
+
+    def test_native_window_size_is_validated_and_persisted(self):
+        with TemporaryDirectory() as directory:
+            self.assertEqual(
+                run_desktop.load_desktop_window_size(directory),
+                (run_desktop.DEFAULT_DESKTOP_WIDTH, run_desktop.DEFAULT_DESKTOP_HEIGHT),
+            )
+
+            store = run_desktop.DesktopWindowSizeStore(
+                directory,
+                run_desktop.DEFAULT_DESKTOP_WIDTH,
+                run_desktop.DEFAULT_DESKTOP_HEIGHT,
+                delay=60,
+            )
+            store.record(1440, 920)
+            store.close()
+
+            window_file = Path(directory) / run_desktop.DESKTOP_WINDOW_FILE
+            self.assertEqual(run_desktop.load_desktop_window_size(directory), (1440, 920))
+            self.assertEqual(window_file.stat().st_mode & 0o777, 0o600)
+
+            window_file.write_text('{"width": 100, "height": 80}', encoding="utf-8")
+            self.assertEqual(
+                run_desktop.load_desktop_window_size(directory),
+                (run_desktop.DEFAULT_DESKTOP_WIDTH, run_desktop.DEFAULT_DESKTOP_HEIGHT),
+            )
 
     def test_lan_access_requires_private_link_then_uses_mobile_safe_cookie(self):
         app = Flask(__name__)
@@ -199,13 +259,15 @@ class DesktopLauncherTests(unittest.TestCase):
             self.assertEqual(opened.call_count, 1)
 
     def test_desktop_bridge_updates_native_window(self):
-        bridge = run_desktop.DesktopBridge()
+        size_store = MagicMock()
+        bridge = run_desktop.DesktopBridge(window_size_store=size_store)
         window = type("Window", (), {"on_top": False, "toggle_fullscreen": lambda self: None})()
         bridge.window = window
 
         self.assertTrue(bridge.set_always_on_top(True))
         self.assertTrue(window.on_top)
         self.assertEqual(bridge.toggle_fullscreen(), {"ok": True, "fullscreen": True})
+        size_store.pause.assert_called_once_with()
 
     def test_platform_icon_formats_are_selected(self):
         self.assertEqual(run_desktop.application_icon_path("linux").name, "petey-icon-256.png")
@@ -323,6 +385,26 @@ class DesktopLauncherTests(unittest.TestCase):
                     self.assertFalse(bridge.open_external_url(url))
             opened.assert_not_called()
 
+    def test_desktop_bridge_pops_artifact_out_through_paired_cloudflare_origin(self):
+        bridge = run_desktop.DesktopBridge(
+            petey_public_origin="https://meetpetey.com",
+            petey_access_token="private-token",
+        )
+        with patch("run_desktop.webbrowser.open", return_value=True) as opened:
+            result = bridge.open_petey_artifact(
+                "/api/addons/petey-opencode/artifacts/17/0"
+            )
+        self.assertTrue(result["ok"])
+        opened.assert_called_once_with(
+            "https://meetpetey.com/api/addons/petey-opencode/artifacts/17/0"
+            "?access_token=private-token",
+            new=1,
+        )
+        with patch("run_desktop.webbrowser.open") as opened:
+            self.assertFalse(bridge.open_petey_artifact("https://example.com/file")["ok"])
+            self.assertFalse(bridge.open_petey_artifact("/api/desktop/settings")["ok"])
+            opened.assert_not_called()
+
     def test_desktop_bridge_opens_addons_folder(self):
         with TemporaryDirectory() as directory, patch(
             "run_desktop.subprocess.Popen"
@@ -362,10 +444,11 @@ class DesktopLauncherTests(unittest.TestCase):
         bridge.window.destroy.assert_not_called()
 
     def test_desktop_bridge_restart_preserves_cloudflare_launch_settings(self):
+        size_store = MagicMock()
         bridge = run_desktop.DesktopBridge(restart_args=(
             "--cloudflare", "--cloudflare-hostname", "meetpetey.com",
             "--port", "8765",
-        ))
+        ), window_size_store=size_store)
         bridge.window = MagicMock()
         with patch("run_desktop.os.chdir"), patch("run_desktop.os.execv") as replaced:
             self.assertEqual(bridge.restart_petey(), {"ok": True, "restarting": True})
@@ -374,6 +457,31 @@ class DesktopLauncherTests(unittest.TestCase):
             [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve()),
              "--cloudflare", "--cloudflare-hostname", "meetpetey.com", "--port", "8765"],
         )
+        size_store.flush.assert_called_once_with()
+
+    def test_desktop_bridge_restarts_in_selected_launch_mode(self):
+        bridge = run_desktop.DesktopBridge(
+            restart_args=("--cloudflare", "--cloudflare-hostname", "meetpetey.com"),
+            restart_modes={
+                "desktop": ("--cloudflare-hostname", "meetpetey.com"),
+                "cloudflare": ("--cloudflare", "--cloudflare-hostname", "meetpetey.com"),
+                "browser": ("--browser", "--cloudflare-hostname", "meetpetey.com"),
+            },
+        )
+        bridge.window = MagicMock()
+        with patch("run_desktop.os.chdir"), patch("run_desktop.os.execv") as replaced:
+            self.assertEqual(
+                bridge.restart_petey("browser"), {"ok": True, "restarting": True}
+            )
+        replaced.assert_called_once_with(
+            run_desktop.sys.executable,
+            [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve()),
+             "--browser", "--cloudflare-hostname", "meetpetey.com"],
+        )
+
+        unavailable = run_desktop.DesktopBridge(restart_modes={"cloudflare": None})
+        unavailable.window = MagicMock()
+        self.assertFalse(unavailable.restart_petey("cloudflare")["ok"])
 
     def test_restart_requires_native_window_and_recovers_from_launch_error(self):
         bridge = run_desktop.DesktopBridge()

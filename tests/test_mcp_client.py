@@ -103,9 +103,9 @@ class FilesystemMCPManagerTests(unittest.TestCase):
             self.running = False
 
     def test_manager_uses_approved_roots_and_only_exposes_read_tools(self):
-        with tempfile.TemporaryDirectory() as data_directory, tempfile.TemporaryDirectory() as workspace:
+        with tempfile.TemporaryDirectory() as data_directory, tempfile.TemporaryDirectory() as approved_folder:
             state = DesktopState(data_directory)
-            state.add_workspace(workspace)
+            state.add_approved_folder(approved_folder)
             clients = []
 
             def factory(argv, roots):
@@ -125,17 +125,17 @@ class FilesystemMCPManagerTests(unittest.TestCase):
             self.assertTrue(specs[0].available_when("Read the project file"))
             self.assertFalse(specs[0].available_when("How are you today?"))
             self.assertIn(FILESYSTEM_PACKAGE, clients[0].argv)
-            self.assertEqual(clients[0].roots, [Path(workspace).resolve()])
+            self.assertEqual(clients[0].roots, [Path(approved_folder).resolve()])
             self.assertIn("safe", result["result"])
             with self.assertRaises(MCPError):
                 manager.call_tool("write_file", {"path": "notes.txt"})
             manager.close()
 
-    def test_manager_requires_an_approved_workspace(self):
+    def test_manager_requires_an_approved_folder(self):
         with tempfile.TemporaryDirectory() as data_directory:
             manager = FilesystemMCPManager(DesktopState(data_directory))
             with patch("petey.mcp_client.shutil.which", return_value="/usr/bin/npx"):
-                with self.assertRaisesRegex(MCPError, "Approve at least one"):
+                with self.assertRaisesRegex(MCPError, "Add at least one folder"):
                     manager.set_enabled(True)
 
 

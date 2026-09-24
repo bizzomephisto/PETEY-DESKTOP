@@ -30,7 +30,7 @@ Temporary mode bypasses memory retrieval and memory writes, including image-gene
 
 ### Quick PETEY
 
-Quick PETEY is a compact popup positioned near the cursor. It supports chat, file and screenshot attachments, and push-to-talk. The launcher provides a direct `--quick` mode, and a COSMIC shortcut installer can bind it to Super+F1. Quick PETEY offers a lightweight entry point without requiring the full desktop workspace to remain in view.
+Quick PETEY is a compact popup positioned near the cursor. It supports chat, file and screenshot attachments, and push-to-talk. The launcher provides a direct `--quick` mode, and a COSMIC shortcut installer can bind it to Super+F1. Quick PETEY offers a lightweight entry point without requiring the full desktop app to remain in view.
 
 ## 3. Personality, character creation, and roleplay
 
@@ -140,19 +140,11 @@ Model dropdowns can refresh from Gemini, OpenAI, and local-server catalogs. A mo
 
 Keys can be managed through the settings interface, with supported environment-variable fallbacks. Public settings responses redact secret values and expose key status instead.
 
-## 8. Workspace and coding assistance
-
-### Approved-folder workspace
-
-The built-in workspace provides an approved-folder file tree, text editor, command console, and reviewable AI changes. File resolution includes checks that prevent built-in file operations from escaping approved roots through path traversal or symlinks.
-
-AI file writes and commands are proposals until approved. File proposals include a diff and a content hash to catch stale edits. Proposals expire, and approved commands have a 60-second timeout. Manual editor saves use a separate path.
-
-These controls govern PETEY's built-in workspace operations. Approved shell commands run with the user's operating-system permissions; the workspace is not an OS-level sandbox.
+## 8. Tools and coding assistance
 
 ### Read-only Filesystem MCP
 
-An optional Filesystem MCP connector launches a pinned official server through `npx`. Its roots are the folders already approved in Workspace. PETEY offers only a bounded allowlist of reading, listing, metadata, and search capabilities to the model. Server write, move, delete, and arbitrary-command capabilities are not exposed.
+An optional Filesystem MCP connector launches a pinned official server through `npx`. Its roots are folders chosen under Settings → Tools. PETEY offers only a bounded allowlist of reading, listing, metadata, and search capabilities to the model. Server write, move, delete, and arbitrary-command capabilities are not exposed.
 
 Enabling the connector is explicit. Merely opening Settings does not start its process. The first enable may download the pinned server package.
 
@@ -162,7 +154,7 @@ The external OpenCode add-on starts `opencode run --format json` for a configure
 
 Users can direct PETEY to use OpenCode for a coding task and ask for progress. The integration provides authoritative run status and links to detected output artifacts. OpenCode's own permission rules remain active; the add-on does not pass `--auto`.
 
-This is an independently installed extension. Its workflow and permission system should not be confused with PETEY's built-in workspace proposal mechanism.
+This is an independently installed extension with its own workflow and permission system.
 
 ## 9. Discord participation
 
@@ -256,9 +248,9 @@ Appearance options include Midnight, Ocean, Forest, and Paper themes, interface 
 
 Profile settings keep personality and voice together. Provider credentials and model choices remain centralized, while installation-wide microphone behavior has its own page. Settings search indexes headings and labels rather than secret or user-entered field values.
 
-## 13. PETEY Plus plan preview
+## 13. Dormant PETEY Plus plan code
 
-The application contains a local plan builder with a monthly budget from $5 to $150 in $5 increments, Economy/Balanced/Premium quality choices, and an allocation mix across chat, images, video, and voice. It estimates capability quantities and separates the proposed budget into usage and operating shares.
+The repository retains a local plan builder with a monthly budget from $5 to $150 in $5 increments, Economy/Balanced/Premium quality choices, and an allocation mix across chat, images, video, and voice. It is hidden from navigation and excluded from the rendered app experience while the product direction is revisited.
 
 This is a **planning preview**. Its implementation returns `checkout_available: False` and uses a local planning rate card. Displayed rollover and overage policies describe the proposed plan design; they do not establish an active subscription, funded balance, or live billing service. Provider-backed media price lookups are a separate feature.
 
@@ -283,7 +275,7 @@ Flask desktop API
         |         +-- local gallery
         |
         +-- Desktop state + SQLite memory
-        +-- approved workspace + Filesystem MCP
+        +-- approved folders + Filesystem MCP
         +-- Discord bridge + enabled external add-ons
 ```
 
@@ -298,7 +290,7 @@ Key implementation areas:
 | SQLite storage and retrieval | `petey/desktop_memory.py` |
 | Tool registration and capability dispatch | `petey/tools/registry.py`, `petey/tools/__init__.py` |
 | Media validation, queue, provider calls, and gallery | `petey/media_service.py`, `petey/media_jobs.py`, `petey/deapi_client.py` |
-| Workspace and filesystem connection | `petey/workspace.py`, `petey/mcp_client.py` |
+| Read-only filesystem connection | `petey/mcp_client.py` |
 | Add-on discovery and lifecycle | `petey/addons.py` |
 | Discord | `petey/discord_bridge.py`, `petey/discord_transport.py`, `petey/discord_media.py` |
 | Interface and settings catalog | `web/templates/desktop.html`, `web/static/desktop.js`, `web/static/desktop.css`, `web/settings_pages.py` |
@@ -324,7 +316,6 @@ Important behavioral boundaries include:
 - Temporary chat skips memory reads and writes but can still contact services.
 - Tool grants are enforced both when exposing tools and when dispatching calls.
 - Disabled external add-ons are not imported.
-- Workspace changes retain review, expiry, and stale-content protection.
 - Filesystem MCP remains read-only and rooted in approved folders.
 - Shared Discord recall is an explicit choice because its output is public to the room.
 
@@ -352,7 +343,7 @@ This overview was assembled from local source and documentation rather than live
 - [Add-on author contract](docs/addons.md): extension APIs and lifecycle.
 - [Discord guide](docs/discord.md): configuration, participation, memory, and administration.
 - [Memory, knowledge, and privacy](docs/wiki/Memory-Knowledge-and-Privacy.md).
-- [Workspace and tools](docs/wiki/Workspace-and-Tools.md).
+- [Tools and integrations](docs/wiki/Tools-and-Integrations.md).
 - [Mobile and remote access](docs/wiki/Mobile-and-Remote-Access.md).
 - [Interface design](docs/interface-design.md).
 

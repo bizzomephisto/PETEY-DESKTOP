@@ -123,6 +123,32 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await service.respond("   ", identity)
 
+    async def test_hidden_user_initiated_addon_action_keeps_user_attribution(self):
+        memory = MagicMock()
+        memory.get_conversation_messages.return_value = [{
+            "id": 1,
+            "user_id": "owner",
+            "message": "Show me the desk camera.",
+            "timestamp": "2026-01-01T00:00:00",
+            "metadata": {
+                "hidden_from_chat": True,
+                "addon_event_source": "quick-actions",
+                "user_initiated_addon_action": True,
+            },
+        }]
+        memory.search_memories.return_value = ""
+        memory.store_memory_deferred.return_value = None
+        service = AssistantService("You are Petey.", memory=memory)
+        with patch("petey.assistant.AIProvider.complete", return_value="I can see it.") as llm:
+            await service.respond(
+                "What did I just do?",
+                AssistantIdentity("desktop-test", "main", "owner", "Pat"),
+            )
+        self.assertEqual(
+            llm.call_args.args[2][0]["content"],
+            "User Pat privately activated the quick-actions add-on action: Show me the desk camera.",
+        )
+
     async def test_mobile_surface_is_added_to_prompt_and_saved_memory(self):
         memory = MagicMock()
         memory.get_conversation_messages.return_value = []

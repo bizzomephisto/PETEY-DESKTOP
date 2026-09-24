@@ -19,7 +19,7 @@ Start with one chat provider. Add the other services only when you want them.
 - Add reference documents under **Knowledge**.
 - Use **Temporary** for a conversation that should not read or write saved memory.
 - Save a deAPI key before using **Media**.
-- Approve a folder before using **Workspace** or the Filesystem tool.
+- Add an approved folder under **Settings → Tools & integrations** before using the Filesystem connector.
 
 API keys, model choices, speech, transcription, and memory search are separate
 settings. A working chat connection does not automatically configure every other
@@ -38,17 +38,6 @@ is focused immediately. Enter sends, Shift+Enter adds a line, and Escape closes
 the popup. Hold Space while the empty message box is focused to talk. The Screen,
 Window, and File buttons attach context to the next message; Window opens the
 COSMIC screenshot picker.
-
-## Build a PETEY Plus plan
-
-Open **PETEY Plus** to choose a recurring contribution, generation quality, and preferred
-mix of Chat, Images, Video, and Voice. PETEY rebalances the mix sliders and updates
-the estimated capabilities added by each payment as you move them. Unused AI
-balance carries forward rather than resetting on the billing date. Contributions
-start at $5 and move in $5 steps; with light use, one $5 contribution could last
-several months. Saving stores a
-planning preview on the device. Checkout and shared provider access require the
-future hosted PETEY Cloud gateway and are clearly marked as unavailable.
 
 ## Open PETEY on a phone
 

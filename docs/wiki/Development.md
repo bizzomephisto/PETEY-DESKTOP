@@ -22,7 +22,6 @@ contracts, and focused test commands.
 - `petey/desktop_memory.py` — SQLite memory and RAG
 - `petey/desktop_state.py` — settings, identity, and conversations
 - `petey/media_service.py` and `petey/media_jobs.py` — media operations and queue
-- `petey/workspace.py` — approved-folder operations and proposals
 - `petey/mcp_client.py` — read-only Filesystem MCP integration
 - `petey/addons.py` — external add-on discovery and lifecycle
 - `petey/discord_*.py` and `petey/room_chat.py` — built-in Discord integration

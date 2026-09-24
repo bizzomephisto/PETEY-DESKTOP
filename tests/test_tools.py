@@ -60,6 +60,32 @@ class ToolRegistryTests(unittest.TestCase):
             registry.execute("echo", {"text": "hi"}, "allowed"), {"text": "hi"}
         )
 
+    def test_required_tool_hides_unrelated_autonomous_tools_for_direct_request(self):
+        optional = ToolSpec(
+            name="generate_image",
+            description="Generate an image.",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda _arguments: {"queued": True},
+        )
+        camera = ToolSpec(
+            name="look_at_webcam",
+            description="Inspect an armed camera.",
+            parameters={"type": "object", "properties": {}},
+            handler=lambda _arguments: {"visible": True},
+            available_when=lambda message: "desk cam" in message.casefold(),
+            required_when=lambda message: "desk cam" in message.casefold(),
+        )
+        registry = ToolRegistry([optional, camera])
+
+        self.assertEqual(
+            [item["function"]["name"] for item in registry.schemas_for("Check the Desk Cam")],
+            ["look_at_webcam"],
+        )
+        self.assertEqual(
+            [item["function"]["name"] for item in registry.schemas_for("Surprise me")],
+            ["generate_image"],
+        )
+
     def test_required_tool_argument_accepts_nested_lists(self):
         tool = ToolSpec(
             name="matrix",

@@ -20,11 +20,11 @@
                         <p id="voice-input-note" class="hint">Audio stays off until microphone input is enabled.</p>
                         <div class="inline-actions"><button id="save-voice-input" class="primary-button" type="button">Save microphone settings</button><span id="voice-input-settings-status" class="wide-status"></span></div>
                         <div class="wake-cue-settings">
-                            <div><strong>Wake acknowledgements</strong><p>When PETEY hears his wake name followed by a pause, he plays a preloaded voice clip or an immediate local chime and listens for the request. Choose spoken “Yeah?” only if you prefer it; browser speech can start slowly. Continuing directly into a command skips the acknowledgement. Add WAV, MP3, OGG, OPUS, M4A, AAC, FLAC, or WEBM files to the voice folder.</p><code id="voice-cues-directory">Loading folder…</code></div>
+                            <div><strong>Wake acknowledgements</strong><p>When PETEY hears his wake name followed by a pause, he plays a preloaded voice clip or an immediate local chime and listens for the request. Choose spoken “Yeah?” only if you prefer it; browser speech can start slowly. Continuing directly into a command skips the acknowledgement. Add WAV, MP3, OGG, OPUS, M4A, AAC, FLAC, or WEBM files to the voice folder. Put interruption responses in its <code>interrupts/</code> subfolder; PETEY chooses randomly and falls back to <code>voice-cues/default/interrupts/</code>.</p><code id="voice-cues-directory">Loading folder…</code></div>
                             <button id="open-voice-cues-folder" class="secondary-button" type="button">Open cue folder</button>
                             <span id="voice-cues-status" class="wide-status"></span>
                         </div>
-                        <p class="hint">Voice activity and the wake name are detected on this machine. Completed utterance clips are sent to the selected transcription provider and are not added to Petey's gallery or memory.</p>
+                        <p class="hint">Voice activity and the wake name are detected on this machine. In wake-name mode, saying “Petey” while he is speaking stops the current reply, plays a short apology when sound is enabled, and listens for you. Completed utterance clips are sent to the selected transcription provider and are not added to Petey's gallery or memory.</p>
 
                     <p class="hint">Need a different transcription service? <button class="text-button" data-settings-view="providers" data-settings-target="transcription-model-settings" type="button">Choose transcription provider →</button></p></div>
                 </details>

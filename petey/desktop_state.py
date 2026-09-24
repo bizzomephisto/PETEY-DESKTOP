@@ -156,11 +156,13 @@ class DesktopState:
         if str(settings["preferences"].get("theme")) not in {"midnight", "ocean", "forest", "paper"}:
             settings["preferences"]["theme"] = "midnight"
             changed = True
-        if not isinstance(settings.get("workspaces"), list):
-            settings["workspaces"] = []
+        if not isinstance(settings.get("approved_folders"), list):
+            legacy_folders = settings.get("workspaces")
+            settings["approved_folders"] = legacy_folders if isinstance(legacy_folders, list) else []
             changed = True
-        if "active_workspace_id" not in settings:
-            settings["active_workspace_id"] = ""
+        if "workspaces" in settings or "active_workspace_id" in settings:
+            settings.pop("workspaces", None)
+            settings.pop("active_workspace_id", None)
             changed = True
         if not isinstance(settings.get("tools"), dict):
             settings["tools"] = {}
@@ -280,6 +282,9 @@ class DesktopState:
                     changed = True
         speech_defaults = {
             "provider": "automatic",
+            "provider_selection_version": 2,
+            "deapi_model": "Qwen3_TTS_12Hz_1_7B_CustomVoice",
+            "deapi_voice": "Vivian",
             "gemini_model": "gemini-3.1-flash-tts-preview",
             "gemini_voice": "Kore",
             "openai_model": "gpt-4o-mini-tts",
@@ -291,12 +296,16 @@ class DesktopState:
         if not isinstance(settings.get("speech"), dict):
             settings["speech"] = copy.deepcopy(speech_defaults)
             changed = True
+        legacy_speech_provider = "provider_selection_version" not in settings["speech"]
         for key, value in speech_defaults.items():
             if key not in settings["speech"]:
                 settings["speech"][key] = value
                 changed = True
-        if settings["speech"].get("provider") == "deapi":
+        if legacy_speech_provider and settings["speech"].get("provider") == "deapi":
             settings["speech"]["provider"] = "automatic"
+            changed = True
+        if legacy_speech_provider:
+            settings["speech"]["provider_selection_version"] = 2
             changed = True
         for saved_persona in settings["saved_personas"]:
             if not isinstance(saved_persona, dict):
@@ -305,7 +314,11 @@ class DesktopState:
             if not isinstance(saved_speech, dict):
                 saved_persona["speech"] = copy.deepcopy(settings["speech"])
                 changed = True
-            elif saved_speech.get("provider") == "deapi":
+            elif (
+                legacy_speech_provider
+                and saved_speech.get("provider") == "deapi"
+                and "provider_selection_version" not in saved_speech
+            ):
                 saved_speech["provider"] = "automatic"
                 changed = True
         legacy_gemini_voice_input = (
@@ -317,11 +330,18 @@ class DesktopState:
             isinstance(settings.get("voice_input"), dict)
             and "latency_tuning_version" not in settings["voice_input"]
         )
+        legacy_transcription_provider = (
+            isinstance(settings.get("voice_input"), dict)
+            and "provider_selection_version" not in settings["voice_input"]
+        )
         voice_input_defaults = {
             "mode": "disabled",
-            "provider": "deapi",
+            "muted": False,
+            "provider": "automatic",
             "model": "WhisperLargeV3",
             "gemini_model": "gemini-3.5-transcribe",
+            "local_whisper_model": "small",
+            "local_whisper_device": "auto",
             "wake_word": "Petey",
             "device_id": "",
             "sensitivity": "normal",
@@ -330,6 +350,7 @@ class DesktopState:
             "submit_silence_ms": 600,
             "follow_up_seconds": 8,
             "latency_tuning_version": 1,
+            "provider_selection_version": 3,
         }
         if not isinstance(settings.get("voice_input"), dict):
             settings["voice_input"] = copy.deepcopy(voice_input_defaults)
@@ -337,6 +358,13 @@ class DesktopState:
         for key, value in voice_input_defaults.items():
             if key not in settings["voice_input"]:
                 settings["voice_input"][key] = value
+                changed = True
+        if settings["voice_input"].get("provider") == "local":
+            settings["voice_input"]["provider"] = "local_whisper"
+            changed = True
+        for obsolete_key in ("local_base_url", "local_model"):
+            if obsolete_key in settings["voice_input"]:
+                settings["voice_input"].pop(obsolete_key, None)
                 changed = True
         if legacy_voice_latency:
             if settings["voice_input"].get("wake_ack_delay_ms") == 500:
@@ -349,8 +377,13 @@ class DesktopState:
             settings["voice_input"]["gemini_model"] = settings["voice_input"].get(
                 "model", "gemini-3.5-transcribe"
             )
-            settings["voice_input"]["provider"] = "deapi"
+            settings["voice_input"]["provider"] = "automatic"
             settings["voice_input"]["model"] = "WhisperLargeV3"
+            changed = True
+        elif legacy_transcription_provider:
+            if settings["voice_input"].get("provider") == "deapi":
+                settings["voice_input"]["provider"] = "automatic"
+            settings["voice_input"]["provider_selection_version"] = 3
             changed = True
         if not isinstance(settings.get("memory_provider"), dict):
             settings["memory_provider"] = {
@@ -632,14 +665,10 @@ class DesktopState:
         return copy.deepcopy(tools[tool_id])
 
     @property
-    def workspaces(self) -> list[dict]:
-        return copy.deepcopy(self.settings.get("workspaces", []))
+    def approved_folders(self) -> list[dict]:
+        return copy.deepcopy(self.settings.get("approved_folders", []))
 
-    @property
-    def active_workspace_id(self) -> str:
-        return str(self.settings.get("active_workspace_id") or "")
-
-    def add_workspace(self, path: str) -> dict:
+    def add_approved_folder(self, path: str) -> dict:
         try:
             root = Path(str(path or "")).expanduser().resolve(strict=True)
         except (OSError, RuntimeError) as exc:
@@ -647,49 +676,33 @@ class DesktopState:
         if not root.is_dir():
             raise ValueError("Choose an existing folder.")
         if root == Path(root.anchor):
-            raise ValueError("The filesystem root cannot be approved as a workspace.")
+            raise ValueError("The filesystem root cannot be approved.")
         normalized = str(root)
         with self._lock:
             existing = next(
-                (item for item in self.settings["workspaces"] if item.get("path") == normalized),
+                (item for item in self.settings["approved_folders"] if item.get("path") == normalized),
                 None,
             )
             if existing:
-                self.settings["active_workspace_id"] = existing["id"]
-                self._write_json(self.settings_path, self.settings)
                 return copy.deepcopy(existing)
-            workspace = {
-                "id": f"workspace-{uuid.uuid4().hex}",
+            folder = {
+                "id": f"folder-{uuid.uuid4().hex}",
                 "name": root.name or normalized,
                 "path": normalized,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
-            self.settings["workspaces"].append(workspace)
-            self.settings["active_workspace_id"] = workspace["id"]
+            self.settings["approved_folders"].append(folder)
             self._write_json(self.settings_path, self.settings)
-        return copy.deepcopy(workspace)
+        return copy.deepcopy(folder)
 
-    def select_workspace(self, workspace_id: str) -> dict:
+    def remove_approved_folder(self, folder_id: str) -> dict:
         with self._lock:
-            match = next((item for item in self.settings["workspaces"] if item["id"] == workspace_id), None)
+            match = next((item for item in self.settings["approved_folders"] if item["id"] == folder_id), None)
             if match is None:
                 raise KeyError("Approved folder not found.")
-            self.settings["active_workspace_id"] = workspace_id
-            self._write_json(self.settings_path, self.settings)
-        return copy.deepcopy(match)
-
-    def remove_workspace(self, workspace_id: str) -> dict:
-        with self._lock:
-            match = next((item for item in self.settings["workspaces"] if item["id"] == workspace_id), None)
-            if match is None:
-                raise KeyError("Approved folder not found.")
-            self.settings["workspaces"] = [
-                item for item in self.settings["workspaces"] if item["id"] != workspace_id
+            self.settings["approved_folders"] = [
+                item for item in self.settings["approved_folders"] if item["id"] != folder_id
             ]
-            if self.active_workspace_id == workspace_id:
-                self.settings["active_workspace_id"] = (
-                    self.settings["workspaces"][0]["id"] if self.settings["workspaces"] else ""
-                )
             self._write_json(self.settings_path, self.settings)
         return copy.deepcopy(match)
 
@@ -1156,14 +1169,26 @@ class DesktopState:
 
     @staticmethod
     def _validated_speech(base: dict, changes: dict) -> dict:
+        from petey.deapi_tts import DEAPI_TTS_MODEL, DEAPI_TTS_VOICES
         from petey.gemini_tts import GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
         from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
 
         current = copy.deepcopy(base)
         provider = str(changes.get("provider") or current.get("provider") or "automatic")
-        if provider not in {"disabled", "automatic", "gemini", "openai"}:
+        if provider not in {"disabled", "automatic", "deapi", "gemini", "openai"}:
             raise ValueError("Unsupported speech provider.")
         current["provider"] = provider
+        current["provider_selection_version"] = 2
+        if "deapi_model" in changes:
+            model = str(changes.get("deapi_model") or "").strip()
+            if model != DEAPI_TTS_MODEL:
+                raise ValueError("Choose a supported deAPI TTS model.")
+            current["deapi_model"] = model
+        if "deapi_voice" in changes:
+            voice = str(changes.get("deapi_voice") or "").strip()
+            if voice not in DEAPI_TTS_VOICES:
+                raise ValueError("Choose a supported deAPI voice.")
+            current["deapi_voice"] = voice
         if "gemini_model" in changes:
             model = str(changes.get("gemini_model") or "").strip()
             if model not in GEMINI_TTS_MODELS:
@@ -1206,13 +1231,17 @@ class DesktopState:
         if mode not in {"disabled", "push_to_talk", "always_on", "wake_word"}:
             raise ValueError("Unsupported microphone mode.")
         current["mode"] = mode
-        provider = str(changes.get("provider") or current.get("provider") or "deapi")
-        if provider not in {"deapi", "gemini"}:
+        if "muted" in changes:
+            current["muted"] = bool(changes["muted"])
+        provider = str(changes.get("provider") or current.get("provider") or "automatic")
+        if provider not in {"automatic", "deapi", "gemini", "local_whisper"}:
             raise ValueError("Unsupported transcription provider.")
         current["provider"] = provider
-        if "model" in changes:
+        current["provider_selection_version"] = 3
+        if "model" in changes and provider != "local_whisper":
             model = str(changes.get("model") or "").strip()
-            supported = {"WhisperLargeV3"} if provider == "deapi" else set(GEMINI_STT_MODELS)
+            supported = ({"WhisperLargeV3"} if provider in {"automatic", "deapi"}
+                         else set(GEMINI_STT_MODELS))
             if model not in supported:
                 raise ValueError("Choose a supported transcription model.")
             current["model"] = model
@@ -1221,6 +1250,20 @@ class DesktopState:
             if model not in GEMINI_STT_MODELS:
                 raise ValueError("Choose a supported Gemini transcription model.")
             current["gemini_model"] = model
+        if "local_whisper_model" in changes:
+            from petey.local_whisper import LOCAL_WHISPER_MODELS
+
+            model = str(changes.get("local_whisper_model") or "").strip()
+            if model not in LOCAL_WHISPER_MODELS:
+                raise ValueError("Choose a supported Local Whisper model.")
+            current["local_whisper_model"] = model
+        if "local_whisper_device" in changes:
+            from petey.local_whisper import LOCAL_WHISPER_DEVICES
+
+            device = str(changes.get("local_whisper_device") or "").strip().lower()
+            if device not in LOCAL_WHISPER_DEVICES:
+                raise ValueError("Choose Automatic, CPU, or NVIDIA CUDA.")
+            current["local_whisper_device"] = device
         if "wake_word" in changes:
             wake_word = str(changes.get("wake_word") or "Petey").strip()[:40]
             if not wake_word:

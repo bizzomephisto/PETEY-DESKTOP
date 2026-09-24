@@ -15,7 +15,9 @@ class AddonEventBrokerTests(unittest.TestCase):
         broker = AddonEventBroker(handle)
         self.addCleanup(broker.close)
         result = broker.emit(
-            "spotify", "Track changed", conversation_id="main", speak=True
+            "spotify", "Track changed", conversation_id="main", speak=True,
+            metadata={"chat_image_url": "https://i.scdn.co/image/example"},
+            user_initiated=True,
         )
         duplicate = broker.emit(
             "spotify", "Track changed", conversation_id="main", speak=True
@@ -28,8 +30,13 @@ class AddonEventBrokerTests(unittest.TestCase):
             time.sleep(0.01)
             payload = broker.events_after(0)
         self.assertEqual(len(received), 1)
+        self.assertTrue(received[0]["user_initiated"])
         self.assertEqual(payload["events"][0]["text"], "Now playing Kind of Blue.")
         self.assertTrue(payload["events"][0]["speak"])
+        self.assertEqual(
+            payload["events"][0]["metadata"]["chat_image_url"],
+            "https://i.scdn.co/image/example",
+        )
 
     def test_invalid_event_is_rejected(self):
         broker = AddonEventBroker(lambda _event: {"text": "unused"})

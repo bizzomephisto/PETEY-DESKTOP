@@ -376,8 +376,31 @@ class MediaJobManager:
             await client.close()
 
     async def _execute_speech(self, job: dict, speech: dict) -> tuple[dict, dict]:
-        """Generate speech, using Gemini -> OpenAI in automatic mode."""
+        """Generate speech through deAPI Media or PETEY's configured chat voice."""
         selected = str(speech.get("provider") or "automatic")
+        if selected == "deapi":
+            client = DeapiClient(
+                api_key=(job.get("_ai_config") or {}).get("deapi", {}).get("api_key"),
+                progress_callback=lambda update: self._update_progress(job["id"], update),
+            )
+            try:
+                result = await MediaService(client).generate(
+                    operation="txt2audio",
+                    prompt=job["prompt"],
+                    installation_id=job["_installation_id"],
+                    model_slug=job["model_slug"],
+                    source=None,
+                    parameters=job["_parameters"],
+                )
+            finally:
+                await client.close()
+            result["tts_provider"] = "deapi"
+            gallery_item = None
+            if job.get("_save_to_gallery", True):
+                gallery_item = await self.gallery.capture(
+                    job["id"], result, job["prompt"], job["model_slug"],
+                )
+            return result, gallery_item
         providers = ["gemini", "openai"] if selected == "automatic" else [selected]
         failures = []
         result = None
@@ -390,7 +413,7 @@ class MediaJobManager:
             })
             try:
                 if provider == "gemini":
-                    used_model = speech.get("gemini_model", "")
+                    used_model = job.get("model_slug") or speech.get("gemini_model", "")
                     voice = (
                         job["_parameters"].get("voice")
                         if selected == "gemini" else speech.get("gemini_voice", "Kore")
@@ -398,7 +421,7 @@ class MediaJobManager:
                     result = GeminiTTS(job.get("_ai_config") or {}).generate(
                         job["prompt"][:32000], used_model,
                         voice,
-                        speech.get("style", ""),
+                        job["_parameters"].get("style") or speech.get("style", ""),
                         bool(speech.get("consistent_voice", True)),
                     )
                 elif provider == "openai":

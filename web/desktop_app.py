@@ -26,13 +26,16 @@ from petey.config import PERSONA_PRESETS
 from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
 from petey.deapi_stt import DeapiSTT, DeapiSTTError, DEAPI_STT_MODELS
+from petey.deapi_tts import DEAPI_TTS_MODEL, DEAPI_TTS_VOICES
 from petey.gemini_tts import GeminiTTS, GeminiTTSError, GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
 from petey.gemini_stt import GeminiSTT, GeminiSTTError, GEMINI_STT_MODELS
+from petey.local_whisper import (
+    LOCAL_WHISPER_MODELS, LocalWhisper, LocalWhisperError,
+)
 from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.mcp_client import FilesystemMCPManager, MCPError
-from petey.workspace import WorkspaceError, WorkspaceService
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.voice_cues import VoiceCueLibrary
 from petey.wake_detector import LocalWakeDetector, WakeDetectorError
@@ -79,7 +82,6 @@ def create_desktop_app(
     gallery: MediaGallery | None = None,
     job_manager: MediaJobManager | None = None,
     memory: DesktopMemory | None = None,
-    workspace_service: WorkspaceService | None = None,
     mcp_manager: FilesystemMCPManager | None = None,
     discord_bridge: DiscordBridge | None = None,
     addon_manager: AddonManager | None = None,
@@ -107,6 +109,7 @@ def create_desktop_app(
         current: DesktopState = app.config["PETEY_STATE"]
         catalog = library.catalog(speech or current.conversation_speech)
         source_voice = catalog["source_voice"]
+        interrupt_source_voice = catalog["interrupt_source_voice"]
         return {
             **catalog,
             "clips": [
@@ -121,6 +124,18 @@ def create_desktop_app(
                 }
                 for path in catalog["clips"]
             ],
+            "interrupt_clips": [
+                {
+                    "name": path.name,
+                    "url": url_for(
+                        "desktop_voice_cue_file",
+                        voice=interrupt_source_voice,
+                        filename=f"interrupts/{path.name}",
+                        v=path.stat().st_mtime_ns,
+                    ),
+                }
+                for path in catalog["interrupt_clips"]
+            ],
         }
     app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
     app.config["PETEY_STATE"] = state or DesktopState()
@@ -129,9 +144,6 @@ def create_desktop_app(
         app.config["PETEY_STATE"].data_dir / "gallery"
     )
     app.config["PETEY_MEDIA_JOBS"] = job_manager
-    app.config["PETEY_WORKSPACES"] = workspace_service or WorkspaceService(
-        app.config["PETEY_STATE"]
-    )
     app.config["PETEY_MCP"] = mcp_manager or FilesystemMCPManager(
         app.config["PETEY_STATE"]
     )
@@ -216,23 +228,38 @@ def create_desktop_app(
         if conversation_id not in {str(item.get("id")) for item in current.conversations}:
             raise ValueError("The target conversation no longer exists.")
         addon_id = str(event["addon_id"])
-        prompt = (
-            f"BACKGROUND ADD-ON EVENT from {addon_id}. The user did not type this event, so do "
-            "not imply that they did and do not mention a hidden prompt. Respond directly to the "
-            "user with the useful update requested by the event. Do not call tools or claim any "
-            f"action beyond the event data.\n\nEVENT DATA:\n{event['message']}"
-        )
+        user_initiated = bool(event.get("user_initiated"))
+        if user_initiated:
+            prompt = str(event["message"])
+        else:
+            prompt = (
+                f"BACKGROUND ADD-ON EVENT from {addon_id}. The user did not type this event, so do "
+                "not imply that they did and do not mention a hidden prompt. Respond directly to the "
+                "user with the useful update requested by the event. Do not call tools or claim any "
+                f"action beyond the event data.\n\nEVENT DATA:\n{event['message']}"
+            )
         identity = AssistantIdentity(
             installation_id=current.installation_id,
             conversation_id=conversation_id,
-            person_id=f"ADDON:{addon_id}",
-            display_name=addon_id,
+            person_id=current.person_id if user_initiated else f"ADDON:{addon_id}",
+            display_name=current.display_name if user_initiated else addon_id,
             surface=event["surface"],
         )
+        tools = None
+        if user_initiated:
+            tools = build_desktop_tool_registry(
+                current,
+                get_media_jobs,
+                app.config["PETEY_MEMORY"],
+                mcp_manager=app.config["PETEY_MCP"],
+                addon_manager=app.config["PETEY_ADDONS"],
+                surface=identity.surface,
+            )
         service = AssistantService(
             current.conversation_system_prompt,
             current.ai_provider,
             app.config["PETEY_MEMORY"],
+            tool_registry=tools,
         )
         reply = app.config["PETEY_RUNTIME"].call(service.respond(
             prompt,
@@ -241,6 +268,7 @@ def create_desktop_app(
                 **event.get("metadata", {}),
                 "hidden_from_chat": True,
                 "addon_event_source": addon_id,
+                "user_initiated_addon_action": user_initiated,
             },
             reply_metadata={
                 **event.get("metadata", {}),
@@ -291,8 +319,6 @@ def create_desktop_app(
                 "speech": speech,
                 "voice_input": current.voice_input,
                 "installation_id": current.installation_id,
-                "workspaces": current.workspaces,
-                "active_workspace_id": current.active_workspace_id,
                 "messages": conversation_messages_json(current),
                 "addon_event_cursor": app.config["PETEY_ADDON_EVENTS"].latest_id,
                 "voice_cues": voice_cue_payload(speech),
@@ -478,111 +504,28 @@ def create_desktop_app(
         except (MCPError, OSError) as exc:
             return jsonify({"error": str(exc), "filesystem": app.config["PETEY_MCP"].public_status()}), 400
 
-    @app.route("/api/desktop/workspaces", methods=["GET", "POST"])
-    def desktop_workspaces():
+    @app.route("/api/desktop/tools/filesystem/folders", methods=["GET", "POST"])
+    def desktop_filesystem_folders():
         current: DesktopState = app.config["PETEY_STATE"]
         if request.method == "GET":
-            return jsonify(
-                {"workspaces": current.workspaces, "active_workspace_id": current.active_workspace_id}
-            )
+            return jsonify({"folders": current.approved_folders})
         payload = request.get_json(silent=True) or {}
         try:
-            workspace = current.add_workspace(payload.get("path", ""))
-            return jsonify(
-                {"workspace": workspace, "workspaces": current.workspaces,
-                 "active_workspace_id": current.active_workspace_id}
-            ), 201
+            folder = current.add_approved_folder(payload.get("path", ""))
+            app.config["PETEY_MCP"].disconnect()
+            return jsonify({"folder": folder, "folders": current.approved_folders}), 201
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
-    @app.put("/api/desktop/workspaces/<workspace_id>/select")
-    def desktop_select_workspace(workspace_id):
+    @app.delete("/api/desktop/tools/filesystem/folders/<folder_id>")
+    def desktop_remove_filesystem_folder(folder_id):
         current: DesktopState = app.config["PETEY_STATE"]
         try:
-            return jsonify({"workspace": current.select_workspace(workspace_id)})
+            removed = current.remove_approved_folder(folder_id)
+            app.config["PETEY_MCP"].disconnect()
+            return jsonify({"removed": removed, "folders": current.approved_folders})
         except KeyError as exc:
             return jsonify({"error": str(exc).strip("'")}), 404
-
-    @app.delete("/api/desktop/workspaces/<workspace_id>")
-    def desktop_remove_workspace(workspace_id):
-        current: DesktopState = app.config["PETEY_STATE"]
-        try:
-            removed = current.remove_workspace(workspace_id)
-            return jsonify(
-                {"removed": removed, "workspaces": current.workspaces,
-                 "active_workspace_id": current.active_workspace_id}
-            )
-        except KeyError as exc:
-            return jsonify({"error": str(exc).strip("'")}), 404
-
-    @app.get("/api/desktop/workspace/tree")
-    def desktop_workspace_tree():
-        try:
-            return jsonify(app.config["PETEY_WORKSPACES"].list_directory(
-                request.args.get("workspace_id", ""), request.args.get("path", "")
-            ))
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    @app.get("/api/desktop/workspace/file")
-    def desktop_workspace_file():
-        try:
-            return jsonify(app.config["PETEY_WORKSPACES"].read_file(
-                request.args.get("workspace_id", ""), request.args.get("path", "")
-            ))
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    @app.put("/api/desktop/workspace/file")
-    def desktop_save_workspace_file():
-        payload = request.get_json(silent=True) or {}
-        try:
-            result = app.config["PETEY_WORKSPACES"].write_file(
-                payload.get("workspace_id", ""), payload.get("path", ""),
-                str(payload.get("content", "")), payload.get("expected_sha256"),
-            )
-            return jsonify({"file": result})
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    @app.post("/api/desktop/workspace/command")
-    def desktop_propose_workspace_command():
-        payload = request.get_json(silent=True) or {}
-        try:
-            proposal = app.config["PETEY_WORKSPACES"].propose_command(
-                payload.get("workspace_id", ""), payload.get("command", ""), payload.get("cwd", "")
-            )
-            return jsonify({"proposal": proposal}), 201
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    @app.post("/api/desktop/workspace/agent")
-    def desktop_workspace_agent():
-        payload = request.get_json(silent=True) or {}
-        try:
-            return jsonify(app.config["PETEY_WORKSPACES"].agent_proposals(
-                payload.get("workspace_id", ""), payload.get("instruction", ""),
-                payload.get("selected_path", ""),
-            ))
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 400
-        except AIProviderError as exc:
-            return jsonify({"error": str(exc)}), 502
-
-    @app.post("/api/desktop/workspace/proposals/<proposal_id>/approve")
-    def desktop_approve_workspace_proposal(proposal_id):
-        try:
-            return jsonify(app.config["PETEY_WORKSPACES"].approve(proposal_id))
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 400
-
-    @app.delete("/api/desktop/workspace/proposals/<proposal_id>")
-    def desktop_reject_workspace_proposal(proposal_id):
-        try:
-            app.config["PETEY_WORKSPACES"].reject(proposal_id)
-            return jsonify({"status": "rejected"})
-        except WorkspaceError as exc:
-            return jsonify({"error": str(exc)}), 404
 
     @app.get("/api/desktop/messages")
     def desktop_messages():
@@ -782,14 +725,47 @@ def create_desktop_app(
         return jsonify({
             "configuration": current.voice_input,
             "models": {
+                "automatic": list(DEAPI_STT_MODELS),
                 "deapi": list(DEAPI_STT_MODELS),
                 "gemini": list(GEMINI_STT_MODELS),
+                "local_whisper": list(LOCAL_WHISPER_MODELS),
             },
             "deapi_has_api_key": provider_key_status()["deapi"]["has_api_key"],
             "gemini_has_api_key": bool(
                 str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
             ),
         })
+
+    @app.route("/api/desktop/voice-input/local-whisper", methods=["GET", "POST"])
+    def desktop_local_whisper():
+        current: DesktopState = app.config["PETEY_STATE"]
+        configuration = current.voice_input
+        payload = request.get_json(silent=True) or {}
+        model = str(
+            payload.get("model") or request.args.get("model")
+            or configuration.get("local_whisper_model") or "small"
+        )
+        device = str(
+            payload.get("device") or configuration.get("local_whisper_device") or "auto"
+        )
+        engine = LocalWhisper(current.data_dir)
+        try:
+            if request.method == "POST":
+                current.update_voice_input({
+                    "local_whisper_model": model,
+                    "local_whisper_device": device,
+                })
+                status = engine.download(model, device)
+            else:
+                status = engine.status(model)
+            return jsonify({
+                **status,
+                "models": list(LOCAL_WHISPER_MODELS),
+                "setup_url": "https://github.com/SYSTRAN/faster-whisper#installation",
+                "install_command": "peteyvenv/bin/python -m pip install faster-whisper",
+            })
+        except (LocalWhisperError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.post("/api/desktop/voice-input/transcribe")
     def desktop_voice_input_transcribe():
@@ -807,9 +783,20 @@ def create_desktop_app(
             return jsonify({"error": "The microphone recording exceeds 20 MB."}), 413
         wake_word = str(configuration.get("wake_word") or "Petey")
         mime = uploaded.mimetype or "audio/wav"
-        provider = str(configuration.get("provider") or "deapi")
+        provider = str(configuration.get("provider") or "automatic")
         failures = []
-        if provider == "deapi":
+        if provider == "local_whisper":
+            try:
+                transcript = LocalWhisper(current.data_dir).transcribe(
+                    audio, mime,
+                    str(configuration.get("local_whisper_model") or "small"),
+                    str(configuration.get("local_whisper_device") or "auto"),
+                    vocabulary=[wake_word],
+                )
+                return jsonify({"transcript": transcript, "provider": "local_whisper"})
+            except LocalWhisperError as exc:
+                return jsonify({"error": f"Transcription failed — Local Whisper: {exc}"}), 502
+        if provider in {"automatic", "deapi"}:
             try:
                 transcript = DeapiSTT(api_key=current.ai_provider.get("deapi", {}).get("api_key")).transcribe(
                     audio, mime,
@@ -818,7 +805,9 @@ def create_desktop_app(
                 )
                 return jsonify({"transcript": transcript, "provider": "deapi"})
             except DeapiSTTError as exc:
-                failures.append(str(exc))
+                failures.append(f"deAPI: {exc}")
+                if provider == "deapi":
+                    return jsonify({"error": "Transcription failed — " + " | ".join(failures)}), 502
         try:
             transcript = GeminiSTT({
                 "gemini": current.ai_provider.get("gemini", {})
@@ -829,7 +818,7 @@ def create_desktop_app(
             )
             return jsonify({"transcript": transcript, "provider": "gemini"})
         except GeminiSTTError as exc:
-            failures.append(str(exc))
+            failures.append(f"Gemini: {exc}")
             return jsonify({"error": "Transcription failed — " + " | ".join(failures)}), 502
 
     @app.post("/api/desktop/voice-input/wake")
@@ -862,7 +851,7 @@ def create_desktop_app(
     def desktop_voice_cues():
         return jsonify(voice_cue_payload())
 
-    @app.get("/api/desktop/voice-cues/file/<voice>/<filename>")
+    @app.get("/api/desktop/voice-cues/file/<voice>/<path:filename>")
     def desktop_voice_cue_file(voice: str, filename: str):
         try:
             path = app.config["PETEY_VOICE_CUES"].resolve(voice, filename)
@@ -1071,6 +1060,12 @@ def create_desktop_app(
         return jsonify({
             "configuration": current.speech,
             "voice_cues": voice_cue_payload(current.speech),
+            "deapi_has_api_key": provider_key_status()["deapi"]["has_api_key"],
+            "deapi_models": [DEAPI_TTS_MODEL],
+            "deapi_voices": [
+                {"name": name, "description": description}
+                for name, description in DEAPI_TTS_VOICES.items()
+            ],
             "gemini_has_api_key": bool(
                 gemini.get("api_key") or os.getenv("GEMINI_API_KEY")
             ),
@@ -1104,7 +1099,9 @@ def create_desktop_app(
         if provider == "automatic" and bool(payload.get("skip_gemini")):
             speech = {**speech, "provider": "openai"}
             provider = "openai"
-        if provider in {"automatic", "gemini"}:
+        if provider == "deapi":
+            model_slug = speech.get("deapi_model", DEAPI_TTS_MODEL)
+        elif provider in {"automatic", "gemini"}:
             model_slug = speech.get("gemini_model", "")
         elif provider == "openai":
             model_slug = speech.get("openai_model", "")
@@ -1117,7 +1114,7 @@ def create_desktop_app(
                 source=None,
                 parameters={
                     "voice": speech.get({
-                        "gemini": "gemini_voice", "openai": "openai_voice",
+                        "deapi": "deapi_voice", "gemini": "gemini_voice", "openai": "openai_voice",
                     }.get(provider, "gemini_voice")),
                     "style": speech.get("style", ""),
                 },
@@ -1425,15 +1422,19 @@ def create_desktop_app(
         selected_models = {
             operation: current.selected_model(operation) for operation in operations
         }
-        if speech.get("provider") == "gemini":
-            if selected_models["txt2audio"] not in GEMINI_TTS_MODELS:
-                selected_models["txt2audio"] = speech.get("gemini_model", "")
         return jsonify(
             {
                 "operations": operations,
                 "configured": bool(ai_provider.get("deapi", {}).get("api_key") or service.client.api_key),
                 "selected_models": selected_models,
                 "speech": speech,
+                "deapi_speech": {
+                    "default_model": DEAPI_TTS_MODEL,
+                    "voices": [
+                        {"name": name, "description": description}
+                        for name, description in DEAPI_TTS_VOICES.items()
+                    ],
+                },
             }
         )
 
@@ -1441,13 +1442,6 @@ def create_desktop_app(
     def desktop_media_models(operation):
         try:
             current: DesktopState = app.config["PETEY_STATE"]
-            if operation == "txt2audio" and current.speech.get("provider") == "disabled":
-                return jsonify({"operation": operation, "models": []})
-            if operation == "txt2audio" and current.speech.get("provider") == "gemini":
-                return jsonify({
-                    "operation": operation,
-                    "models": [{"slug": model, "name": model} for model in GEMINI_TTS_MODELS],
-                })
             models = app.config["PETEY_RUNTIME"].call(
                 media_provider_request("models", operation), timeout=90
             )
@@ -1556,6 +1550,16 @@ def create_desktop_app(
                     content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                     data=path.read_bytes(),
                 )
+            tts_provider = str(parameters.get("tts_provider") or "deapi")
+            if operation == "txt2audio" and tts_provider not in {"deapi", "gemini"}:
+                raise ValueError("Choose deAPI or Gemini for media speech.")
+            speech_settings = current.speech
+            if operation == "txt2audio":
+                speech_settings = {
+                    **current.speech,
+                    "provider": tts_provider,
+                    "gemini_model": model_slug or current.speech.get("gemini_model", ""),
+                }
             job = get_media_jobs().submit(
                 operation=operation,
                 prompt=prompt,
@@ -1563,7 +1567,7 @@ def create_desktop_app(
                 model_slug=model_slug,
                 source=source,
                 parameters=parameters,
-                speech_settings=current.speech,
+                speech_settings=speech_settings,
                 ai_config={
                     "gemini": current.ai_provider.get("gemini", {}),
                     "openai": current.ai_provider.get("openai", {}),

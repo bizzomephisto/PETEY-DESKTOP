@@ -99,6 +99,25 @@ class DesktopStateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 state.update_tool("unknown", True)
 
+    def test_legacy_workspace_folders_migrate_to_approved_folders(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as folder:
+            state = DesktopState(directory)
+            settings = json.loads(state.settings_path.read_text(encoding="utf-8"))
+            settings["workspaces"] = [{
+                "id": "workspace-old", "name": "Old folder", "path": folder,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }]
+            settings["active_workspace_id"] = "workspace-old"
+            settings.pop("approved_folders", None)
+            state.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+            migrated = DesktopState(directory)
+            saved = json.loads(migrated.settings_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(migrated.approved_folders[0]["path"], folder)
+            self.assertNotIn("workspaces", saved)
+            self.assertNotIn("active_workspace_id", saved)
+
     def test_addon_enablement_defaults_and_persists(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
@@ -411,7 +430,7 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(memory["models"]["local"], "nomic-embed-text")
             self.assertEqual(memory["local_base_url"], "http://localhost:11434/v1")
 
-    def test_speech_provider_can_use_gemini_openai_or_be_disabled(self):
+    def test_speech_provider_can_use_deapi_gemini_openai_or_be_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             speech = state.update_speech({
@@ -437,11 +456,19 @@ class DesktopStateTests(unittest.TestCase):
             })
             self.assertEqual(openai["openai_voice"], "cedar")
             self.assertEqual(DesktopState(directory).speech["provider"], "openai")
+            deapi = state.update_speech({
+                "provider": "deapi",
+                "deapi_model": "Qwen3_TTS_12Hz_1_7B_CustomVoice",
+                "deapi_voice": "Vivian",
+            })
+            self.assertEqual(deapi["deapi_voice"], "Vivian")
+            self.assertEqual(DesktopState(directory).speech["provider"], "deapi")
 
     def test_legacy_deapi_speech_provider_is_migrated_to_automatic(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             settings = json.loads(state.settings_path.read_text(encoding="utf-8"))
+            settings["speech"].pop("provider_selection_version", None)
             settings["speech"]["deapi_voice"] = "af_sky"
             settings["saved_personas"][0] = {
                 "name": "Legacy", "system_prompt": "You are Legacy.",
@@ -462,14 +489,17 @@ class DesktopStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertEqual(state.voice_input["mode"], "disabled")
-            self.assertEqual(state.voice_input["provider"], "deapi")
+            self.assertFalse(state.voice_input["muted"])
+            self.assertEqual(state.voice_input["provider"], "automatic")
             self.assertEqual(state.voice_input["model"], "WhisperLargeV3")
+            self.assertEqual(state.voice_input["local_whisper_model"], "small")
+            self.assertEqual(state.voice_input["local_whisper_device"], "auto")
             self.assertEqual(state.voice_input["wake_ack_style"], "fast")
             self.assertEqual(state.voice_input["wake_ack_delay_ms"], 300)
             self.assertEqual(state.voice_input["submit_silence_ms"], 600)
             self.assertEqual(state.voice_input["follow_up_seconds"], 8)
             saved = state.update_voice_input({
-                "mode": "wake_word", "provider": "gemini",
+                "mode": "wake_word", "muted": True, "provider": "gemini",
                 "model": "gemini-3.5-transcribe", "gemini_model": "gemini-3.5-transcribe",
                 "wake_word": "Petey", "device_id": "usb-mic-1", "sensitivity": "high",
                 "wake_ack_style": "spoken",
@@ -477,6 +507,7 @@ class DesktopStateTests(unittest.TestCase):
                 "follow_up_seconds": 12,
             })
             self.assertEqual(saved["mode"], "wake_word")
+            self.assertTrue(saved["muted"])
             self.assertEqual(saved["device_id"], "usb-mic-1")
             self.assertEqual(saved["sensitivity"], "high")
             self.assertEqual(saved["wake_ack_style"], "spoken")
@@ -484,6 +515,7 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(saved["submit_silence_ms"], 950)
             self.assertEqual(saved["follow_up_seconds"], 12)
             self.assertEqual(DesktopState(directory).voice_input["wake_word"], "Petey")
+            self.assertTrue(DesktopState(directory).voice_input["muted"])
             with self.assertRaises(ValueError):
                 state.update_voice_input({"mode": "secret_recording"})
             with self.assertRaises(ValueError):
@@ -494,6 +526,45 @@ class DesktopStateTests(unittest.TestCase):
                 state.update_voice_input({"wake_ack_delay_ms": 50})
             with self.assertRaises(ValueError):
                 state.update_voice_input({"follow_up_seconds": 60})
+            private = state.update_voice_input({
+                "provider": "local_whisper", "local_whisper_model": "medium",
+                "local_whisper_device": "cpu",
+            })
+            self.assertEqual(private["local_whisper_model"], "medium")
+            self.assertEqual(private["local_whisper_device"], "cpu")
+            with self.assertRaises(ValueError):
+                state.update_voice_input({"provider": "local"})
+
+    def test_legacy_local_transcription_server_migrates_to_local_whisper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            settings = json.loads(state.settings_path.read_text(encoding="utf-8"))
+            settings["voice_input"].update({
+                "provider": "local",
+                "local_base_url": "http://localhost:1234/v1",
+                "local_model": "whisper-1",
+                "provider_selection_version": 2,
+            })
+            state.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+            migrated = DesktopState(directory).voice_input
+
+            self.assertEqual(migrated["provider"], "local_whisper")
+            self.assertNotIn("local_base_url", migrated)
+            self.assertNotIn("local_model", migrated)
+
+    def test_legacy_automatic_transcription_migrates_and_deapi_only_persists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            settings = json.loads(state.settings_path.read_text(encoding="utf-8"))
+            settings["voice_input"]["provider"] = "deapi"
+            settings["voice_input"].pop("provider_selection_version", None)
+            state.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+            migrated = DesktopState(directory)
+            self.assertEqual(migrated.voice_input["provider"], "automatic")
+            migrated.update_voice_input({"provider": "deapi", "model": "WhisperLargeV3"})
+            self.assertEqual(DesktopState(directory).voice_input["provider"], "deapi")
 
     def test_legacy_default_voice_timings_are_migrated_to_low_latency(self):
         with tempfile.TemporaryDirectory() as directory:

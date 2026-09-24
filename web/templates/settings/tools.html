@@ -1,13 +1,23 @@
-<section id="filesystem-tool-settings" class="settings-card tool-connection-card" data-settings-keywords="tools MCP filesystem files folders workspace connection permissions">
+<section id="filesystem-tool-settings" class="settings-card tool-connection-card" data-settings-keywords="tools MCP filesystem files folders connection permissions">
                     <div class="tool-connection-heading">
-                        <div class="tool-identity"><span class="tool-mark" aria-hidden="true">⌘</span><div><h2>Filesystem</h2><p>Read files in folders you have already approved in Workspace.</p></div></div>
+                        <div class="tool-identity"><span class="tool-mark" aria-hidden="true">⌘</span><div><h2>Filesystem</h2><p>Give Petey read-only access to folders you choose.</p></div></div>
                         <span id="filesystem-tool-badge" class="provider-badge">Off</span>
                     </div>
                     <label class="preference-row tool-enable-row"><span><strong>Let Petey use Filesystem</strong><small>Add read-only file tools to relevant conversations.</small></span><input id="filesystem-tool-enabled" type="checkbox" role="switch"></label>
-                    <div class="tool-access-summary"><strong>Folder access</strong><div id="filesystem-tool-roots" class="tool-root-list"><span class="muted">Loading approved folders…</span></div></div>
+                    <div class="tool-access-summary">
+                        <strong>Folder access</strong>
+                        <div id="filesystem-tool-roots" class="tool-root-list"><span class="muted">Loading approved folders…</span></div>
+                        <div class="inline-actions tool-folder-actions">
+                            <button id="add-filesystem-folder" class="secondary-button" type="button">＋ Add folder</button>
+                        </div>
+                        <div id="filesystem-folder-manual" class="tool-folder-manual" hidden>
+                            <input id="filesystem-folder-path" type="text" placeholder="/absolute/path/to/folder" aria-label="Folder path">
+                            <button id="approve-filesystem-folder" class="primary-button" type="button">Add folder</button>
+                            <button id="cancel-filesystem-folder" class="text-button" type="button">Cancel</button>
+                        </div>
+                    </div>
                     <div class="inline-actions">
                         <button id="test-filesystem-tool" class="secondary-button" type="button">Test connection</button>
-                        <button id="open-tools-workspace" class="text-button" type="button">Manage approved folders →</button>
                     </div>
                     <p class="hint">Uses a pinned release of the official MCP filesystem server through Node.js. Enabling it may download that npm package. Write, move, and delete tools are never offered to Petey.</p>
                     <p id="filesystem-tool-status" class="wide-status" role="status"></p>

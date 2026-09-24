@@ -159,7 +159,8 @@ class AddonManager:
                 data_dir = self.state.data_dir / "addon-data" / record["id"]
                 data_dir.mkdir(parents=True, exist_ok=True)
                 def emit_event(message, *, conversation_id=None, surface="petey_desktop",
-                               speak=False, metadata=None, addon_id=record["id"]):
+                               speak=False, metadata=None, user_initiated=False,
+                               addon_id=record["id"]):
                     if self._event_broker is None:
                         raise RuntimeError("PETEY's add-on event channel is unavailable.")
                     return self._event_broker.emit(
@@ -169,6 +170,7 @@ class AddonManager:
                         surface=surface,
                         speak=speak,
                         metadata=metadata,
+                        user_initiated=user_initiated,
                     )
 
                 record["instance"] = setup(AddonContext(

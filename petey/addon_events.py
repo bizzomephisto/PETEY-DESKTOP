@@ -42,6 +42,7 @@ class AddonEventBroker:
         surface: str = "petey_desktop",
         speak: bool = False,
         metadata: dict | None = None,
+        user_initiated: bool = False,
     ) -> dict:
         source = str(addon_id or "").strip()[:64]
         text = str(message or "").strip()
@@ -73,6 +74,7 @@ class AddonEventBroker:
                 "surface": safe_surface,
                 "speak": bool(speak),
                 "metadata": safe_metadata,
+                "user_initiated": bool(user_initiated),
             })
         except queue.Full as exc:
             raise AddonEventError("PETEY's add-on event queue is full.") from exc
@@ -109,6 +111,7 @@ class AddonEventBroker:
                         "text": str(reply["text"]),
                         "speak": event["speak"],
                         "tool_events": list(reply.get("tool_events") or []),
+                        "metadata": dict(event.get("metadata") or {}),
                     }
                     self._next_id += 1
                     self._events.append(published)

@@ -164,6 +164,39 @@ class MediaJobManagerTests(unittest.TestCase):
             gemini.assert_called_once()
             openai.assert_not_called()
 
+    def test_deapi_media_speech_uses_deapi_service_and_gallery(self):
+        generated = {
+            "result_url": "https://media.example/speech.mp3", "kind": "audio",
+            "operation": "txt2audio",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            gallery = MagicMock()
+            gallery.capture = AsyncMock(return_value={"id": "gallery-speech"})
+            client = MagicMock()
+            client.close = AsyncMock()
+            with patch("petey.media_jobs.DeapiClient", return_value=client), patch(
+                "petey.media_jobs.MediaService"
+            ) as service:
+                service.return_value.generate = AsyncMock(return_value=generated)
+                manager = MediaJobManager(gallery, max_workers=2)
+                queued = manager.submit(
+                    "txt2audio", "Hello", "desktop-test", "deapi-tts", None,
+                    {"voice": "Vivian", "speed": 1, "style": "Warm"},
+                    speech_settings={"provider": "deapi"},
+                    ai_config={"deapi": {"api_key": "saved-key"}},
+                )
+                deadline = time.time() + 3
+                while time.time() < deadline and manager.get(queued["id"])["status"] != "completed":
+                    time.sleep(0.02)
+                job = manager.get(queued["id"])
+                manager.close()
+
+            self.assertEqual(job["status"], "completed")
+            self.assertEqual(job["result"]["tts_provider"], "deapi")
+            self.assertEqual(job["result"]["gallery_item"]["id"], "gallery-speech")
+            service.return_value.generate.assert_awaited_once()
+            client.close.assert_awaited_once()
+
     def test_automatic_speech_uses_openai_when_gemini_fails(self):
         generated = {
             "result_url": "", "data": b"openai-mp3", "content_type": "audio/mpeg",

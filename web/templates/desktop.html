@@ -25,16 +25,14 @@
                 <span class="nav-section-heading">Create</span>
                 <button class="nav-button" data-view="media" type="button"><span class="nav-icon">◆</span><span class="nav-label">Media</span></button>
                 <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon">▦</span><span class="nav-label">Gallery</span></button>
-                <button class="nav-button" data-view="workspace" type="button"><span class="nav-icon">⌘</span><span class="nav-label">Workspace</span></button>
                 <details class="nav-integrations">
                     <summary><span class="nav-icon">◇</span><span class="nav-label">Integrations</span><span class="nav-disclosure">⌄</span></summary>
                     <div class="nav-integrations-list">
+                        <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">▧</span><span class="nav-label">Manage add-ons</span></button>
                         {% if discord_enabled %}<button class="nav-button" data-view="discord" type="button"><span class="nav-icon">◉</span><span class="nav-label">Discord</span></button>{% endif %}
                         {% for addon in addon_views %}<button class="nav-button" data-view="{{ addon.id }}" type="button"><span class="nav-icon">{{ addon.icon }}</span><span class="nav-label">{{ addon.label }}</span></button>{% endfor %}
-                        <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">▧</span><span class="nav-label">Manage add-ons</span></button>
                     </div>
                 </details>
-                <button class="nav-button plus-nav" data-view="plan" type="button"><span class="nav-icon">✦</span><span class="nav-label">PETEY Plus</span></button>
                 <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
                 <button class="nav-button" data-view="help" type="button"><span class="nav-icon">?</span><span class="nav-label">Help</span></button>
             </nav>
@@ -67,6 +65,8 @@
                             <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
                             <button id="visual-mode-toggle" class="visual-mode-toggle" type="button">Visual mode</button>
                             <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary chat</span></label>
+                            <label class="chat-header-menu-field"><span>Restart mode</span><select id="chat-restart-mode" aria-label="PETEY restart mode"><option value="current">Same as now</option><option value="desktop">Desktop window</option><option value="cloudflare">Cloudflare + desktop</option><option value="browser">Browser</option></select></label>
+                            <button id="chat-restart-petey" class="chat-menu-restart" type="button">↻ Restart PETEY</button>
                         </div>
                     </div>
                 </details>
@@ -104,20 +104,20 @@
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
                 <div id="visual-state-heading" class="visual-state-heading" aria-hidden="true">PRESENT</div>
                 <div id="mobile-visual-actions" class="mobile-visual-actions" hidden>
-                    <button id="mobile-show-chat" type="button">Chat</button>
-                    <button id="mobile-visual-fullscreen" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
-                    <button id="mobile-visual-settings" type="button" aria-label="Open mobile settings">⚙</button>
+                    <button id="mobile-show-chat" type="button"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/></svg><span>Chat</span></button>
+                    <button id="mobile-visual-fullscreen" type="button" aria-label="Enter fullscreen" title="Enter fullscreen"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg></button>
+                    <button id="mobile-visual-settings" type="button" aria-label="Open mobile settings"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg></button>
                 </div>
                 <div id="visual-caption" class="visual-caption" aria-live="polite"></div>
                 <button id="mobile-visual-menu-toggle" class="visual-chat-identity" type="button" aria-label="Show visual controls" aria-expanded="false" aria-controls="mobile-visual-actions"><span class="visual-menu-chevron" aria-hidden="true">⌃</span><img src="/static/petey_avatar.png" alt=""><strong>PETEY</strong><span id="visual-chat-state">Present</span></button>
                 <div class="visual-voice-control">
                     <div class="visual-voice-buttons">
-                        <button id="visual-mic-mute-button" class="visual-mic-mute-button" type="button" aria-label="Mute microphone" aria-pressed="false" hidden><span aria-hidden="true">🎙</span></button>
+                        <button id="visual-mic-mute-button" class="visual-mic-mute-button" type="button" aria-label="Mute microphone" aria-pressed="false" hidden><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg></button>
                         <button id="visual-voice-input-button" class="visual-voice-input-button" type="button" aria-label="Hold to talk to Petey" hidden>
-                            <span aria-hidden="true">🎙</span>
+                            <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg>
                             <strong id="visual-voice-input-label">Hold to talk</strong>
                         </button>
-                        <button id="visual-voice-response-toggle" class="voice-response-button visual-voice-response-button muted" type="button" aria-label="Turn voice responses on" aria-pressed="false">🔊</button>
+                        <button id="visual-voice-response-toggle" class="voice-response-button visual-voice-response-button muted" type="button" aria-label="Turn voice responses on" aria-pressed="false"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4V9ZM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button>
                     </div>
                     <form id="visual-dictation-form" class="visual-dictation-form" hidden>
                         <label for="visual-dictation-input">Use the microphone on your phone keyboard</label>
@@ -165,8 +165,8 @@
                             <input id="attachment" name="attachment" type="file" hidden>
                             <span aria-hidden="true">＋</span>
                         </label>
-                        <button id="voice-input-button" class="mic-button" type="button" title="Microphone input" aria-label="Microphone input" hidden>🎙</button>
-                        <button id="voice-response-toggle" class="voice-response-button muted" type="button" title="Turn voice responses on" aria-label="Turn voice responses on" aria-pressed="false">🔊</button>
+                        <button id="voice-input-button" class="mic-button" type="button" title="Microphone input" aria-label="Microphone input" hidden><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg></button>
+                        <button id="voice-response-toggle" class="voice-response-button muted" type="button" title="Turn voice responses on" aria-label="Turn voice responses on" aria-pressed="false"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4V9ZM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button>
                     </div>
                     <textarea id="message" name="message" rows="1" placeholder="Message Petey…" autofocus></textarea>
                     <button id="send" class="send-button" type="submit">Send</button>
@@ -179,80 +179,6 @@
         {% if discord_enabled %}{% include "desktop_discord.html" %}{% endif %}
         {% include "desktop_addons.html" %}
         {% for addon in addon_views %}<section id="view-{{ addon.id }}" class="tool-view app-view addon-view" data-addon-id="{{ addon.addon_id }}">{{ addon.html|safe }}</section>{% endfor %}
-
-        <section id="view-plan" class="tool-view app-view plan-view">
-            <header class="tool-header plan-header">
-                <div><span class="page-eyebrow">BUILD YOUR OWN PLAN</span><h1>PETEY Plus</h1><p>Choose a recurring contribution and what PETEY should be great at. Unused AI balance carries forward.</p></div>
-                <span class="plan-preview-badge">Planning preview</span>
-            </header>
-            <div class="tool-content plan-content">
-                <section class="settings-card plan-budget-card">
-                    <div class="plan-card-heading"><div><span class="section-eyebrow">RECURRING CONTRIBUTION</span><h2>Pay what works for you</h2><p>Each payment adds to your available PETEY balance.</p></div><output id="plan-budget-value" class="plan-price">$25<small>/month</small></output></div>
-                    <input id="plan-budget" class="plan-budget-slider" type="range" min="5" max="150" step="5" value="25" aria-label="Recurring PETEY contribution">
-                    <div class="plan-range-labels"><span>$5</span><span>$150</span></div>
-                    <div class="plan-value-note"><strong>$5 can go a long way.</strong><span>With light use, one contribution could last several months. Your unused balance never resets.</span></div>
-                    <div class="quality-picker" role="radiogroup" aria-label="Generation quality">
-                        <button class="quality-option" type="button" role="radio" aria-checked="false" data-plan-quality="economy"><strong>Economy</strong><small>Stretch every dollar</small></button>
-                        <button class="quality-option active" type="button" role="radio" aria-checked="true" data-plan-quality="balanced"><strong>Balanced</strong><small>Everyday quality</small></button>
-                        <button class="quality-option" type="button" role="radio" aria-checked="false" data-plan-quality="premium"><strong>Premium</strong><small>Best available models</small></button>
-                    </div>
-                    <div id="plan-live-impact" class="plan-live-impact" aria-live="polite">
-                        <div class="plan-impact-heading"><span>PRESET IMPACT</span><strong id="plan-impact-title">Balanced at $25 adds about</strong></div>
-                        <div class="plan-impact-grid">
-                            <span><b>●</b><strong id="plan-impact-chat">—</strong><small>chats</small></span>
-                            <span><b>◆</b><strong id="plan-impact-images">—</strong><small>images</small></span>
-                            <span><b>▶</b><strong id="plan-impact-video">—</strong><small>video sec</small></span>
-                            <span><b>◖</b><strong id="plan-impact-voice">—</strong><small>voice min</small></span>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="settings-card plan-mix-card">
-                    <div class="plan-card-heading"><div><span class="section-eyebrow">USAGE MIX</span><h2>What should your PETEY be great at?</h2><p>Moving one slider automatically balances the others.</p></div><strong id="plan-mix-total" class="mix-total">100%</strong></div>
-                    <div class="plan-mix-grid">
-                        {% for key, label, icon, description in [
-                            ('chat', 'Chat', '●', 'Questions, writing & roleplay'),
-                            ('images', 'Images', '◆', 'Generation & visual ideas'),
-                            ('video', 'Video', '▶', 'Motion and animation'),
-                            ('voice', 'Voice', '◖', 'Speech & transcription')
-                        ] %}
-                        <label class="plan-mix-row" data-plan-category="{{ key }}">
-                            <span class="plan-mix-icon">{{ icon }}</span><span class="plan-mix-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span>
-                            <output id="plan-{{ key }}-value">{{ {'chat':45, 'images':25, 'video':20, 'voice':10}[key] }}%</output>
-                            <input id="plan-{{ key }}" type="range" min="0" max="100" step="1" value="{{ {'chat':45, 'images':25, 'video':20, 'voice':10}[key] }}">
-                        </label>
-                        {% endfor %}
-                    </div>
-                </section>
-
-                <section class="settings-card plan-results-card">
-                    <span class="section-eyebrow">WHAT EACH PAYMENT ADDS</span><h2 id="plan-result-title">Estimated capabilities added to your balance</h2>
-                    <div class="rollover-callout"><strong>↻ Your balance rolls over</strong><span>Anything you do not use remains available after the next billing date.</span></div>
-                    <div id="plan-capabilities" class="plan-capability-grid" aria-live="polite">
-                        <article><span>●</span><strong>—</strong><small>chat exchanges</small></article>
-                        <article><span>◆</span><strong>—</strong><small>generated images</small></article>
-                        <article><span>▶</span><strong>—</strong><small>video seconds</small></article>
-                        <article><span>◖</span><strong>—</strong><small>voice minutes</small></article>
-                    </div>
-                    <div class="plan-breakdown">
-                        <div class="plan-breakdown-bar"><span id="plan-ai-bar"></span><span id="plan-platform-bar"></span><span id="plan-reserve-bar"></span></div>
-                        <div class="plan-breakdown-legend">
-                            <span><i class="ai"></i>AI usage <strong id="plan-ai-amount">—</strong></span>
-                            <span><i class="platform"></i>PETEY & support <strong id="plan-platform-amount">—</strong></span>
-                            <span><i class="reserve"></i>Payments & reserve <strong id="plan-reserve-amount">—</strong></span>
-                        </div>
-                    </div>
-                    <p id="plan-estimate-notice" class="plan-notice"></p>
-                </section>
-
-                <section class="settings-card plan-controls-card">
-                    <div><h2>Keep spending predictable</h2><p>PETEY shares your AI balance across capabilities and carries everything unused forward.</p></div>
-                    <label><span>When the available balance runs out</span><select id="plan-overage"><option value="stop">Pause until the next payment or top-up</option><option value="top_up">Ask before buying a top-up</option></select></label>
-                    <div class="plan-actions"><button id="save-plan-preview" class="primary-button" type="button">Save my plan preview</button><span id="plan-save-status" class="wide-status" role="status"></span></div>
-                    <p class="plan-cloud-note"><strong>Checkout comes with PETEY Cloud.</strong> This preview is saved locally. Payments and shared API access will activate when the hosted gateway is connected.</p>
-                </section>
-            </div>
-        </section>
 
         <section id="view-media" class="tool-view app-view">
             <header class="tool-header"><div><h1>Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>
@@ -311,6 +237,8 @@
                         <label class="full-field"><span>Duration in seconds</span><input id="media-duration" type="number" min="5" max="300" value="30"></label>
                     </div>
                     <div id="media-speech-fields" class="media-parameter-group field-grid two-column" hidden>
+                        <p class="hint full-span">Choose deAPI or Gemini independently from PETEY's conversational voice provider.</p>
+                        <label><span>Speech provider</span><select id="media-speech-provider"><option value="deapi">deAPI</option><option value="gemini">Google Gemini</option></select></label>
                         <label><span>Voice</span>
                             <select id="media-voice">
                                 <option value="Kore">Kore — Firm</option>
@@ -343,64 +271,6 @@
             </div>
         </section>
 
-        <section id="view-workspace" class="tool-view app-view workspace-view">
-            <header class="tool-header">
-                <div><h1>Workspace</h1><p>A small, approval-gated IDE for folders you explicitly trust.</p></div>
-                <div class="workspace-picker">
-                    <select id="workspace-select" aria-label="Approved folder"><option value="">No approved folders</option></select>
-                    <button id="add-workspace" class="primary-button" type="button">＋ Approve folder</button>
-                    <button id="remove-workspace" class="text-button" type="button">Remove</button>
-                </div>
-            </header>
-            <div class="workspace-manual" id="workspace-manual" hidden>
-                <input id="workspace-path" type="text" placeholder="/absolute/path/to/project">
-                <button id="approve-workspace-path" class="primary-button" type="button">Approve this folder</button>
-                <button id="cancel-workspace-path" class="secondary-button" type="button">Cancel</button>
-            </div>
-            <div id="workspace-empty" class="workspace-empty">
-                <h2>Approve a project folder to begin.</h2>
-                <p>Petey’s file browser and editor cannot leave folders listed here.</p>
-            </div>
-            <div id="workspace-ide" class="workspace-ide" hidden>
-                <aside class="file-browser">
-                    <div class="file-browser-heading"><button id="workspace-up" class="icon-button" type="button" title="Parent folder">↑</button><span id="workspace-directory">/</span><button id="refresh-workspace" class="icon-button" type="button" title="Refresh">↻</button></div>
-                    <div id="workspace-files" class="workspace-files"></div>
-                </aside>
-                <section class="editor-pane">
-                    <div class="editor-toolbar">
-                        <input id="editor-path" type="text" placeholder="relative/path/to/file.py">
-                        <button id="new-workspace-file" class="secondary-button" type="button">New</button>
-                        <button id="save-workspace-file" class="primary-button" type="button">Save</button>
-                    </div>
-                    <textarea id="workspace-editor" class="code-editor" spellcheck="false" placeholder="Open a UTF-8 text file, or enter a new relative path…"></textarea>
-                    <span id="editor-status" class="wide-status"></span>
-                </section>
-                <aside class="workspace-tools">
-                    <section class="workspace-tool-card">
-                        <h2>Ask Petey</h2>
-                        <p>Petey may propose edits or commands. Nothing runs until you approve it below. The selected file is sent to your configured AI provider.</p>
-                        <textarea id="workspace-agent-prompt" rows="4" placeholder="Add tests for the selected file…"></textarea>
-                        <button id="ask-workspace-agent" class="primary-button" type="button">Create proposals</button>
-                        <span id="workspace-agent-status" class="wide-status"></span>
-                    </section>
-                    <section class="workspace-tool-card">
-                        <h2>Run command</h2>
-                        <input id="workspace-command" type="text" placeholder="pytest -q">
-                        <button id="review-workspace-command" class="secondary-button" type="button">Review command</button>
-                        <p class="security-note">Approved commands run as your OS user. Folder approval constrains Petey’s file tools, not the process itself.</p>
-                    </section>
-                    <section class="workspace-tool-card proposals-card">
-                        <h2>Pending approval</h2>
-                        <div id="workspace-proposals"><p class="muted">No pending proposals.</p></div>
-                    </section>
-                    <section class="workspace-tool-card console-card">
-                        <div class="card-heading"><h2>Console</h2><button id="clear-workspace-console" class="text-button" type="button">Clear</button></div>
-                        <pre id="workspace-console">Commands have not been run.</pre>
-                    </section>
-                </aside>
-            </div>
-        </section>
-
         {% include "settings/shell.html" %}
     </main>
     <dialog id="image-browser-dialog" class="image-browser-dialog">
@@ -422,6 +292,18 @@
             <footer><span id="image-browser-status" class="wide-status"></span><button id="cancel-image-browser" class="secondary-button" type="button">Cancel</button></footer>
         </div>
     </dialog>
+    <section id="artifact-preview" class="artifact-preview" role="dialog" aria-modal="true"
+        aria-label="OpenCode artifact preview" hidden>
+        <header class="artifact-preview-toolbar">
+            <strong id="artifact-preview-title">OpenCode preview</strong>
+            <div>
+                <button id="artifact-preview-popout" class="secondary-button" type="button">Open in browser</button>
+                <button id="artifact-preview-close" class="icon-button" type="button" aria-label="Close preview" title="Close preview">×</button>
+            </div>
+        </header>
+        <iframe id="artifact-preview-frame" title="OpenCode artifact preview"
+            sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts"></iframe>
+    </section>
     <script>window.PETEY_ADDON_VIEWS = {{ addon_view_ids|tojson }};</script>
     {% if discord_enabled %}<script src="{{ url_for('static', filename='discord.js', v=asset_revision) }}"></script>{% endif %}
     {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=addon.asset_revision) }}"></script>{% endif %}{% endfor %}

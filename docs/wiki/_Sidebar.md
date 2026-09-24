@@ -9,7 +9,7 @@
 - [Mobile and Remote Access](Mobile-and-Remote-Access)
 - [Media and Gallery](Media-and-Gallery)
 - [Memory, Knowledge, and Privacy](Memory-Knowledge-and-Privacy)
-- [Workspace and Tools](Workspace-and-Tools)
+- [Tools and Integrations](Tools-and-Integrations)
 - [Discord and Add-ons](Discord-and-Add-ons)
 - [Updating PETEY](Updating-PETEY)
 - [Troubleshooting](Troubleshooting)

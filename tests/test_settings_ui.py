@@ -58,8 +58,11 @@ class SettingsUITests(unittest.TestCase):
         for name in ('save-user-display-name', 'save-personality', 'save-speech-models',
                      'save-ai-provider', 'save-voice-input', 'save-memory-provider',
                      'save-transcription-provider',
-                     'filesystem-tool-enabled', 'upload-knowledge', 'reset-all-memory'):
+                     'filesystem-tool-enabled', 'add-filesystem-folder',
+                     'approve-filesystem-folder', 'upload-knowledge', 'reset-all-memory'):
             self.assertIn(name, ids)
+        self.assertNotIn('view-workspace', ids)
+        self.assertNotIn('view-plan', ids)
         self.assertIn('voice-wake-delay', ids)
         self.assertIn('voice-submit-delay', ids)
         self.assertIn('voice-follow-up-seconds', ids)
@@ -90,6 +93,14 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(mute_tag, 'button')
         self.assertEqual(mute_button.get('aria-pressed'), 'false')
         self.assertEqual(mute_button.get('aria-label'), 'Mute microphone')
+        stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn(
+            'body.native-visual-fullscreen .visual-mic-mute-button:not([hidden]) { display: grid; }',
+            stylesheet,
+        )
+        self.assertIn('.visual-mic-mute-button[hidden] { display: none !important; }', stylesheet)
         self.assertNotIn('visual-voice-drag-handle', ids)
         menu_tag, menu_button = ids['mobile-visual-menu-toggle']
         self.assertEqual(menu_tag, 'button')
@@ -129,8 +140,44 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("const chatHeaderMenu = document.getElementById('chat-header-menu');", javascript)
         self.assertIn("if (chatHeaderMenu.open && !chatHeaderMenu.contains(event.target))", javascript)
         self.assertIn("document.getElementById('visual-style-field').hidden = !visualMode;", javascript)
+        self.assertIn('chat-restart-petey', ids)
+        self.assertEqual(ids['chat-restart-mode'][0], 'select')
+        menu = self.html[self.html.index('<div class="chat-header-actions">'):]
+        menu = menu[:menu.index('</div>')]
+        self.assertLess(menu.index('id="temporary-mode"'), menu.index('id="chat-restart-petey"'))
+        self.assertLess(menu.index('id="chat-restart-mode"'), menu.index('id="chat-restart-petey"'))
+        self.assertIn('Restart PETEY in ${label}?', javascript)
+        self.assertIn('restartPetey(event.currentTarget, statusText, mode.value);', javascript)
         self.assertIn('.chat-header-menu-panel {', stylesheet)
         self.assertIn('.chat-header-menu[open] > summary span', stylesheet)
+
+    def test_saved_profiles_are_first_and_save_asks_for_a_slot(self):
+        template = (Path(__file__).parents[1] / 'web/templates/settings/personality.html').read_text(
+            encoding='utf-8'
+        )
+        javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
+            encoding='utf-8'
+        )
+        self.assertLess(
+            template.index('id="saved-personas-settings"'),
+            template.index('id="character-settings"'),
+        )
+        for control in (
+            'profile-slot-dialog', 'profile-slot-choices', 'profile-slot-dialog-close',
+            'profile-slot-dialog-cancel',
+        ):
+            self.assertIn(f'id="{control}"', template)
+        self.assertIn(
+            "document.getElementById('save-personality').addEventListener('click', openProfileSlotDialog);",
+            javascript,
+        )
+        self.assertIn('await savePersonaSlot(slot, Boolean(persona), true, false);', javascript)
+        save_flow = javascript[
+            javascript.index('async function savePersonaSlot'):
+            javascript.index('async function activatePersonaSlot')
+        ]
+        self.assertIn("apiJson('/api/desktop/personality'", save_flow)
+        self.assertEqual(save_flow.count("method: 'PUT'"), 2)
 
     def test_version_sits_below_desktop_sidebar_links(self):
         template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(
@@ -152,7 +199,7 @@ class SettingsUITests(unittest.TestCase):
         )
         self.assertIn('function composerMicPointerDown(event)', javascript)
         self.assertIn('function composerMicPointerUp(event)', javascript)
-        self.assertIn('await toggleMobileMicrophoneMute()', javascript)
+        self.assertIn('await toggleMicrophoneMute()', javascript)
         self.assertIn("'Hold to talk · tap to mute'", javascript)
         self.assertNotIn('.composer .attach-button, .composer > small { display: none !important; }', stylesheet)
         self.assertIn('.composer .attach-button, .composer .mic-button, .composer .voice-response-button', stylesheet)
@@ -168,6 +215,10 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("attachmentInput.value = '';", javascript)
         self.assertIn("remove.className = 'attachment-remove'", javascript)
         self.assertIn("remove.addEventListener('click', clearSelectedAttachment)", javascript)
+        self.assertIn("messageInput.addEventListener('paste', event =>", javascript)
+        self.assertIn("item.kind === 'file' && item.type.startsWith('image/')", javascript)
+        self.assertIn('selectAttachment(file);', javascript)
+        self.assertIn('const file = selectedAttachmentFile || attachmentInput.files[0];', javascript)
         self.assertNotIn('.composer > small, .attachment-chip { display: none', stylesheet)
         self.assertIn('.attachment-chip[hidden] { display: none !important; }', stylesheet)
 
@@ -181,7 +232,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('let addonEventSpeechChain = Promise.resolve();', javascript)
         self.assertIn('event.speak && voiceResponseEnabled', poller)
         self.assertIn('addonEventSpeechChain = addonEventSpeechChain', poller)
-        self.assertIn('speakChatText(event.text, null, true)', poller)
+        self.assertIn('event.text, null, true, eventSpeechGeneration', poller)
         self.assertNotIn('autoSpeechChain', poller)
 
     def test_mobile_automatic_speech_is_single_and_rechecks_mute(self):
@@ -195,8 +246,8 @@ class SettingsUITests(unittest.TestCase):
         speech_end = javascript.index('async function playGeminiSpeechStream', speech_start)
         speech = javascript[speech_start:speech_end]
         self.assertIn('const streamSpeechEarly = autoSpeak && !mobileLayoutQuery.matches;', submit)
-        self.assertIn('speakChatText(remainder, null, true)', submit)
-        self.assertIn('automatic && !voiceResponseEnabled', speech)
+        self.assertIn('remainder, null, true, replySpeechGeneration', submit)
+        self.assertIn('generation !== automaticSpeechGeneration', speech)
         self.assertIn('stopWakeAcknowledgement();', javascript)
         self.assertIn('if (!voiceResponseEnabled) return;', javascript)
 
@@ -209,6 +260,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("window.peteyMediaDevices.register('petey-core-voice'", javascript)
         self.assertIn("window.peteyMediaDevices.release('petey-core-voice')", javascript)
         self.assertIn('window.peteyConferenceAudio = {', javascript)
+        self.assertIn('window.peteyAudioControls = {', javascript)
+        self.assertIn('speakerEnabled: () => Boolean(', javascript)
         self.assertIn("new CustomEvent('petey:voice-playback'", javascript)
 
     def test_addon_rows_are_collapsed_and_refresh_without_losing_position(self):
@@ -225,16 +278,41 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('view.scrollTop = scrollTop', javascript)
         self.assertIn('.addon-details[hidden] { display: none; }', stylesheet)
 
-    def test_voice_response_toggle_is_session_aware_on_mobile(self):
+    def test_addon_setting_sections_are_collapsed_by_default(self):
+        root = Path(__file__).parents[1]
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+        stylesheet = (root / 'web/static/desktop.css').read_text(encoding='utf-8')
+        self.assertIn('function collapseAddonSettings()', javascript)
+        self.assertIn("'.addon-view .settings-card'", javascript)
+        self.assertIn("'#view-addon-petey-opencode #petey-opencode-root > article'", javascript)
+        self.assertIn("'#view-addon-petey-webcam .webcam-camera-settings'", javascript)
+        self.assertIn("disclosure.className = 'addon-settings-disclosure'", javascript)
+        self.assertNotIn('disclosure.open = true', javascript)
+        self.assertIn('.addon-settings-disclosure[open]', stylesheet)
+
+    def test_manage_addons_is_first_in_the_integrations_list(self):
+        template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(
+            encoding='utf-8'
+        )
+        integrations = template[template.index('class="nav-integrations-list"'):]
+        self.assertLess(
+            integrations.index('data-view="addons"'),
+            integrations.index('data-view="discord"'),
+        )
+        self.assertLess(
+            integrations.index('data-view="addons"'),
+            integrations.index('{% for addon in addon_views %}'),
+        )
+
+    def test_voice_response_mute_persists_on_desktop_and_mobile(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
             encoding='utf-8'
         )
-        self.assertIn("voiceResponseEnabled = mobileLayoutQuery.matches", javascript)
-        self.assertIn("? Boolean(preferences.visual_mode)", javascript)
+        self.assertIn("voiceResponseEnabled = Boolean(speechConfiguration.auto_speak);", javascript)
         self.assertIn("if (voiceResponseEnabled && speechConfiguration?.provider !== 'disabled')", javascript)
-        self.assertIn("const enteringVisualMode = visualMode && lastAppliedVisualMode !== true", javascript)
-        self.assertIn("if (voiceResponseInitialized && enteringVisualMode && !voiceResponseEnabled)", javascript)
-        self.assertIn("if (mobileLayoutQuery.matches) return;", javascript)
+        self.assertIn("body: JSON.stringify({auto_speak: enabled})", javascript)
+        self.assertNotIn("if (mobileLayoutQuery.matches) return;", javascript)
+        self.assertNotIn("setVoiceResponseEnabled(true);", javascript)
 
     def test_mobile_visual_mute_and_bottom_menu(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
@@ -243,14 +321,38 @@ class SettingsUITests(unittest.TestCase):
         stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(
             encoding='utf-8'
         )
-        self.assertIn("if (mobileVisualMicMuted) await stopVoiceInput();", javascript)
-        self.assertIn("(mobileLayoutQuery.matches && mobileVisualMicMuted)) return;", javascript)
+        self.assertIn("microphoneMuted = Boolean(voiceInputConfiguration.muted);", javascript)
+        self.assertIn("body: JSON.stringify({muted: microphoneMuted})", javascript)
+        self.assertIn("if (microphoneMuted) await stopVoiceInput();", javascript)
+        self.assertIn("|| microphoneMuted) return;", javascript)
+        self.assertIn("const micIsMuted = microphoneMuted", javascript)
+        self.assertIn("&& !voiceInputRunning && !microphoneCapturing", javascript)
         self.assertIn("mobileVisualActions.hidden = !open;", javascript)
         self.assertIn("setMobileVisualMenuOpen(mobileVisualActions.hidden)", javascript)
         self.assertNotIn('visualVoiceDragHandle', javascript)
         self.assertIn(".visual-mic-mute-button.muted::after", stylesheet)
         self.assertIn(".voice-response-button.muted::after", stylesheet)
+        self.assertIn(".voice-response-button.muted { border: 1px solid #ff6577; }", stylesheet)
+        self.assertIn(".composer .mic-button.muted .control-icon", stylesheet)
+        self.assertIn("top: -5px; right: -5px; width: 18px; height: 18px", stylesheet)
         self.assertIn(".mobile-visual-actions[hidden] { display: none; }", stylesheet)
+
+    def test_visual_controls_use_clear_outline_icons_and_nearby_captions(self):
+        root = Path(__file__).parents[1]
+        template = (root / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        stylesheet = (root / 'web/static/desktop.css').read_text(encoding='utf-8')
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+
+        self.assertGreaterEqual(template.count('class="control-icon"'), 8)
+        self.assertNotIn('>🎙<', template)
+        self.assertNotIn('>🔊<', template)
+        self.assertIn('.control-icon {', stylesheet)
+        self.assertIn('.visual-voice-response-button .control-icon { opacity: .3;', stylesheet)
+        self.assertIn(':is(:hover, :focus-visible, :active) .control-icon', stylesheet)
+        self.assertIn('top: calc(clamp(24px, 7vh, 70px) + 36px)', stylesheet)
+        self.assertIn('top: calc(max(52px, 7vh) + 38px)', stylesheet)
+        self.assertNotIn('.visual-caption { top: 28%;', stylesheet)
+        self.assertNotIn("button.textContent = '🔊';", javascript)
 
     def test_opencode_artifact_links_keep_the_current_remote_origin(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
@@ -260,6 +362,14 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("const artifactPath =", javascript)
         self.assertIn("artifactHref = `${parsed.pathname}${parsed.search}${parsed.hash}`", javascript)
         self.assertIn("link.textContent = artifactHref ||", javascript)
+        self.assertIn("window.peteyOpenArtifactPreview = openArtifactPreview", javascript)
+        self.assertIn("if (artifactHref) {", javascript)
+        self.assertIn("openArtifactPreview(artifactHref", javascript)
+        self.assertIn("window.pywebview.api.open_petey_artifact(artifactPreviewPath)", javascript)
+        self.assertIn('frame.src = `${path}?petey_preview=1`;', javascript)
+        self.assertIn('id="artifact-preview-close"', self.html)
+        self.assertIn('id="artifact-preview-popout"', self.html)
+        self.assertIn('sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts"', self.html)
 
     def test_mobile_viewport_and_core_assets_are_cache_safe(self):
         metas = [attrs for tag, attrs in self.markup.elements
@@ -283,6 +393,11 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('function appendChatImageJobs(content, toolEvents)', javascript)
         self.assertIn('/api/desktop/media/jobs/${encodeURIComponent(jobId)}', javascript)
         self.assertIn('appendChatImageJobs(content, options.toolEvents);', javascript)
+        self.assertIn('function appendChatMetadataImage(content, metadata)', javascript)
+        self.assertIn('appendChatMetadataImage(content, options.metadata);', javascript)
+        self.assertIn('function appendChatToolImages(content, toolEvents)', javascript)
+        self.assertIn('appendChatMetadataImage(content, result);', javascript)
+        self.assertIn('appendChatToolImages(content, options.toolEvents);', javascript)
         self.assertIn("card.replaceChildren(image, caption);", javascript)
         self.assertIn("const response = await fetch(source, {cache: 'no-store'});", javascript)
         self.assertIn("if (!blob.type.startsWith('image/'))", javascript)
@@ -370,7 +485,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("listening: {primary: [255, 133, 31]", javascript)
         self.assertIn("speaking: {primary: [26, 137, 255]", javascript)
         self.assertIn("if (visualThinking || voiceInputBusy) return 'thinking';", javascript)
-        self.assertIn("if (mobileVisualMicMuted) return 'muted';", javascript)
+        self.assertIn("if (microphoneMuted) return 'muted';", javascript)
         self.assertIn("if (time < visualErrorUntil) return 'error';", javascript)
         self.assertIn('.visual-state-heading {', stylesheet)
         self.assertIn('body.native-visual-fullscreen .visual-caption', stylesheet)
@@ -385,6 +500,32 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("apiJson('/api/desktop/media')", loader)
         self.assertNotIn("apiJson('/api/desktop/speech')", loader)
         self.assertNotIn('speechSettingsLoaded = true', loader)
+
+    def test_transcription_providers_and_media_speech_are_separate(self):
+        root = Path(__file__).parents[1]
+        providers = (root / 'web/templates/settings/providers.html').read_text(encoding='utf-8')
+        desktop = (root / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+        stylesheet = (root / 'web/static/desktop.css').read_text(encoding='utf-8')
+        self.assertIn('value="automatic">Automatic — deAPI, then Gemini', providers)
+        self.assertIn('value="deapi">deAPI only', providers)
+        self.assertIn('value="gemini">Google Gemini only', providers)
+        self.assertIn('value="local_whisper">Local Whisper — on this computer', providers)
+        self.assertNotIn('value="local">Local transcription server', providers)
+        self.assertIn('id="download-local-whisper-model"', providers)
+        self.assertIn('github.com/SYSTRAN/faster-whisper#installation', providers)
+        self.assertNotIn('id="voice-input-local-url"', providers)
+        self.assertNotIn('id="voice-input-local-model"', providers)
+        self.assertIn('id="media-speech-provider"', desktop)
+        self.assertIn('Choose deAPI or Gemini independently', desktop)
+        self.assertIn('<option value="deapi">deAPI</option>', (root / 'web/templates/settings/personality.html').read_text(encoding='utf-8'))
+        self.assertIn('id="speech-deapi-voice"', (root / 'web/templates/settings/personality.html').read_text(encoding='utf-8'))
+        self.assertIn('id="speech-deapi-model"', providers)
+        self.assertIn('deapiSpeechConfiguration = payload.deapi_speech', javascript)
+        self.assertIn("provider === 'gemini'", javascript)
+        self.assertIn("media-speech-provider').addEventListener('change'", javascript)
+        self.assertNotIn('speechOption.disabled = speechConfiguration.provider', javascript)
+        self.assertIn('.media-job.failed .media-job-status', stylesheet)
 
     def test_saved_chat_history_is_rendered_in_one_dom_batch(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
@@ -413,3 +554,17 @@ class SettingsUITests(unittest.TestCase):
         self.assertNotIn('function stopPeteySpeechFromVoice()', javascript)
         self.assertNotIn('Local wake detector unavailable:', javascript)
         self.assertNotIn('provider transcription ready', javascript)
+
+    def test_wake_name_interrupts_active_speech_and_reopens_listening(self):
+        root = Path(__file__).parents[1]
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+        microphone = (root / 'web/templates/settings/microphone.html').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn('function interruptPeteySpeechFromWake()', javascript)
+        self.assertIn('const interruptionCandidate = voiceInputPlaybackBlocked', javascript)
+        self.assertIn('if (payload.detected && interruptionCandidate)', javascript)
+        self.assertIn('automaticSpeechGeneration += 1;', javascript)
+        self.assertIn("'Oh, sorry. Go ahead.'", javascript)
+        self.assertIn('playVoiceInterruptionAcknowledgement();', javascript)
+        self.assertIn('saying “Petey” while he is speaking stops the current reply', microphone)

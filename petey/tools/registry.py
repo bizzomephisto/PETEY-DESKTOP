@@ -50,7 +50,14 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def schemas_for(self, user_message: str) -> list[dict]:
-        return [tool.schema() for tool in self._tools.values() if tool.available_when(user_message)]
+        available = [
+            tool for tool in self._tools.values() if tool.available_when(user_message)
+        ]
+        required = [tool for tool in available if tool.required_when(user_message)]
+        # Provider "required" modes mean "call any offered tool". For a direct,
+        # narrowly gated request, keep unrelated autonomous tools out of that
+        # first decision so the provider cannot satisfy it with the wrong action.
+        return [tool.schema() for tool in (required or available)]
 
     def requires_tool(self, user_message: str) -> bool:
         return any(

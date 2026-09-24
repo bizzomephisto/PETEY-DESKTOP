@@ -226,7 +226,7 @@ class MCPStdioClient:
 
 
 class FilesystemMCPManager:
-    """Own the official filesystem MCP connection for approved workspaces."""
+    """Own the official filesystem MCP connection for approved folders."""
 
     def __init__(self, state, client_factory=None):
         self.state = state
@@ -245,9 +245,9 @@ class FilesystemMCPManager:
 
     def _roots(self) -> list[Path]:
         roots = []
-        for workspace in self.state.workspaces:
+        for folder in self.state.approved_folders:
             try:
-                root = Path(workspace.get("path", "")).resolve(strict=True)
+                root = Path(folder.get("path", "")).resolve(strict=True)
             except (OSError, RuntimeError):
                 continue
             if root.is_dir():
@@ -262,7 +262,7 @@ class FilesystemMCPManager:
     def _ensure_client(self):
         roots = self._roots()
         if not roots:
-            raise MCPError("Approve at least one Workspace folder before enabling Filesystem.")
+            raise MCPError("Add at least one folder in Settings → Tools before enabling Filesystem.")
         if shutil.which("npx") is None:
             raise MCPError("Filesystem MCP needs Node.js and npx installed on this computer.")
         signature = tuple(str(root) for root in roots)
@@ -307,6 +307,7 @@ class FilesystemMCPManager:
 
     def public_status(self) -> dict:
         roots = self._roots()
+        root_paths = {str(root) for root in roots}
         return {
             "id": "filesystem",
             "name": "Filesystem",
@@ -315,7 +316,10 @@ class FilesystemMCPManager:
             "connected": bool(self._client is not None and self._client.running),
             "available": shutil.which("npx") is not None,
             "approved_folders": [
-                {"name": root.name or str(root), "path": str(root)} for root in roots
+                {"id": folder.get("id", ""), "name": folder.get("name", "") or Path(folder["path"]).name,
+                 "path": str(folder["path"])}
+                for folder in self.state.approved_folders
+                if str(folder.get("path", "")) in root_paths
             ],
             "tools": [
                 {"name": tool.get("name", ""), "description": tool.get("description", "")}
@@ -379,7 +383,7 @@ class FilesystemMCPManager:
             description = str(tool.get("description") or original_name)
             specs.append(ToolSpec(
                 name=f"mcp_filesystem__{original_name}",
-                description=f"{description} Read only; limited to folders approved in Petey Workspace.",
+                description=f"{description} Read only; limited to folders approved in Petey settings.",
                 parameters=schema,
                 handler=lambda arguments, name=original_name: self.call_tool(name, arguments),
                 available_when=lambda message: bool(_FILE_INTENT.search(str(message or ""))),

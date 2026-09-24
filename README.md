@@ -6,7 +6,7 @@ Stable release: **v0.19.0** · Previous experimental preview: **v0.19.0-experime
 
 PETEY is a standalone desktop AI assistant with local conversations, configurable
 personality, universal SQLite memory, RAG document management, deAPI media tools,
-and an approval-gated project workspace.
+voice conversation, visual mode, and optional integrations.
 
 ## Preview
 
@@ -54,12 +54,11 @@ speed, and hardware setup.
 - Parallel image, video, music, speech, background-removal, and upscale jobs
 - Streaming Gemini text to speech with OpenAI fallback, named voices, and delivery direction
 - Per-reply Speak controls and optional automatic playback for new chat responses
-- Provider transcription for push-to-talk, always-on, and wake-name microphone input
+- Hosted or private Local Whisper transcription for push-to-talk, always-on, and wake-name microphone input
 - Replaceable per-voice wake acknowledgements that play only after the wake name is followed by a pause
 - Adjustable wake acknowledgement, silence-to-send, and follow-up listening timing
 - Keyboard Space push-to-talk and four audio-reactive neural-network chat views
 - Quick PETEY popup at the cursor with chat, screenshots, files, and push-to-talk
-- Build Your Plan preview from $5 in $5 steps, with rollover balance, capability mix, and live usage estimates
 - Streaming chat responses with progress states, interruption handling, and final-only memory storage
 - Live Gemini, OpenAI, and local-server model catalogs with stale-request protection
 - F11 visual fullscreen with progressive captions during Petey's spoken replies
@@ -70,8 +69,7 @@ speed, and hardware setup.
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Per-chat saved Petey profiles with visible header assignment, system-persona fallback, and jump-to-latest navigation
-- Approved-folder IDE with a file tree, editor, command console, and reviewable AI edits
-- Read-only Filesystem MCP tools scoped to folders approved in Workspace
+- Read-only Filesystem MCP tools scoped to folders approved under Settings → Tools
 - [Discord bot bridge](docs/discord.md) with online Gateway presence, deAPI media slash commands, startup auto-connect, AI-enhanced room prompts, adaptive participation, watched topics, and approved channel-management proposals
 - [Add-on system](docs/addons.md) with explicit enablement, lifecycle hooks, API routes, sidebar panels, shared desktop services, and model-tool extensions
 - Reorganized Settings overview with grouped categories, cross-page search, section links, compact layouts, and a catalog-driven page structure
@@ -110,8 +108,8 @@ provider. Existing environment keys remain supported. Voice identity and deliver
 settings stay under **Personality & voice**.
 
 Connected capabilities are managed under **Settings → Tools**. Filesystem uses a
-pinned release of the official MCP server and receives only folders already
-approved in Workspace. Petey exposes its read, list, metadata, and search tools;
+pinned release of the official MCP server and receives only folders you add there.
+Petey exposes its read, list, metadata, and search tools;
 filesystem writes, moves, and deletes remain unavailable.
 
 ## Install and run
@@ -174,7 +172,7 @@ different port if necessary.
 The phone layout is intentionally focused: text chat, the visual
 animation, and a compact settings sheet. Mobile settings expose only the saved
 Petey profile, current speech voice, microphone method (open mic, wait for “Petey”, or push to talk),
-and animation style; fullscreen is a direct control on the visual page. Provider, media, workspace, add-on, and advanced
+and animation style; fullscreen is a direct control on the visual page. Provider, media, add-on, and advanced
 settings remain on PETEY Desktop.
 
 For a real fullscreen hold-to-talk button without the phone keyboard, use trusted
@@ -237,8 +235,9 @@ python run_desktop.py --install-shortcut --cloudflare --cloudflare-hostname meet
 ```
 
 The launcher saves the resolved Cloudflare hostname and port in its launch command.
-When PETEY is already running in Cloudflare mode, its in-app **Restart PETEY** button
-relaunches with that same hostname and port. The `--install-shortcut` option only
+The top-right chat menu can restart PETEY in the current mode, a normal desktop
+window, Cloudflare plus desktop, or a browser. PETEY preserves a known Cloudflare
+hostname and port while switching modes. The `--install-shortcut` option only
 updates the launcher; it does not start PETEY.
 
 For a free temporary address without a Cloudflare account or domain, start PETEY
@@ -257,7 +256,7 @@ from `.env` are also supported.
 ## Getting started and help
 
 Open **Help** in PETEY's sidebar for a first-chat checklist, provider setup,
-voice and microphone guidance, media, memory, Workspace, and troubleshooting.
+voice and microphone guidance, media, memory, tools, and troubleshooting.
 The API keys section in Settings also links directly to this guide.
 
 - **Gemini:** [Get a key in Google AI Studio](https://aistudio.google.com/apikey)
@@ -292,23 +291,22 @@ gallery in the platform application-data directory—not in this repository. Use
 temporary chat when a conversation should not be retained.
 
 When a hosted chat or embedding provider is selected, relevant prompts, selected
-workspace-file context, or memory text are sent to that provider. Local-provider
+file context, or memory text are sent to that provider. Local-provider
 mode keeps those model requests on the configured local endpoint. Chat image
 attachments are sent to the independently selected Gemini vision model, and its
 text description is passed to the active chat provider. Microphone activity and
-the wake name are detected locally; completed recordings from every listening mode
-use the selected deAPI or Gemini transcription path. Recordings are not stored in
-the gallery or memory. Media-generation requests are sent to deAPI.
+the wake name are detected locally; completed recordings use the selected hosted
+or Local Whisper transcription path. Install the optional private
+engine with `.venv/bin/python -m pip install faster-whisper`, then explicitly
+download a model under Settings → Models & API keys → Speech recognition.
+Recordings are not stored in the gallery or memory. Media-generation requests are
+sent to deAPI.
 
-## Workspace safety
+## Filesystem safety
 
-PETEY's file tools are restricted to folders you explicitly approve. Proposed AI
-edits display a diff and remain inert until approved. Commands also require an
-explicit approval and stop after 60 seconds.
-
-Approved commands still run with your operating-system user permissions. Folder
-approval constrains PETEY's built-in file operations; it is not an operating-system
-sandbox for arbitrary code.
+PETEY's optional Filesystem connector is restricted to folders you explicitly add
+under Settings → Tools. Only read, list, metadata, and search capabilities are
+offered to the model. It does not expose write, move, delete, or shell-command tools.
 
 ## Development
 
@@ -336,7 +334,6 @@ Core layout:
 - `petey/desktop_state.py` — installation settings and saved chats
 - `petey/deapi_client.py` — deAPI transport and progress polling
 - `petey/media_jobs.py` — concurrent generation queue and gallery capture
-- `petey/workspace.py` — approved-folder file and command operations
 - `petey/tools/` — permission-aware model tool registry and capability modules
 - `web/desktop_app.py` — loopback Flask API
 - `web/templates/desktop.html` and `web/static/desktop.*` — desktop interface

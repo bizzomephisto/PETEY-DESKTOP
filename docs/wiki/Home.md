@@ -1,7 +1,7 @@
 # PETEY
 
 PETEY is a standalone desktop AI companion for conversation, character roleplay,
-local memory, voice, media creation, and work inside folders you approve.
+local memory, voice, media creation, and optional integrations.
 
 ![PETEY conversation view](https://raw.githubusercontent.com/bizzomephisto/PETEY-DESKTOP/main/docs/screenshots/chat.png)
 
@@ -20,11 +20,9 @@ local memory, voice, media creation, and work inside folders you approve.
 - Read image attachments with Gemini vision.
 - Speak replies and accept push-to-talk, continuous, or wake-name microphone input.
 - Open Quick PETEY at the pointer with Super+F1 for chat, screenshots, and push-to-talk.
-- Shape a PETEY Plus contribution from $5 and see its estimated capabilities in real time; unused balance rolls over and may last for months.
 - Generate images, video, music, and speech with deAPI.
 - Store generated work in a local Gallery.
-- Search knowledge files and approved Workspace folders.
-- Propose file edits and commands for your review.
+- Search knowledge files and, when enabled, read files in folders you approve.
 - Stream chat replies with visible progress and interruption handling.
 - Connect an official Discord bot for bounded room conversation and media commands.
 - Install trusted local add-ons separately from the PETEY source release.
@@ -39,7 +37,7 @@ local memory, voice, media creation, and work inside folders you approve.
 - [Mobile and Remote Access](Mobile-and-Remote-Access)
 - [Media and Gallery](Media-and-Gallery)
 - [Memory, Knowledge, and Privacy](Memory-Knowledge-and-Privacy)
-- [Workspace and Tools](Workspace-and-Tools)
+- [Tools and Integrations](Tools-and-Integrations)
 - [Updating PETEY](Updating-PETEY)
 - [Troubleshooting](Troubleshooting)
 - [Development](Development)

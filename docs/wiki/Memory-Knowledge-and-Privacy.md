@@ -54,7 +54,7 @@ identity, settings, the SQLite memory database, and generated Gallery files.
 ## What leaves the computer
 
 Hosted providers receive the prompts, relevant memory or knowledge text, selected
-Workspace context, attachments, audio, or generation instructions required for the
+Approved file context, attachments, audio, or generation instructions required for the
 feature being used. Local-provider mode keeps its chat or embedding request on the
 configured local endpoint. Media-generation requests go to deAPI.
 

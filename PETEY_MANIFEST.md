@@ -11,13 +11,13 @@ drifts.
 - Stable release: **v0.19.0**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 313 tests
+- Test framework: `unittest`; current full suite contains 330 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 
 PETEY is a local-first personal AI companion. It combines chat, complete persona and
 voice profiles, SQLite memory/RAG, media generation, voice conversation, visual
-mode, Discord, approved-folder workspace tools, and explicitly installed add-ons.
+mode, Discord, read-only approved-folder tools, and explicitly installed add-ons.
 The desktop app should remain usable without a JavaScript build pipeline or a
 separate web service.
 
@@ -35,12 +35,12 @@ separate web service.
   Show all settings switch.
 - Mobile chat keeps attachment and push-to-talk controls visible. In push-to-talk
   mode, holding the mic records and releasing submits; a quick tap toggles the
-  session microphone mute state and shows the standard red X when muted.
-- Mobile text chat starts with automatic reply speech muted on each page load.
-  Entering visual mode enables it for the current session. Speaker buttons beside
+  persisted microphone mute state and shows the standard red X when muted.
+- Microphone and automatic reply speech mute states persist across app restarts and
+  are shared by desktop chat, mobile chat, and Visual Mode. Speaker buttons beside
   the microphone expose the same control on desktop and mobile. Mobile automatic
   replies use one speech request per answer; queued replies, add-on announcements,
-  and wake acknowledgements re-check and obey the current session mute state.
+  and wake acknowledgements re-check and obey the current mute state.
 - Visual mode renders six distinct, full-canvas reactive scenes on pure black:
   Neural Core, Synapse Drift, Orbital Mind, Signal Bloom, Aurora Flow, and
   Constellation Field. Microphone and speech energy drive their motion, scale,
@@ -59,6 +59,9 @@ separate web service.
 - A Petey profile owns instructions, traits, communication style, speech provider,
   voice, and delivery. Microphone mode and the device's auto-speak behavior remain
   device/session concerns when a saved profile is activated.
+- Personality & voice shows the five saved profiles first. The main Save Petey
+  profile action asks which slot to use, then saves and activates that complete
+  profile; occupied choices clearly indicate that they will be replaced.
 - A saved chat may reference one saved Petey profile. Its prompt and speech voice
   follow that profile without changing the system persona. Chats with no assignment
   always inherit the current system persona, and clearing a saved profile returns
@@ -67,9 +70,8 @@ separate web service.
   memory policy defaults to room-only, can store Discord for Desktop/Mobile recall,
   or can explicitly allow public Discord replies to search shared memory. Tools
   remain separately granted per add-on.
-- Consequential work is reviewable. Workspace model writes/commands and untrusted
-  add-on actions use proposals unless the user deliberately enables a scoped trust
-  mode.
+- Consequential add-on actions use proposals unless the user deliberately enables
+  a scoped trust mode.
 
 ## Launch and network modes
 
@@ -81,6 +83,10 @@ separate web service.
 | Trusted LAN HTTPS | `python run_desktop.py --lan-https` | Private CA/server certificate, Secure cookie, phone microphone support |
 | Named Cloudflare tunnel | `python run_desktop.py --cloudflare` | Fixed loopback origin; PETEY private token plus Cloudflare HTTPS/access policy |
 | Quick window | `python run_desktop.py --quick` | Compact local desktop window at cursor |
+
+The native desktop remembers its last normal width and height in
+`desktop-window.json` and restores them at the next launch. Fullscreen and
+maximized dimensions do not replace the saved normal size.
 
 Cloudflare mode expects an already configured `cloudflared` tunnel and does not
 start or manage it. It requires a durable PETEY pairing token stored in the private
@@ -104,6 +110,7 @@ directory. Important contents include:
 - `voice-cues/<voice>/`: user-replaceable wake acknowledgements
 - `lan-tls/`: reusable local CA and LAN certificates
 - `remote-access.json`: durable private Cloudflare mobile pairing secret
+- `desktop-window.json`: last normal native desktop width and height
 - `wake-word/`: downloaded local keyword model
 
 Never commit or inspect secret values casually. Public APIs return key/token status,
@@ -137,9 +144,9 @@ services.
 
 ## Tools and add-ons
 
-The built-in Filesystem MCP is read-only and receives only approved Workspace
-roots. Never expose upstream write, move, delete, or arbitrary command tools through
-that connector.
+The built-in Filesystem MCP is read-only and receives only folders approved under
+Settings → Tools. Never expose upstream write, move, delete, or arbitrary command
+tools through that connector.
 
 External add-ons are trusted process-level Python but remain explicit and
 restart-gated. Disabled code is never imported. Their routes live under
@@ -150,17 +157,39 @@ restart-gated. Disabled code is never imported. Their routes live under
 Background add-on events are opt-in at the add-on level. The host serializes them
 through a bounded queue, hides their source prompts from chat, persists PETEY's
 visible reply in the transcript, and lets requested speech obey the client mute
-state. Add-ons suppress routine repeats and never include credentials.
+state. Sanitized event metadata may attach one HTTPS image and external link to the
+visible reply. Add-ons suppress routine repeats and never include credentials.
 
 Browser-local camera and microphone consumers register bounded ownership through
 `window.peteyMediaDevices`. Add-ons may clone an explicitly shareable camera track;
 recording modes yield PETEY's ordinary continuous microphone and restore it when
 finished rather than opening competing inputs. PETEY Webcam v0.3 and Conference
-v0.2 also broker stable named cameras between paired browsers: one device may host
+v0.3 also broker stable named cameras between paired browsers: one device may host
 the Conference microphone and controls while another records video and answers
 fresh-frame requests. Remote audio/video originals remain separate, with a
 best-effort FFmpeg combined recording and explicit disconnects instead of camera
 fallback.
+
+Conference v0.3 runs the local wake detector while it owns the microphone and ends
+live transcription segments after speech followed by silence. Direct wake-name
+requests respond immediately. Topic-triggered contributions first play a short
+permission cue, wait for a common affirmative or negative reply, and open a
+three-second follow-up window after PETEY speaks. Permission clips resolve from
+`voice-cues/<voice>/conference/permission/` with the `default` voice fallback,
+randomize across every supported clip, derive transcript text from filenames, and
+obey PETEY's persisted speaker mute.
+
+Microphone transcription offers Automatic (deAPI then Gemini), deAPI only, Gemini
+only, and Local Whisper. Local Whisper optionally
+uses faster-whisper in process, requires an explicit model download into PETEY's
+data root, and supports automatic, CPU, or CUDA execution. On Linux, startup can
+discover pip-installed NVIDIA runtime libraries before faster-whisper loads.
+Conference follows the same selection. Media text-to-speech offers explicit deAPI Media and Gemini
+choices with their own model and voice lists, independently from PETEY's
+conversational speech provider.
+Conversational speech supports Automatic (Gemini then OpenAI), deAPI, Gemini,
+OpenAI, and Disabled. The selected provider, model, and voice belong to the
+active PETEY profile and apply consistently to desktop, mobile, and Visual Mode.
 
 Model tool schemas and dispatch both enforce availability. Compatible add-ons have
 an off-by-default model-control policy with capability and surface grants. Metered

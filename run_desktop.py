@@ -36,6 +36,127 @@ QUICK_WINDOW_HEIGHT = 390
 LAN_TLS_DIRECTORY = "lan-tls"
 REMOTE_ACCESS_FILE = "remote-access.json"
 REMOTE_SESSION_SECONDS = 365 * 24 * 60 * 60
+DESKTOP_WINDOW_FILE = "desktop-window.json"
+DEFAULT_DESKTOP_WIDTH = 1180
+DEFAULT_DESKTOP_HEIGHT = 780
+MIN_DESKTOP_WIDTH = 760
+MIN_DESKTOP_HEIGHT = 560
+MAX_DESKTOP_DIMENSION = 10_000
+CUDA_RUNTIME_READY_ENV = "_PETEY_CUDA_RUNTIME_READY"
+
+
+def bundled_cuda_library_paths() -> tuple[str, ...]:
+    """Return CUDA runtime directories installed in the active Python environment."""
+    paths: list[str] = []
+    for package in ("nvidia.cublas.lib", "nvidia.cudnn.lib"):
+        try:
+            spec = importlib.util.find_spec(package)
+        except (ImportError, ModuleNotFoundError, ValueError):
+            continue
+        locations = tuple(spec.submodule_search_locations or ()) if spec else ()
+        for location in locations:
+            resolved = str(Path(location).resolve())
+            if resolved not in paths:
+                paths.append(resolved)
+    return tuple(paths)
+
+
+def restart_with_bundled_cuda_runtime() -> bool:
+    """Re-exec once so Linux's loader sees pip-installed cuBLAS and cuDNN."""
+    if not sys.platform.startswith("linux") or os.getenv(CUDA_RUNTIME_READY_ENV) == "1":
+        return False
+    bundled = bundled_cuda_library_paths()
+    if not bundled:
+        return False
+    existing = tuple(path for path in os.getenv("LD_LIBRARY_PATH", "").split(os.pathsep) if path)
+    if all(path in existing for path in bundled):
+        return False
+    environment = os.environ.copy()
+    environment["LD_LIBRARY_PATH"] = os.pathsep.join((*bundled, *existing))
+    environment[CUDA_RUNTIME_READY_ENV] = "1"
+    os.execve(sys.executable, [sys.executable, *sys.argv], environment)
+    return True
+
+
+def load_desktop_window_size(data_dir: str | Path | None = None) -> tuple[int, int]:
+    """Return the last validated native PETEY window size."""
+    directory = Path(data_dir) if data_dir else default_data_dir()
+    try:
+        payload = json.loads((directory / DESKTOP_WINDOW_FILE).read_text(encoding="utf-8"))
+        width = int(payload.get("width"))
+        height = int(payload.get("height"))
+        if (
+            MIN_DESKTOP_WIDTH <= width <= MAX_DESKTOP_DIMENSION
+            and MIN_DESKTOP_HEIGHT <= height <= MAX_DESKTOP_DIMENSION
+        ):
+            return width, height
+    except (FileNotFoundError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return DEFAULT_DESKTOP_WIDTH, DEFAULT_DESKTOP_HEIGHT
+
+
+class DesktopWindowSizeStore:
+    """Debounce native resize events and atomically persist the last normal size."""
+
+    def __init__(self, data_dir: str | Path, width: int, height: int, delay: float = 0.4):
+        self.path = Path(data_dir) / DESKTOP_WINDOW_FILE
+        self.width = int(width)
+        self.height = int(height)
+        self.delay = delay
+        self._lock = threading.Lock()
+        self._timer = None
+
+    def record(self, width: object, height: object) -> None:
+        try:
+            width = int(width)
+            height = int(height)
+        except (TypeError, ValueError):
+            return
+        if not (
+            MIN_DESKTOP_WIDTH <= width <= MAX_DESKTOP_DIMENSION
+            and MIN_DESKTOP_HEIGHT <= height <= MAX_DESKTOP_DIMENSION
+        ):
+            return
+        with self._lock:
+            self.width, self.height = width, height
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self.delay, self.flush)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def pause(self) -> None:
+        """Discard a pending fullscreen or maximize resize without losing normal size."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+    def flush(self) -> None:
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+            width, height = self.width, self.height
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        try:
+            temporary.write_text(
+                json.dumps({"version": 1, "width": width, "height": height}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            try:
+                temporary.chmod(0o600)
+            except OSError:
+                pass
+            temporary.replace(self.path)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    close = flush
 
 
 def persistent_remote_access_token(
@@ -201,13 +322,29 @@ class DesktopBridge:
 
     def __init__(
         self, gallery=None, addons_dir=None, voice_cues_dir=None, restart_args=(), data_dir=None,
+        window_size_store=None, petey_public_origin="", petey_access_token="",
+        restart_modes=None,
     ):
         self.window = None
         self.gallery = gallery
         self.addons_dir = Path(addons_dir) if addons_dir else None
         self.voice_cues_dir = Path(voice_cues_dir) if voice_cues_dir else None
         self.data_dir = Path(data_dir) if data_dir else None
+        self.window_size_store = window_size_store
+        self.petey_public_origin = str(petey_public_origin or "").rstrip("/")
+        self.petey_access_token = str(petey_access_token or "")
         self.restart_args = tuple(restart_args)
+        self.restart_modes = {
+            "current": self.restart_args,
+            "desktop": (),
+            "browser": ("--browser",),
+        }
+        if isinstance(restart_modes, dict):
+            for name, arguments in restart_modes.items():
+                if arguments is None:
+                    self.restart_modes[str(name)] = None
+                elif isinstance(arguments, (list, tuple)):
+                    self.restart_modes[str(name)] = tuple(str(item) for item in arguments)
         self.fullscreen = False
         self._restart_started = False
 
@@ -220,11 +357,13 @@ class DesktopBridge:
     def toggle_fullscreen(self):
         if self.window is None:
             return {"ok": False, "fullscreen": False}
-        self.window.toggle_fullscreen()
         self.fullscreen = not self.fullscreen
+        if self.fullscreen and self.window_size_store is not None:
+            self.window_size_store.pause()
+        self.window.toggle_fullscreen()
         return {"ok": True, "fullscreen": self.fullscreen}
 
-    def choose_workspace_folder(self):
+    def choose_approved_folder(self):
         """Open the native folder picker; the Flask API performs final validation."""
         if self.window is None:
             return ""
@@ -241,7 +380,7 @@ class DesktopBridge:
         return str(result or "")
 
     def choose_image_folder(self):
-        return self.choose_workspace_folder()
+        return self.choose_approved_folder()
 
     def open_project_repository(self):
         return bool(webbrowser.open(PROJECT_URL))
@@ -279,18 +418,29 @@ class DesktopBridge:
         except OSError as exc:
             return {"ok": False, "error": f"Could not open the voice acknowledgement folder: {exc}"}
 
-    def restart_petey(self):
+    def restart_petey(self, mode="current"):
         """Replace this desktop process so restart cannot leave stale copies."""
         if self.window is None:
             return {"ok": False, "error": "Restart is available in the PETEY desktop window."}
+        mode = str(mode or "current").strip().lower()
+        if mode not in self.restart_modes:
+            return {"ok": False, "error": "Choose a supported PETEY restart mode."}
+        arguments = self.restart_modes.get(mode)
+        if arguments is None:
+            return {
+                "ok": False,
+                "error": "Cloudflare restart needs a configured hostname. Start PETEY with --cloudflare-hostname first.",
+            }
         if self._restart_started:
             return {"ok": True, "restarting": True}
         self._restart_started = True
         try:
+            if self.window_size_store is not None:
+                self.window_size_store.flush()
             os.chdir(PROJECT_ROOT)
             os.execv(
                 sys.executable,
-                [sys.executable, str(Path(__file__).resolve()), *self.restart_args],
+                [sys.executable, str(Path(__file__).resolve()), *arguments],
             )
             return {"ok": True, "restarting": True}
         except OSError as exc:
@@ -308,6 +458,26 @@ class DesktopBridge:
         except ValueError:
             return False
         return bool(webbrowser.open(parsed.geturl(), new=1))
+
+    def open_petey_artifact(self, path):
+        """Open a PETEY artifact in a paired OS browser without exposing loopback links."""
+        try:
+            parsed = urlsplit(str(path or ""))
+        except ValueError:
+            parsed = None
+        if (parsed is None or parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
+                or not re.fullmatch(
+                    r"/api/addons/petey-opencode/artifacts/\d+/\d+", parsed.path
+                ) or not self.petey_public_origin):
+            return {"ok": False, "error": "This OpenCode artifact link is invalid."}
+        url = f"{self.petey_public_origin}{parsed.path}"
+        if self.petey_access_token:
+            url = f"{url}?{urlencode({'access_token': self.petey_access_token})}"
+        opened = bool(webbrowser.open(url, new=1))
+        return {
+            "ok": opened,
+            "error": "" if opened else "Could not open this artifact in the browser.",
+        }
 
     def open_discord_url(self, url):
         parsed = urlsplit(str(url or ""))
@@ -941,26 +1111,64 @@ def main():
             return
 
         state = local.app.config["PETEY_STATE"]
+        window_width, window_height = load_desktop_window_size(state.data_dir)
+        window_size_store = DesktopWindowSizeStore(
+            state.data_dir, window_width, window_height
+        )
+        preserved_cloudflare_args = (
+            "--cloudflare-hostname", cloudflare_hostname, "--port", str(port),
+        ) if cloudflare_hostname else ()
+        cloudflare_restart_args = (
+            "--cloudflare", *preserved_cloudflare_args,
+        ) if cloudflare_hostname else None
+        current_restart_args = (
+            cloudflare_restart_args if args.cloudflare else preserved_cloudflare_args
+        )
         bridge = DesktopBridge(
             local.app.config["PETEY_GALLERY"],
             local.app.config["PETEY_ADDONS"].user_dir,
             local.app.config["PETEY_VOICE_CUES"].root,
-            restart_args=(
-                "--cloudflare", "--cloudflare-hostname", cloudflare_hostname,
-                "--port", str(port),
-            ) if args.cloudflare else (),
+            restart_args=current_restart_args,
             data_dir=state.data_dir,
+            window_size_store=window_size_store,
+            petey_public_origin=(
+                f"https://{cloudflare_hostname}" if args.cloudflare else local.url
+            ),
+            petey_access_token=access_token if args.cloudflare else "",
+            restart_modes={
+                "current": current_restart_args,
+                "desktop": preserved_cloudflare_args,
+                "cloudflare": cloudflare_restart_args,
+                "browser": ("--browser", *preserved_cloudflare_args),
+            },
         )
         bridge.window = webview.create_window(
             "PETEY",
             desktop_url,
-            width=1180,
-            height=780,
-            min_size=(760, 560),
+            width=window_width,
+            height=window_height,
+            min_size=(MIN_DESKTOP_WIDTH, MIN_DESKTOP_HEIGHT),
             on_top=bool(state.preferences.get("always_on_top", False)),
             text_select=True,
             js_api=bridge,
         )
+        window_mode = {"maximized": False}
+
+        def remember_window_size(width, height):
+            if not bridge.fullscreen and not window_mode["maximized"]:
+                window_size_store.record(width, height)
+
+        def pause_for_maximize():
+            window_mode["maximized"] = True
+            window_size_store.pause()
+
+        def resume_after_restore():
+            window_mode["maximized"] = False
+
+        bridge.window.events.resized += remember_window_size
+        bridge.window.events.maximized += pause_for_maximize
+        bridge.window.events.restored += resume_after_restore
+        bridge.window.events.closing += window_size_store.close
         try:
             backend = preferred_linux_webview_backend()
             configure_linux_window_identity(backend)
@@ -976,9 +1184,12 @@ def main():
                 f"The native window backend could not start ({exc}). For a "
                 "self-contained Qt backend, run: pip install 'pywebview[pyside6]'",
             )
+        finally:
+            window_size_store.close()
     finally:
         local.close()
 
 
 if __name__ == "__main__":
+    restart_with_bundled_cuda_runtime()
     main()

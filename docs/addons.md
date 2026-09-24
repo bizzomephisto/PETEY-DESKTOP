@@ -154,11 +154,19 @@ context.emit_event(
 )
 ```
 
+For a command triggered by a direct button press or equivalent current user gesture,
+pass `user_initiated=True`. PETEY then treats the hidden text as the user's current
+instruction and makes the normally authorized tools for that surface available. Do
+not set this flag for timers, webhooks, device changes, or other autonomous events.
+
 `conversation_id` defaults to the active conversation at emission time. `surface`
 may be `petey_desktop` or `mobile_petey`. `speak=True` requests automatic speech,
 but the browser still respects its speaker mute control. Scalar `metadata` is saved
 on both the hidden event and visible reply so the originating add-on can correlate
-the completed response. Keep events under 5,000
+the completed response, and the published browser event carries the same sanitized
+fields. An add-on may render one HTTPS image beneath the visible reply with
+`chat_image_url`, plus optional `chat_image_link`, `chat_image_alt`, and
+`chat_image_caption` strings. Keep events under 5,000
 characters, avoid secrets, suppress repeats at the source, and provide a disabled-
 by-default user toggle because each event can invoke the configured chat provider.
 
@@ -194,6 +202,10 @@ before opening their microphone and `release()` when finished. This pauses and l
 restores PETEY's continuous wake/open-mic capture. Listen for `petey:voice-playback`
 to exclude PETEY's own speech from live transcription while leaving the archive
 recording intact.
+
+An add-on that plays its own optional spoken cue can check
+`window.peteyAudioControls.speakerEnabled()` first. This reflects PETEY's persisted
+speaker mute and disabled speech-provider state. Add-on cues must obey it.
 
 ### Downloading add-on files
 
@@ -269,6 +281,13 @@ ToolSpec(
 
 Keep `required_when` at its default `False` for tools that are broadly available or
 consequential. Its predicate should be at least as narrow as `available_when`.
+
+A successful tool result can render one image beneath PETEY's visible reply by
+returning `chat_image_url`, with optional `chat_image_alt`, `chat_image_caption`,
+and `chat_image_link` strings. Use a same-origin add-on route or HTTPS URL. Tool
+events are saved with the reply, so the URL must remain valid when the conversation
+is reopened. Keep local image storage bounded and serve private data only through
+PETEY's token-gated origin.
 
 Local stdio MCP add-ons can reuse `petey.mcp_client.MCPStdioClient`:
 

@@ -1,4 +1,11 @@
-<details id="character-settings" class="settings-card settings-section" open>
+<details id="saved-personas-settings" class="settings-card settings-section" open>
+                    <summary><div class="settings-section-heading"><div><h2>Saved Petey profiles</h2><p>Load or manage one of five complete instruction, style, and voice profiles.</p></div><span class="provider-badge">5 local slots</span></div></summary>
+                    <div class="settings-section-body">
+                        <div id="saved-persona-slots" class="persona-slot-grid"></div>
+                    </div>
+                </details>
+
+                <details id="character-settings" class="settings-card settings-section" open>
                     <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
@@ -31,7 +38,8 @@
                     <summary><div class="settings-section-heading"><div><h2>Voice</h2><p>Choose the speech provider, voice, and delivery for this Petey profile.</p></div><span id="speech-provider-badge" class="provider-badge">Automatic</span></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
-                            <label><span>Speech provider</span><select id="speech-provider"><option value="automatic">Automatic — Gemini, then OpenAI</option><option value="gemini">Google Gemini only</option><option value="openai">OpenAI only</option><option value="disabled">Disabled</option></select></label>
+                            <label><span>Speech provider</span><select id="speech-provider"><option value="automatic">Automatic — Gemini, then OpenAI</option><option value="deapi">deAPI</option><option value="gemini">Google Gemini only</option><option value="openai">OpenAI only</option><option value="disabled">Disabled</option></select></label>
+                            <label id="speech-deapi-voice-field" hidden><span>Default deAPI voice</span><select id="speech-deapi-voice"><option value="Vivian">Vivian — Warm, conversational</option><option value="Serena">Serena — Elegant, calm</option><option value="Ono_Anna">Ono Anna — Youthful, clear</option><option value="Sohee">Sohee — Soft, gentle</option><option value="Eric">Eric — Standard, businesslike</option><option value="Dylan">Dylan — Young, energetic</option><option value="Ryan">Ryan — Casual, conversational</option><option value="Aiden">Aiden — Young, light</option><option value="Uncle_Fu">Uncle Fu — Mature, warm</option></select></label>
                             <label id="speech-gemini-voice-field" hidden><span>Default Gemini voice</span><select id="speech-gemini-voice"><option value="Zephyr">Zephyr — Bright</option><option value="Puck">Puck — Upbeat</option><option value="Charon">Charon — Informative</option><option value="Kore" selected>Kore — Firm</option><option value="Fenrir">Fenrir — Excitable</option><option value="Leda">Leda — Youthful</option><option value="Orus">Orus — Firm</option><option value="Aoede">Aoede — Breezy</option><option value="Callirrhoe">Callirrhoe — Easy-going</option><option value="Autonoe">Autonoe — Bright</option><option value="Enceladus">Enceladus — Breathy</option><option value="Iapetus">Iapetus — Clear</option><option value="Umbriel">Umbriel — Easy-going</option><option value="Algieba">Algieba — Smooth</option><option value="Despina">Despina — Smooth</option><option value="Erinome">Erinome — Clear</option><option value="Algenib">Algenib — Gravelly</option><option value="Rasalgethi">Rasalgethi — Informative</option><option value="Laomedeia">Laomedeia — Upbeat</option><option value="Achernar">Achernar — Soft</option><option value="Alnilam">Alnilam — Firm</option><option value="Schedar">Schedar — Even</option><option value="Gacrux">Gacrux — Mature</option><option value="Pulcherrima">Pulcherrima — Forward</option><option value="Achird">Achird — Friendly</option><option value="Zubenelgenubi">Zubenelgenubi — Casual</option><option value="Vindemiatrix">Vindemiatrix — Gentle</option><option value="Sadachbia">Sadachbia — Lively</option><option value="Sadaltager">Sadaltager — Knowledgeable</option><option value="Sulafat">Sulafat — Warm</option></select></label>
                             <label id="speech-openai-voice-field" hidden><span>Default OpenAI voice</span><select id="speech-openai-voice"><option value="marin">Marin</option><option value="cedar">Cedar</option><option value="alloy">Alloy</option><option value="ash">Ash</option><option value="ballad">Ballad</option><option value="coral">Coral</option><option value="echo">Echo</option><option value="fable">Fable</option><option value="nova">Nova</option><option value="onyx">Onyx</option><option value="sage">Sage</option><option value="shimmer">Shimmer</option><option value="verse">Verse</option></select></label>
                             <label id="speech-style-field" class="full-span" hidden><span>Default delivery directions <small>optional</small></span><textarea id="speech-style" rows="3" maxlength="2000" placeholder="Warm and conversational, with a relaxed pace…"></textarea></label>
@@ -45,11 +53,16 @@
                     </div>
                 </details>
 
-                <details id="saved-personas-settings" class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Saved Petey profiles</h2><p>Keep up to five complete instruction, style, and voice profiles on this machine.</p></div><span class="provider-badge">5 local slots</span></div></summary>
-                    <div class="settings-section-body">
-                        <div id="saved-persona-slots" class="persona-slot-grid"></div>
-
-                    </div>
-                </details>
 <div class="settings-save-bar"><span>Instructions, traits, communication style, voice, and speech provider save together.</span><button id="save-personality" class="primary-button" type="button">Save Petey profile</button></div>
+
+<div id="profile-slot-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-slot-dialog-title" hidden>
+    <div class="new-chat-card profile-slot-dialog-card">
+        <div class="new-chat-heading">
+            <div><span class="page-eyebrow">SAVE PETEY PROFILE</span><h2 id="profile-slot-dialog-title">Which profile slot?</h2></div>
+            <button id="profile-slot-dialog-close" class="new-chat-close" type="button" aria-label="Close">×</button>
+        </div>
+        <p>Choose where to save the complete profile. Selecting an occupied slot replaces it.</p>
+        <div id="profile-slot-choices" class="profile-slot-choices"></div>
+        <button id="profile-slot-dialog-cancel" class="text-button" type="button">Cancel</button>
+    </div>
+</div>
