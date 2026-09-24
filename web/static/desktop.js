@@ -4644,6 +4644,11 @@ document.getElementById('reset-all-memory').addEventListener('click', async () =
 
 const mediaOperation = document.getElementById('media-operation');
 const mediaModel = document.getElementById('media-model');
+const mediaModelField = document.getElementById('media-model-field');
+const mediaModelLabel = document.getElementById('media-model-label');
+const mediaOperationFields = document.getElementById('media-operation-fields');
+const mediaSpeechFields = document.getElementById('media-speech-fields');
+const mediaSpeechProviderField = document.getElementById('media-speech-provider-field');
 const mediaSourceField = document.getElementById('media-source-field');
 const mediaNonimageSource = document.getElementById('media-nonimage-source');
 const mediaPrompt = document.getElementById('media-prompt');
@@ -4657,6 +4662,7 @@ let mediaPriceRequest = 0;
 let mediaPriceController = null;
 const pricedMediaOperations = new Set(['txt2img', 'img2img', 'txt2video', 'img2video', 'img-rmbg', 'img-upscale']);
 const mediaPromptDraftStorageKey = 'petey.media-prompt-drafts.v1';
+const mediaSpeechProviderStorageKey = 'petey.media-speech-provider.v1';
 let deapiSpeechConfiguration = {default_model: '', voices: []};
 
 const mediaOperationUI = {
@@ -4702,6 +4708,15 @@ function rememberMediaPrompt(operation = activeMediaOperation) {
     saveMediaPromptDrafts();
 }
 
+function savedMediaSpeechProvider() {
+    try {
+        const provider = window.localStorage.getItem(mediaSpeechProviderStorageKey);
+        return provider === 'gemini' ? 'gemini' : 'deapi';
+    } catch (_error) {
+        return 'deapi';
+    }
+}
+
 async function loadMediaCatalog() {
     const connection = document.getElementById('media-connection');
     setFeedback(connection, 'Connecting…');
@@ -4714,6 +4729,9 @@ async function loadMediaCatalog() {
         openaiSpeechVoices = builtInOpenAISpeechVoices;
         deapiSpeechConfiguration = payload.deapi_speech || deapiSpeechConfiguration;
         mediaSelectedModels = payload.selected_models || {};
+        const savedSpeechModel = mediaSelectedModels.txt2audio || '';
+        document.getElementById('media-speech-provider').value =
+            geminiSpeechModels.includes(savedSpeechModel) ? 'gemini' : savedMediaSpeechProvider();
         mediaCatalogLoaded = true;
         configureMediaOperation(true);
         startMediaPolling();
@@ -4751,8 +4769,14 @@ function configureMediaOperation(preserveSource = false) {
     document.getElementById('media-visual-fields').hidden = !config.visual;
     document.getElementById('media-video-fields').hidden = !config.video;
     document.getElementById('media-music-fields').hidden = !config.music;
-    document.getElementById('media-speech-fields').hidden = !config.speech;
-    if (config.speech) configureMediaSpeechFields();
+    mediaSpeechFields.hidden = !config.speech;
+    if (config.speech) {
+        mediaSpeechProviderField.after(mediaModelField);
+        configureMediaSpeechFields();
+    } else {
+        mediaOperationFields.append(mediaModelField);
+        mediaModelLabel.textContent = 'Model';
+    }
     document.getElementById('media-upscale-fields').hidden = !config.upscale;
     setFeedback(mediaStatus, '');
     loadMediaModels(operation);
@@ -4761,6 +4785,7 @@ function configureMediaOperation(preserveSource = false) {
 function configureMediaSpeechFields() {
     const provider = document.getElementById('media-speech-provider').value || 'deapi';
     const voiceSelect = document.getElementById('media-voice');
+    mediaModelLabel.textContent = provider === 'gemini' ? 'Gemini model' : 'deAPI model';
     if (provider === 'gemini') {
         fillSelect(
             voiceSelect, geminiSpeechVoices, speechConfiguration.gemini_voice || 'Kore',
@@ -4830,6 +4855,14 @@ mediaOperation.addEventListener('change', () => {
     configureMediaOperation();
 });
 document.getElementById('media-speech-provider').addEventListener('change', () => {
+    try {
+        window.localStorage.setItem(
+            mediaSpeechProviderStorageKey,
+            document.getElementById('media-speech-provider').value,
+        );
+    } catch (_error) {
+        // Provider persistence is optional when browser storage is unavailable.
+    }
     configureMediaSpeechFields();
     mediaModelsCache.delete('txt2audio');
     loadMediaModels('txt2audio');

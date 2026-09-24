@@ -31,6 +31,8 @@
   voice, and show complete job errors.
 - Added deAPI as a conversational speech provider with profile-aware model and
   voice settings across desktop, mobile, chat, Visual Mode, and wake cues.
+- Reordered Media text-to-speech controls so provider comes before its model,
+  labeled Gemini and deAPI models clearly, and persisted the selected provider.
 
 ## v0.19.0 — 2026-09-23
 

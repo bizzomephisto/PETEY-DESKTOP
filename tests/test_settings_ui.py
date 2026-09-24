@@ -501,6 +501,21 @@ class SettingsUITests(unittest.TestCase):
         self.assertNotIn("apiJson('/api/desktop/speech')", loader)
         self.assertNotIn('speechSettingsLoaded = true', loader)
 
+    def test_media_speech_provider_precedes_and_labels_its_model(self):
+        root = Path(__file__).parents[1]
+        desktop = (root / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+        self.assertIn('id="media-operation-fields"', desktop)
+        self.assertIn('id="media-model-field"', desktop)
+        self.assertIn('id="media-model-label"', desktop)
+        self.assertIn('id="media-speech-provider-field"', desktop)
+        self.assertIn('mediaSpeechProviderField.after(mediaModelField)', javascript)
+        self.assertIn("provider === 'gemini' ? 'Gemini model' : 'deAPI model'", javascript)
+        self.assertIn("mediaOperationFields.append(mediaModelField)", javascript)
+        self.assertIn("const mediaSpeechProviderStorageKey", javascript)
+        self.assertIn("geminiSpeechModels.includes(savedSpeechModel) ? 'gemini'", javascript)
+        self.assertIn("localStorage.setItem(\n            mediaSpeechProviderStorageKey", javascript)
+
     def test_transcription_providers_and_media_speech_are_separate(self):
         root = Path(__file__).parents[1]
         providers = (root / 'web/templates/settings/providers.html').read_text(encoding='utf-8')

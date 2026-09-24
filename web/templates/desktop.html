@@ -184,7 +184,7 @@
             <header class="tool-header"><div><h1>Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>
             <div class="tool-content media-layout">
                 <section class="settings-card media-form-card">
-                    <div class="field-grid two-column">
+                    <div id="media-operation-fields" class="field-grid two-column">
                         <label><span>Operation</span>
                             <select id="media-operation">
                                 <option value="txt2img">Generate image</option>
@@ -198,7 +198,7 @@
                                 <option value="img-upscale">Upscale image</option>
                             </select>
                         </label>
-                        <label><span>Model</span><select id="media-model"><option value="">Auto — first available</option></select></label>
+                        <label id="media-model-field"><span id="media-model-label">Model</span><select id="media-model"><option value="">Auto — first available</option></select></label>
                     </div>
 
                     <label id="media-prompt-field" class="full-field"><span id="media-prompt-label">Prompt</span><textarea id="media-prompt" rows="6" placeholder="Describe what you want Petey to create…"></textarea></label>
@@ -238,7 +238,7 @@
                     </div>
                     <div id="media-speech-fields" class="media-parameter-group field-grid two-column" hidden>
                         <p class="hint full-span">Choose deAPI or Gemini independently from PETEY's conversational voice provider.</p>
-                        <label><span>Speech provider</span><select id="media-speech-provider"><option value="deapi">deAPI</option><option value="gemini">Google Gemini</option></select></label>
+                        <label id="media-speech-provider-field"><span>Speech provider</span><select id="media-speech-provider"><option value="deapi">deAPI</option><option value="gemini">Google Gemini</option></select></label>
                         <label><span>Voice</span>
                             <select id="media-voice">
                                 <option value="Kore">Kore — Firm</option>
