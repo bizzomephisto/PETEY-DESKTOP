@@ -18,6 +18,19 @@ const newChatDialog = document.getElementById('new-chat-dialog');
 const newChatTitle = document.getElementById('new-chat-title');
 const newChatPersona = document.getElementById('new-chat-persona');
 const mobileLayoutQuery = window.matchMedia('(max-width: 760px)');
+const mobileVoiceModeStorageKey = 'petey.mobile-voice-mode.v1';
+let mobileVoiceMode = '';
+try {
+    const savedMobileMode = localStorage.getItem(mobileVoiceModeStorageKey) || '';
+    mobileVoiceMode = ['always_on', 'wake_word', 'push_to_talk'].includes(savedMobileMode)
+        ? savedMobileMode : '';
+} catch (_error) { /* Private browsing may block local storage. */ }
+
+function effectiveVoiceInputMode() {
+    const configured = voiceInputConfiguration?.mode || 'disabled';
+    if (configured === 'disabled') return configured;
+    return mobileLayoutQuery.matches && mobileVoiceMode ? mobileVoiceMode : configured;
+}
 let personName = 'User';
 let personaPresets = {};
 let savedPersonas = [];
@@ -733,7 +746,7 @@ async function loadDesktop() {
         }
         configureVoiceInputUI();
         applyWakeCueConfiguration(bootstrap.voice_cues);
-        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+        if (['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             window.setTimeout(() => startContinuousVoiceInput(), 250);
         }
     } catch (error) {
@@ -1072,7 +1085,7 @@ composer.addEventListener('submit', async event => {
     const text = messageInput.value.trim();
     const file = selectedAttachmentFile || attachmentInput.files[0];
     if (sendButton.disabled || (!text && !file)) return;
-    const continueVoiceConversation = voiceInputConfiguration.mode === 'wake_word'
+    const continueVoiceConversation = effectiveVoiceInputMode() === 'wake_word'
         && voiceConversationActive && voiceConversationAwaitingReply;
 
     const attachmentPreviewUrl = file?.type?.startsWith('image/') ? URL.createObjectURL(file) : '';
@@ -1565,10 +1578,15 @@ const mobileVoiceMethod = document.getElementById('mobile-voice-method');
 let mobileSpeechCatalogLoaded = false;
 
 function syncMobileSettings() {
-    const method = ['always_on', 'wake_word', 'push_to_talk'].includes(voiceInputConfiguration.mode)
-        ? voiceInputConfiguration.mode : 'push_to_talk';
-    mobileVoiceMethod.value = method;
+    mobileVoiceMethod.value = mobileVoiceMode;
     document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
+}
+
+function saveMobileVoiceMode(value) {
+    mobileVoiceMode = ['always_on', 'wake_word', 'push_to_talk'].includes(value)
+        ? value : '';
+    try { localStorage.setItem(mobileVoiceModeStorageKey, mobileVoiceMode); }
+    catch (_error) { /* The setting still lasts for this page session. */ }
 }
 
 function fillMobileVoiceChoices(configuration = speechConfiguration) {
@@ -1741,15 +1759,10 @@ document.getElementById('mobile-settings-save').addEventListener('click', async 
             applyWakeCueConfiguration(speechPayload.voice_cues);
             renderVoiceResponseToggle();
         }
-        const voicePayload = await apiJson('/api/desktop/voice-input', {
-            method: 'PUT', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({mode: mobileVoiceMethod.value}),
-        });
         await stopVoiceInput();
-        voiceInputConfiguration = {...voiceInputConfiguration, ...voicePayload.configuration};
-        microphoneMuted = Boolean(voiceInputConfiguration.muted);
+        saveMobileVoiceMode(mobileVoiceMethod.value);
         configureVoiceInputUI();
-        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+        if (['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             await startContinuousVoiceInput();
         }
         await savePreferences({
@@ -2398,7 +2411,7 @@ function setVoiceInputStatus(message) {
 }
 
 function configureVoiceInputUI() {
-    const mode = voiceInputConfiguration?.mode || 'disabled';
+    const mode = effectiveVoiceInputMode();
     const micIsMuted = microphoneMuted
         || (['always_on', 'wake_word'].includes(mode)
             && !voiceInputRunning && !microphoneCapturing);
@@ -2459,7 +2472,9 @@ function configureVoiceInputUI() {
                 : `Speech detected · waiting to hear “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
     } else if (mode === 'push_to_talk') {
         setVoiceInputStatus(mobileLayoutQuery.matches
-            ? 'Hold the mic to talk · tap to mute'
+            ? mobileVoiceMode === 'push_to_talk'
+                ? 'Push to talk on this phone · hold the mic to talk'
+                : 'Hold the mic to talk · tap to mute'
             : 'Hold the mic or Space to talk · Enter to send');
     } else if (voiceInputRunning && mode === 'wake_word' && voiceConversationAwaitingReply) {
         setVoiceInputStatus('Petey is responding · microphone stays ready for follow-up…');
@@ -2650,7 +2665,7 @@ document.getElementById('save-voice-input').addEventListener('click', async () =
         microphoneMuted = Boolean(voiceInputConfiguration.muted);
         configureVoiceInputSettings();
         configureVoiceInputUI();
-        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+        if (['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             await startContinuousVoiceInput();
         }
         setFeedback(feedback, voiceInputConfiguration.mode === 'disabled' ? 'Microphone input disabled.' : 'Microphone settings saved.', 'success');
@@ -2749,13 +2764,13 @@ function handleMicrophoneAudio(event) {
     }
     const peteySpeaking = voiceInputPlaybackBlocked && !wakeCuePlaying
         && Boolean(activeSpeechCancel || activeChatAudio);
-    if (voiceInputRunning && voiceInputConfiguration.mode === 'wake_word'
+    if (voiceInputRunning && effectiveVoiceInputMode() === 'wake_word'
         && (peteySpeaking || (!voiceInputPlaybackBlocked
             && !voiceConversationActive && !voiceConversationAwaitingReply))) {
         queueLocalWakeAudio(samples);
     }
     if (!voiceInputRunning || voiceInputBusy || voiceInputPlaybackBlocked) return;
-    const mode = voiceInputConfiguration.mode;
+    const mode = effectiveVoiceInputMode();
     if (mode === 'push_to_talk') {
         if (microphoneCapturing) microphoneCapture.push(new Float32Array(samples));
         return;
@@ -2863,7 +2878,7 @@ async function transcribeVoiceInput(audio) {
 function handleVoiceTranscript(transcript) {
     if (!transcript) return;
     let command = transcript;
-    if (voiceInputConfiguration.mode === 'wake_word') {
+    if (effectiveVoiceInputMode() === 'wake_word') {
         const wakeWord = voiceInputConfiguration.wake_word || 'Petey';
         const expression = wakeWordExpression(wakeWord);
         const match = transcript.match(new RegExp(`\\b(?:${expression})\\b[\\s,.:;!?—-]*(.*)$`, 'i'));
@@ -2889,7 +2904,7 @@ function handleVoiceTranscript(transcript) {
     messageInput.value = existing ? `${existing} ${command}` : command;
     messageInput.dispatchEvent(new Event('input'));
     if (!sendButton.disabled) {
-        if (voiceInputConfiguration.mode === 'wake_word') markVoiceConversationRequest();
+        if (effectiveVoiceInputMode() === 'wake_word') markVoiceConversationRequest();
         composer.requestSubmit();
     }
     else setVoiceInputStatus('Transcript added to the message box; Petey is still replying.');
@@ -2958,7 +2973,7 @@ async function loadWakeCues(showStatus = false) {
 function setWakeCuePlaybackActive(active, preserveCapture = false) {
     wakeCuePlaying = Boolean(active);
     voiceInputPlaybackBlocked = wakeCuePlaying || Boolean(activeSpeechCancel || activeChatAudio);
-    if (active && !preserveCapture && microphoneCapturing && voiceInputConfiguration.mode !== 'push_to_talk') {
+    if (active && !preserveCapture && microphoneCapturing && effectiveVoiceInputMode() !== 'push_to_talk') {
         finishVoiceCapture(true);
     }
     if (!active && microphoneCapturing) microphoneLastVoiceAt = performance.now();
@@ -3057,7 +3072,7 @@ function armVoiceConversationListening(statusMessage) {
 
 function openVoiceConversationFollowup() {
     if (!voiceConversationActive || !voiceInputRunning
-        || voiceInputConfiguration.mode !== 'wake_word') return;
+        || effectiveVoiceInputMode() !== 'wake_word') return;
     armVoiceConversationListening('Listening for your follow-up…');
 }
 
@@ -3293,11 +3308,11 @@ async function flushLocalWakeAudio() {
 
 async function startLocalWakeDetector() {
     if (wakeDetectorStarting || wakeDetectorSessionId
-        || voiceInputConfiguration.mode !== 'wake_word') return;
+        || effectiveVoiceInputMode() !== 'wake_word') return;
     wakeDetectorStarting = true;
     try {
         const payload = await apiJson('/api/desktop/voice-input/wake', {method: 'POST'});
-        if (voiceInputRunning && voiceInputConfiguration.mode === 'wake_word') {
+        if (voiceInputRunning && effectiveVoiceInputMode() === 'wake_word') {
             wakeDetectorSessionId = payload.session_id || '';
             if (wakeDetectorSessionId) {
                 setVoiceInputStatus(`Listening for “${voiceInputConfiguration.wake_word || 'Petey'}”…`);
@@ -3324,7 +3339,7 @@ function stopLocalWakeDetector() {
 }
 
 async function startContinuousVoiceInput() {
-    if (!['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)
+    if (!['always_on', 'wake_word'].includes(effectiveVoiceInputMode())
         || microphoneMuted) return;
     try {
         await ensureMicrophone();
@@ -3375,7 +3390,7 @@ window.peteyConferenceAudio = {
         const shouldResume = conferenceVoiceWasRunning;
         conferenceVoiceWasRunning = false;
         if (shouldResume && !microphoneMuted
-                && ['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+                && ['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             await startContinuousVoiceInput();
         }
     },
@@ -3387,7 +3402,7 @@ document.getElementById('test-voice-input').addEventListener('click', async () =
     if (microphoneTestActive) {
         await stopVoiceInput();
         status.textContent = 'Microphone test stopped.';
-        if (['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+        if (['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             await startContinuousVoiceInput();
         }
         return;
@@ -3419,7 +3434,7 @@ function setVoicePlaybackActive(active) {
     if (active && wakeCuePlaying) stopWakeAcknowledgement();
     voiceInputPlaybackBlocked = Boolean(active || wakeCuePlaying);
     if (!active) finishVisualCaption();
-    if (active && microphoneCapturing && voiceInputConfiguration.mode !== 'push_to_talk') {
+    if (active && microphoneCapturing && effectiveVoiceInputMode() !== 'push_to_talk') {
         finishVoiceCapture(true);
     }
     window.dispatchEvent(new CustomEvent('petey:voice-playback', {
@@ -3436,7 +3451,7 @@ voiceInputButton.addEventListener('click', async () => {
         await setMicrophoneMuted(false);
         return;
     }
-    if (voiceInputConfiguration.mode === 'push_to_talk') return;
+    if (effectiveVoiceInputMode() === 'push_to_talk') return;
     if (voiceInputRunning) await setMicrophoneMuted(true);
     else await setMicrophoneMuted(false);
 });
@@ -3454,14 +3469,14 @@ async function setMicrophoneMuted(muted) {
         });
         voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
         microphoneMuted = Boolean(voiceInputConfiguration.muted);
-        if (!microphoneMuted && ['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+        if (!microphoneMuted && ['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             await startContinuousVoiceInput();
         }
     } catch (error) {
         microphoneMuted = previous;
         voiceInputConfiguration = {...voiceInputConfiguration, muted: previous};
         statusText.textContent = `Could not change microphone mute: ${error.message}`;
-        if (!microphoneMuted && ['always_on', 'wake_word'].includes(voiceInputConfiguration.mode)) {
+        if (!microphoneMuted && ['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             await startContinuousVoiceInput();
         }
     } finally {
@@ -3480,7 +3495,7 @@ visualMicMuteButton.addEventListener('click', async () => {
 });
 
 async function beginPushToTalk(event) {
-    if (voiceInputConfiguration.mode !== 'push_to_talk' || voiceInputBusy
+    if (effectiveVoiceInputMode() !== 'push_to_talk' || voiceInputBusy
         || microphoneMuted) return;
     event.preventDefault();
     primeSpeechPlayback();
@@ -3515,7 +3530,7 @@ async function beginPushToTalk(event) {
 }
 
 async function endPushToTalk(event) {
-    if (voiceInputConfiguration.mode !== 'push_to_talk' || !pushToTalkHeld) return;
+    if (effectiveVoiceInputMode() !== 'push_to_talk' || !pushToTalkHeld) return;
     event.preventDefault();
     pushToTalkHeld = false;
     voiceInputRunning = false;
@@ -3525,7 +3540,7 @@ async function endPushToTalk(event) {
 }
 
 function composerMicPointerDown(event) {
-    if (!mobileLayoutQuery.matches || voiceInputConfiguration.mode !== 'push_to_talk') {
+    if (!mobileLayoutQuery.matches || effectiveVoiceInputMode() !== 'push_to_talk') {
         beginPushToTalk(event);
         return;
     }
@@ -3545,7 +3560,7 @@ function composerMicPointerDown(event) {
 }
 
 async function composerMicPointerUp(event) {
-    if (!mobileLayoutQuery.matches || voiceInputConfiguration.mode !== 'push_to_talk') {
+    if (!mobileLayoutQuery.matches || effectiveVoiceInputMode() !== 'push_to_talk') {
         await endPushToTalk(event);
         return;
     }
@@ -3615,7 +3630,7 @@ document.getElementById('visual-dictation-cancel').addEventListener('click', () 
 });
 
 document.addEventListener('keydown', event => {
-    if (event.code !== 'Space' || event.repeat || voiceInputConfiguration.mode !== 'push_to_talk') return;
+    if (event.code !== 'Space' || event.repeat || effectiveVoiceInputMode() !== 'push_to_talk') return;
     if (!document.getElementById('view-chat').classList.contains('active-view')) return;
     if (event.target === voiceInputButton) return;
     if (event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;

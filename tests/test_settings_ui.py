@@ -126,6 +126,15 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(ids['mobile-show-all-settings'][1].get('role'), 'switch')
         self.assertIn('hidden', ids['mobile-settings-advanced'][1])
 
+    def test_mobile_voice_method_can_use_phone_only_push_to_talk(self):
+        javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn("const mobileVoiceModeStorageKey = 'petey.mobile-voice-mode.v1';", javascript)
+        self.assertIn('return mobileLayoutQuery.matches && mobileVoiceMode ? mobileVoiceMode : configured;', javascript)
+        self.assertIn('saveMobileVoiceMode(mobileVoiceMethod.value);', javascript)
+        self.assertIn('await stopVoiceInput();', javascript)
+
     def test_desktop_chat_controls_collapse_behind_chevron_menu(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         self.assertEqual(ids['chat-header-menu'][0], 'details')

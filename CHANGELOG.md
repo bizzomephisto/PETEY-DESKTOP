@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Made the mobile voice method a per-phone preference. Selecting Push to talk keeps
+  microphone capture closed while idle, preventing fake-call behavior on some car stereos,
+  without changing desktop wake-name or open-mic settings.
 - Removed the Workspace IDE, editor, command runner, proposal APIs, and navigation.
 - Moved read-only Filesystem folder approvals into Settings → Tools & integrations,
   including automatic migration of previously approved folders.
