@@ -185,6 +185,9 @@ class SettingsUITests(unittest.TestCase):
     def test_desktop_chat_controls_collapse_behind_chevron_menu(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         self.assertEqual(ids['chat-header-menu'][0], 'details')
+        self.assertIn('chat-header-menu-home', ids)
+        self.assertIn('command-chat-menu-slot', ids)
+        self.assertIn('chat-utility-dock', ids)
         self.assertIn('visual-style-field', ids)
         self.assertIn('hidden', ids['visual-style-field'][1])
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
@@ -194,6 +197,8 @@ class SettingsUITests(unittest.TestCase):
             encoding='utf-8'
         )
         self.assertIn("const chatHeaderMenu = document.getElementById('chat-header-menu');", javascript)
+        self.assertIn("commandChatMenuSlot.append(chatHeaderMenu);", javascript)
+        self.assertIn("chatMenuHome.after(chatHeaderMenu);", javascript)
         self.assertIn("if (chatHeaderMenu.open && !chatHeaderMenu.contains(event.target))", javascript)
         self.assertIn("document.getElementById('visual-style-field').hidden = !visualMode;", javascript)
         self.assertIn('chat-restart-petey', ids)
@@ -214,6 +219,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('savePreferences({visual_mode: false});', javascript)
         self.assertIn('.chat-header-menu-panel {', stylesheet)
         self.assertIn('.chat-header-menu[open] > summary span', stylesheet)
+        self.assertIn('.chat-utility-dock:empty { display: none; }', stylesheet)
         self.assertIn('body.native-visual-fullscreen .desktop-visual-back { display: none; }', stylesheet)
 
     def test_saved_profiles_are_first_and_save_asks_for_a_slot(self):

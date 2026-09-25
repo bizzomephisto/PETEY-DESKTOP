@@ -10,6 +10,8 @@
   its maximize event; close and restart now retain the last normal dimensions.
 - Replaced the collapsed Command Center rail tab with a compact upper-right menu
   button and moved the deAPI credit from the sidebar into the Media page heading.
+- Cleared the desktop chat header by moving chat controls into the open Command
+  Center drawer and adding a separate composer-side fallback dock for add-on status.
 
 - Made the mobile voice method a per-phone preference. Selecting Push to talk keeps
   microphone capture closed while idle, preventing fake-call behavior on some car stereos,

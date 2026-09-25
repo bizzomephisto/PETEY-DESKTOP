@@ -54,6 +54,7 @@
                     <button id="mobile-visual-mode" type="button" title="Open visual mode">Visual</button>
                     <button id="mobile-settings-toggle" type="button" title="Mobile settings" aria-expanded="false">⚙</button>
                 </div>
+                <span id="chat-header-menu-home" hidden></span>
                 <details id="chat-header-menu" class="chat-header-menu">
                     <summary aria-label="Open chat controls" title="Chat controls"><span aria-hidden="true">⌄</span></summary>
                     <div class="chat-header-menu-panel">
@@ -159,17 +160,20 @@
 
             <form id="composer" class="composer">
                 <div id="attachment-chip" class="attachment-chip" hidden></div>
-                <div class="composer-row">
-                    <div class="composer-tools">
-                        <label class="attach-button" title="Attach a file" aria-label="Attach a file">
-                            <input id="attachment" name="attachment" type="file" hidden>
-                            <span aria-hidden="true">＋</span>
-                        </label>
-                        <button id="voice-input-button" class="mic-button" type="button" title="Microphone input" aria-label="Microphone input" hidden><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg></button>
-                        <button id="voice-response-toggle" class="voice-response-button muted" type="button" title="Turn voice responses on" aria-label="Turn voice responses on" aria-pressed="false"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4V9ZM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button>
+                <div class="composer-main-row">
+                    <div id="chat-utility-dock" class="chat-utility-dock" aria-label="Chat status tools"></div>
+                    <div class="composer-row">
+                        <div class="composer-tools">
+                            <label class="attach-button" title="Attach a file" aria-label="Attach a file">
+                                <input id="attachment" name="attachment" type="file" hidden>
+                                <span aria-hidden="true">＋</span>
+                            </label>
+                            <button id="voice-input-button" class="mic-button" type="button" title="Microphone input" aria-label="Microphone input" hidden><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg></button>
+                            <button id="voice-response-toggle" class="voice-response-button muted" type="button" title="Turn voice responses on" aria-label="Turn voice responses on" aria-pressed="false"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4V9ZM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button>
+                        </div>
+                        <div class="composer-input-shell"><textarea id="message" name="message" rows="1" placeholder="Message Petey…" autofocus></textarea><span class="terminal-cursor" aria-hidden="true"></span></div>
+                        <button id="send" class="send-button" type="submit">Send</button>
                     </div>
-                    <div class="composer-input-shell"><textarea id="message" name="message" rows="1" placeholder="Message Petey…" autofocus></textarea><span class="terminal-cursor" aria-hidden="true"></span></div>
-                    <button id="send" class="send-button" type="submit">Send</button>
                 </div>
                 <small><span id="voice-input-status">Ready</span></small>
             </form>
@@ -275,8 +279,12 @@
 
         <aside id="command-rail" class="command-rail" aria-label="Command Center overview">
             <header class="command-rail-header">
-                <div><span class="command-kicker">PETEY COMMAND</span><strong>At a glance</strong></div>
-                <time id="command-clock">--:--</time>
+                <div><span class="command-kicker">PETEY COMMAND</span></div>
+                <div class="command-rail-header-tools">
+                    <time id="command-clock">--:--</time>
+                    <div id="command-chat-menu-slot"></div>
+                    <button id="command-rail-close" class="command-rail-close" type="button" aria-label="Hide command drawer" title="Hide command drawer"><span aria-hidden="true">☰</span></button>
+                </div>
             </header>
             <section class="command-card command-session-card" data-command-section="session" data-command-panel="session">
                 <div class="command-card-heading"><span>Live session</span><i id="command-status-dot" aria-hidden="true"></i></div>
@@ -318,7 +326,6 @@
                     <button id="command-disable-rail" type="button">Disable rail</button>
                 </div>
             </details>
-            <button id="command-rail-close" class="command-rail-close" type="button" aria-label="Hide At a glance rail" title="Hide rail">›</button>
         </aside>
         <button id="command-rail-handle" class="command-rail-handle" type="button" aria-label="Show command drawer" title="Show command drawer" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">☰</span></button>
     </main>

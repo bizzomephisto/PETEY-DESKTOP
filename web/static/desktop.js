@@ -1431,6 +1431,17 @@ function applyPreferences() {
     const railEnabled = preferences.command_rail_enabled !== false;
     const railOpen = railEnabled && preferences.command_rail_open !== false;
     document.documentElement.dataset.commandRail = railEnabled ? (railOpen ? 'open' : 'closed') : 'disabled';
+    const chatMenuHome = document.getElementById('chat-header-menu-home');
+    const commandChatMenuSlot = document.getElementById('command-chat-menu-slot');
+    const chatMenuTarget = railOpen && !mobileLayoutQuery.matches
+        ? commandChatMenuSlot
+        : chatMenuHome?.parentElement;
+    if (chatMenuTarget && chatHeaderMenu.parentElement !== chatMenuTarget) {
+        chatHeaderMenu.open = false;
+        if (chatMenuTarget === commandChatMenuSlot) commandChatMenuSlot.append(chatHeaderMenu);
+        else chatMenuHome.after(chatHeaderMenu);
+    }
+    chatHeaderMenu.classList.toggle('in-command-rail', chatMenuTarget === commandChatMenuSlot);
     document.getElementById('command-rail-enabled-setting').checked = railEnabled;
     document.getElementById('command-rail-handle').setAttribute('aria-expanded', String(railOpen));
     const railSections = {
