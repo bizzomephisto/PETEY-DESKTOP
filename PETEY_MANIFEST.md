@@ -87,7 +87,8 @@ separate web service.
 
 The native desktop remembers its last normal width and height in
 `desktop-window.json` and restores them at the next launch. Fullscreen and
-maximized dimensions do not replace the saved normal size.
+maximized transitions roll pending geometry back to the last committed normal
+size before close or restart writes the file.
 
 Cloudflare mode expects an already configured `cloudflared` tunnel and does not
 start or manage it. It requires a durable PETEY pairing token stored in the private

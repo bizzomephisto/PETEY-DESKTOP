@@ -173,6 +173,13 @@ class DesktopLauncherTests(unittest.TestCase):
             self.assertEqual(run_desktop.load_desktop_window_size(directory), (1440, 920))
             self.assertEqual(window_file.stat().st_mode & 0o777, 0o600)
 
+            store.record(1856, 984)
+            store.pause()
+            store.close()
+            self.assertEqual(
+                run_desktop.load_desktop_window_size(directory), (1440, 920)
+            )
+
             window_file.write_text('{"width": 100, "height": 80}', encoding="utf-8")
             self.assertEqual(
                 run_desktop.load_desktop_window_size(directory),

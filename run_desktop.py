@@ -163,6 +163,8 @@ class DesktopWindowSizeStore:
         self.path = Path(data_dir) / DESKTOP_WINDOW_FILE
         self.width = int(width)
         self.height = int(height)
+        self._committed_width = self.width
+        self._committed_height = self.height
         self.delay = delay
         self._lock = threading.Lock()
         self._timer = None
@@ -187,11 +189,13 @@ class DesktopWindowSizeStore:
             self._timer.start()
 
     def pause(self) -> None:
-        """Discard a pending fullscreen or maximize resize without losing normal size."""
+        """Roll back a pending fullscreen/maximize resize to the saved normal size."""
         with self._lock:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            self.width = self._committed_width
+            self.height = self._committed_height
 
     def flush(self) -> None:
         with self._lock:
@@ -211,6 +215,9 @@ class DesktopWindowSizeStore:
             except OSError:
                 pass
             temporary.replace(self.path)
+            with self._lock:
+                self._committed_width = width
+                self._committed_height = height
         except OSError:
             try:
                 temporary.unlink(missing_ok=True)

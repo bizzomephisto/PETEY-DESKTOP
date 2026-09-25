@@ -6,6 +6,8 @@
 - Hardened browser media cleanup so camera and microphone tracks are released on
   disconnect, page exit, and native restart; QtWebEngine helpers are reaped before
   process replacement to prevent capture spin loops and helper accumulation.
+- Fixed native window-size persistence when Qt reports a maximized resize before
+  its maximize event; close and restart now retain the last normal dimensions.
 
 - Made the mobile voice method a per-phone preference. Selecting Push to talk keeps
   microphone capture closed while idle, preventing fake-call behavior on some car stereos,
