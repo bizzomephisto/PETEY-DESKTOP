@@ -241,15 +241,16 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("apiJson('/api/desktop/personality'", save_flow)
         self.assertEqual(save_flow.count("method: 'PUT'"), 2)
 
-    def test_version_sits_below_desktop_sidebar_links(self):
+    def test_version_sits_below_desktop_sidebar_provider_link(self):
         template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(
             encoding='utf-8'
         )
         footer_start = template.index('<div class="coming-next">')
         footer_end = template.index('</div>', footer_start)
         footer = template[footer_start:footer_end]
-        self.assertLess(footer.index('id="project-link"'), footer.index('id="media-provider-link"'))
         self.assertLess(footer.index('id="media-provider-link"'), footer.index('class="sidebar-version"'))
+        self.assertNotIn('project-link', footer)
+        self.assertNotIn('GitHub', footer)
         self.assertEqual(template.count('PETEY v{{ app_version }}'), 1)
 
     def test_mobile_composer_exposes_attachment_and_tap_to_mute_push_to_talk(self):

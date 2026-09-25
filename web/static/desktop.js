@@ -4410,12 +4410,6 @@ document.getElementById('save-plan-preview').addEventListener('click', async eve
 });
 }
 
-document.getElementById('project-link').addEventListener('click', async event => {
-    if (!window.pywebview?.api?.open_project_repository) return;
-    event.preventDefault();
-    await window.pywebview.api.open_project_repository();
-});
-
 document.getElementById('media-provider-link').addEventListener('click', async event => {
     if (!window.pywebview?.api?.open_media_provider) return;
     event.preventDefault();

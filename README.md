@@ -1,6 +1,6 @@
 # PETEY
 
-Stable release: **v0.19.0** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
+Current version: **v0.19.1** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 

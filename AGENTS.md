@@ -1,6 +1,6 @@
 # PETEY coding-agent context
 
-Scope: repository. Snapshot: 2026-09-23, stable release v0.19.0; retained experimental preview v0.19.0-experimental.1.
+Scope: repository. Snapshot: 2026-09-25, current version v0.19.1; retained experimental preview v0.19.0-experimental.1.
 Start here; read only task-relevant implementation/tests. This is a navigation cache, not a substitute for checking code before edits. Source wins on factual drift; update this file when architecture, commands, contracts, or extension points change. Keep it compact; no session logs or copied source.
 Read `PETEY_MANIFEST.md` for durable product/runtime/release invariants and `ADDONS.md` plus `docs/addons.md` before changing the extension system.
 
@@ -29,7 +29,7 @@ UI `web/templates/desktop.html` + `web/static/desktop.js` + `desktop.css` -> `/a
 
 Desktop uses the Command Center shell. Its At a glance rail persists enabled/open state, panel collapse/order, and visibility for `session`, `launch`, `addons`, and `signals`; users drag panel handles to reorder them, and it may be hidden to a reopen handle or disabled completely, while mobile ignores it. Add-on scripts register bounded rail items through `window.peteyInterface`; early calls are queued by the template shim and remain valid while the user hides or disables the rail. `registerAction(...)` adds a button, `notify(...)` adds a signal, and `registerPanel({id, title, icon, badge, render(container)})` adds a collapsible/reorderable live panel whose render callback may return cleanup. Build panel DOM with `textContent`. Call the returned remover or `dismissNotification(...)` during cleanup.
 
-The desktop chat header keeps the conversation title and runtime status visible. Its chevron dropdown owns the profile, visual animation, fullscreen, Chat/Visual, and Temporary controls; it closes after a selection, outside click, or Escape. The version sits beneath the GitHub and deAPI links in the desktop sidebar footer. Mobile continues to use its separate compact controls.
+The desktop chat header keeps the conversation title and runtime status visible. Its chevron dropdown owns the profile, visual animation, fullscreen, Chat/Visual, and Temporary controls; it closes after a selection, outside click, or Escape. The private repository is not linked in the app; the version sits beneath the deAPI link in the desktop sidebar footer. Mobile continues to use its separate compact controls.
 
 Visual Mode renders six distinct, full-canvas reactive scenes on pure black: `neural_core`, `synapse_drift`, `orbital_mind`, `signal_bloom`, `aurora_flow`, and `constellation_field`. All styles derive orange listening, violet/blue thinking, blue speaking, muted, and error states from live chat/microphone/speech state; speech and microphone RMS drive motion, scale, light, signals, and particles. Mobile captions remain in the upper third; desktop fullscreen captions sit directly below the state heading. Mobile keeps fixed mic/push-to-talk/speaker controls above PETEY at the bottom. The persisted microphone mute stops recording/listening across desktop and mobile; muted mic and speaker buttons show a red X. The frameless PETEY avatar button toggles a bottom action row with Chat on the left and Fullscreen/Settings on the right.
 

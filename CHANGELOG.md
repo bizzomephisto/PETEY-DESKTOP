@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.19.1 — 2026-09-25
+
+- Removed the private PETEY GitHub repository link from the desktop sidebar footer.
+- Hardened browser media cleanup so camera and microphone tracks are released on
+  disconnect, page exit, and native restart; QtWebEngine helpers are reaped before
+  process replacement to prevent capture spin loops and helper accumulation.
 
 - Made the mobile voice method a per-phone preference. Selecting Push to talk keeps
   microphone capture closed while idle, preventing fake-call behavior on some car stereos,

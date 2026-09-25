@@ -7,11 +7,11 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.19.0**
-- Stable release: **v0.19.0**
+- Release: **v0.19.1**
+- Current version: **v0.19.1**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 331 tests
+- Test framework: `unittest`; current full suite contains 350 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 
@@ -27,8 +27,9 @@ separate web service.
   belong in settings or dedicated views.
 - The desktop chat header keeps only the conversation title, status, and a chevron
   visible. Profile, animation, fullscreen, Chat/Visual, and Temporary controls live
-  in its dismissible dropdown so chat and Visual Mode retain focus. The version sits
-  beneath the GitHub and deAPI links in the desktop sidebar footer.
+  in its dismissible dropdown so chat and Visual Mode retain focus. The private
+  repository is not linked from the app; the version sits beneath the deAPI link
+  in the desktop sidebar footer.
 - Mobile is a focused remote control: chat, visual mode, saved Petey profile, voice,
   microphone method, animation, and fullscreen. Its compact settings sheet keeps
   those essentials first and exposes the complete settings views behind an explicit
