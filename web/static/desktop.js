@@ -1371,6 +1371,8 @@ function applyPreferences() {
     const accent = accents[theme] || defaultAccents[theme] || defaultAccents.nebula;
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.setProperty('--theme-accent', accent);
+    document.getElementById('chat-theme-select').value = theme;
+    document.getElementById('chat-theme-accent').value = accent;
     document.querySelectorAll('[name="interface-theme"]').forEach(input => { input.checked = input.value === theme; });
     document.querySelectorAll('[data-theme-accent]').forEach(input => {
         const inputTheme = input.dataset.themeAccent;
@@ -1471,6 +1473,25 @@ document.querySelectorAll('[data-theme-accent]').forEach(input => {
     });
 });
 
+document.getElementById('chat-theme-select').addEventListener('change', event => {
+    const radio = document.querySelector(`[name="interface-theme"][value="${event.target.value}"]`);
+    if (!radio || themeSaving) return;
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+});
+document.getElementById('chat-theme-accent').addEventListener('input', event => {
+    const input = document.querySelector(`[data-theme-accent="${document.getElementById('chat-theme-select').value}"]`);
+    if (!input || themeSaving) return;
+    input.value = event.target.value;
+    input.dispatchEvent(new Event('input'));
+});
+document.getElementById('chat-theme-accent').addEventListener('change', event => {
+    const input = document.querySelector(`[data-theme-accent="${document.getElementById('chat-theme-select').value}"]`);
+    if (!input || themeSaving) return;
+    input.value = event.target.value;
+    input.dispatchEvent(new Event('change'));
+});
+
 async function savePreferences(changes, nativeTop = false) {
     const feedback = document.getElementById('preference-status');
     try {
@@ -1507,6 +1528,9 @@ document.getElementById('always-on-top').addEventListener('change', event => {
 document.getElementById('visual-mode-toggle').addEventListener('click', () => {
     chatHeaderMenu.open = false;
     savePreferences({visual_mode: !preferences.visual_mode});
+});
+document.getElementById('desktop-visual-back').addEventListener('click', () => {
+    savePreferences({visual_mode: false});
 });
 document.getElementById('visual-style-select').addEventListener('change', event => {
     chatHeaderMenu.open = false;

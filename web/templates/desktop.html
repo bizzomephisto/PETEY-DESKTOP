@@ -60,6 +60,7 @@
                     <summary aria-label="Open chat controls" title="Chat controls"><span aria-hidden="true">⌄</span></summary>
                     <div class="chat-header-menu-panel">
                         <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Petey profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
+                        <label class="chat-header-menu-field chat-theme-field"><span>Desktop style</span><span class="chat-theme-controls"><select id="chat-theme-select" aria-label="Desktop style"><option value="nebula">Nebula</option><option value="studio">Studio</option><option value="signal">Signal</option><option value="terminal">Terminal</option><option value="ember">Ember</option></select><input id="chat-theme-accent" type="color" aria-label="Accent color for selected desktop style"></span></label>
                         <div class="chat-header-actions">
                             <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
                             <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
@@ -102,6 +103,7 @@
 
             <div id="visual-chat" class="visual-chat" hidden>
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
+                <button id="desktop-visual-back" class="desktop-visual-back" type="button"><span aria-hidden="true">←</span> Back to chat</button>
                 <div id="visual-state-heading" class="visual-state-heading" aria-hidden="true">PRESENT</div>
                 <div id="mobile-visual-actions" class="mobile-visual-actions" hidden>
                     <button id="mobile-show-chat" type="button"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/></svg><span>Chat</span></button>

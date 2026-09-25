@@ -169,6 +169,9 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("document.getElementById('visual-style-field').hidden = !visualMode;", javascript)
         self.assertIn('chat-restart-petey', ids)
         self.assertEqual(ids['chat-restart-mode'][0], 'select')
+        self.assertEqual(ids['chat-theme-select'][0], 'select')
+        self.assertEqual(ids['chat-theme-accent'][1].get('type'), 'color')
+        self.assertEqual(ids['desktop-visual-back'][0], 'button')
         menu = self.html[self.html.index('<div class="chat-header-actions">'):]
         menu = menu[:menu.index('</div>')]
         self.assertLess(menu.index('id="temporary-mode"'), menu.index('id="chat-restart-petey"'))
@@ -176,8 +179,12 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('Restart PETEY in ${label}?', javascript)
         self.assertIn('Enter the Cloudflare hostname for this PETEY computer:', javascript)
         self.assertIn('restartPetey(event.currentTarget, statusText, mode.value);', javascript)
+        self.assertIn("document.getElementById('chat-theme-select').addEventListener('change'", javascript)
+        self.assertIn("document.getElementById('desktop-visual-back').addEventListener('click'", javascript)
+        self.assertIn('savePreferences({visual_mode: false});', javascript)
         self.assertIn('.chat-header-menu-panel {', stylesheet)
         self.assertIn('.chat-header-menu[open] > summary span', stylesheet)
+        self.assertIn('body.native-visual-fullscreen .desktop-visual-back { display: none; }', stylesheet)
 
     def test_saved_profiles_are_first_and_save_asks_for_a_slot(self):
         template = (Path(__file__).parents[1] / 'web/templates/settings/personality.html').read_text(
