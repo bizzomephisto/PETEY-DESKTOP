@@ -150,8 +150,12 @@ class PeteyUpdater:
                 f"https://api.github.com/repos/{slug}/releases/latest",
                 headers={"Accept": "application/vnd.github+json"}, timeout=(10, 30),
             )
+            if response.status_code == 404:
+                raise UpdateError("No published GitHub release yet.")
             response.raise_for_status()
             payload = response.json()
+        except UpdateError:
+            raise
         except (requests.RequestException, ValueError) as exc:
             raise UpdateError(f"Could not check {slug}: {exc}") from exc
         if not isinstance(payload, dict) or not payload.get("tag_name"):

@@ -53,6 +53,7 @@ class FakeResponse:
     def __init__(self, *, payload=None, content=b""):
         self.payload = payload
         self.content = content
+        self.status_code = 200
 
     def raise_for_status(self):
         return None
@@ -89,6 +90,18 @@ class FakeSession:
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_missing_release_has_a_clear_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            write_addon(state.data_dir / "addons")
+            manager = AddonManager(state)
+            session = MagicMock()
+            response = MagicMock(status_code=404)
+            session.get.return_value = response
+            updater = PeteyUpdater(manager, session=session)
+            result = updater.check_all()["addons"][0]
+            self.assertEqual(result["error"], "No published GitHub release yet.")
+
     def test_version_and_repository_normalization(self):
         self.assertGreater(version_key("1.2.0"), version_key("1.2.0-beta"))
         self.assertEqual(repository_slug(REPOSITORY + ".git"), "example/petey-sample")
