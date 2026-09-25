@@ -1297,6 +1297,7 @@ function renderVoiceResponseToggle() {
             : 'Choose a speech provider to enable voice responses';
         button.disabled = !available;
     });
+    refreshCommandOverview();
 }
 
 function setVoiceResponseEnabled(enabled) {
@@ -1370,6 +1371,12 @@ function applyPreferences() {
     const accents = preferences.theme_accents || {};
     const accent = accents[theme] || defaultAccents[theme] || defaultAccents.nebula;
     document.documentElement.dataset.theme = theme;
+    const interfaceLayout = preferences.interface_layout === 'command' ? 'command' : 'classic';
+    document.documentElement.dataset.interface = interfaceLayout;
+    document.getElementById('chat-interface-layout').value = interfaceLayout;
+    document.querySelectorAll('[name="interface-layout"]').forEach(input => {
+        input.checked = input.value === interfaceLayout;
+    });
     document.documentElement.style.setProperty('--theme-accent', accent);
     document.getElementById('chat-theme-select').value = theme;
     document.getElementById('chat-theme-accent').value = accent;
@@ -1401,7 +1408,43 @@ function applyPreferences() {
     if (visualMode) {
         ensureNeuralVisualizationRunning();
     } else setMobileVisualMenuOpen(false);
+    refreshCommandOverview();
 }
+
+let interfaceLayoutSaving = false;
+async function chooseInterfaceLayout(layout) {
+    if (interfaceLayoutSaving || !['classic', 'command'].includes(layout)) return;
+    interfaceLayoutSaving = true;
+    const previous = preferences.interface_layout || 'classic';
+    const feedback = document.getElementById('interface-layout-status');
+    document.documentElement.dataset.interface = layout;
+    document.querySelectorAll('[name="interface-layout"]').forEach(control => { control.disabled = true; });
+    setFeedback(feedback, 'Saving interface…');
+    try {
+        const payload = await apiJson('/api/desktop/preferences', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({interface_layout: layout}),
+        });
+        preferences = {...preferences, ...payload.preferences};
+        setFeedback(feedback, layout === 'command' ? 'Command Center enabled.' : 'Companion interface enabled.', 'success');
+    } catch (error) {
+        preferences.interface_layout = previous;
+        setFeedback(feedback, `Could not save interface: ${error.message}`, 'error');
+    } finally {
+        interfaceLayoutSaving = false;
+        document.querySelectorAll('[name="interface-layout"]').forEach(control => { control.disabled = false; });
+        applyPreferences();
+    }
+}
+
+document.querySelectorAll('[name="interface-layout"]').forEach(input => {
+    input.addEventListener('change', () => {
+        if (input.checked) chooseInterfaceLayout(input.value);
+    });
+});
+document.getElementById('chat-interface-layout').addEventListener('change', event => {
+    chooseInterfaceLayout(event.target.value);
+});
 
 let themeSaving = false;
 document.querySelectorAll('[name="interface-theme"]').forEach(input => {
@@ -6408,6 +6451,160 @@ for (const [id, endpoint, statusId, read] of [
         finally { button.disabled = false; }
     });
 }
+
+const commandActions = new Map();
+const commandNotifications = new Map();
+
+function boundedInterfaceText(value, limit) {
+    return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, limit);
+}
+
+function interfaceItemId(value, prefix) {
+    const candidate = boundedInterfaceText(value, 64).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    return candidate || `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function runInterfaceItem(item) {
+    if (typeof item.onClick === 'function') {
+        item.onClick();
+        return;
+    }
+    const view = boundedInterfaceText(item.view, 80);
+    if (view && document.getElementById(`view-${view}`)) showView(view);
+}
+
+function renderCommandActions() {
+    const container = document.getElementById('command-addon-actions');
+    if (!container) return;
+    container.replaceChildren();
+    [...commandActions.values()].slice(-10).forEach(action => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'command-addon-action';
+        const icon = document.createElement('span');
+        icon.className = 'command-addon-action-icon';
+        icon.textContent = boundedInterfaceText(action.icon, 3) || '◇';
+        const label = document.createElement('strong');
+        label.textContent = boundedInterfaceText(action.label, 40) || 'Add-on action';
+        button.append(icon, label);
+        const badgeText = boundedInterfaceText(action.badge, 12);
+        if (badgeText) {
+            const badge = document.createElement('small');
+            badge.textContent = badgeText;
+            button.append(badge);
+        }
+        button.addEventListener('click', () => runInterfaceItem(action));
+        container.append(button);
+    });
+    const count = commandActions.size;
+    document.getElementById('command-action-count').textContent = String(count);
+    document.getElementById('command-actions-empty').hidden = count > 0;
+}
+
+function renderCommandNotifications() {
+    const container = document.getElementById('command-addon-notifications');
+    if (!container) return;
+    container.replaceChildren();
+    [...commandNotifications.values()].slice(-8).reverse().forEach(notification => {
+        const item = document.createElement('article');
+        item.className = `command-notification level-${notification.level}`;
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'command-notification-copy';
+        const title = document.createElement('strong');
+        title.textContent = boundedInterfaceText(notification.title, 60) || 'Add-on update';
+        const body = document.createElement('small');
+        body.textContent = boundedInterfaceText(notification.body, 180);
+        copy.append(title);
+        if (body.textContent) copy.append(body);
+        copy.addEventListener('click', () => runInterfaceItem(notification));
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'command-notification-dismiss';
+        dismiss.setAttribute('aria-label', `Dismiss ${title.textContent}`);
+        dismiss.textContent = '×';
+        dismiss.addEventListener('click', () => window.peteyInterface.dismissNotification(notification.id));
+        item.append(copy, dismiss);
+        container.append(item);
+    });
+    const count = commandNotifications.size;
+    document.getElementById('command-notification-count').textContent = String(count);
+    document.getElementById('command-notifications-empty').hidden = count > 0;
+}
+
+function initializePeteyInterface() {
+    const bridge = window.peteyInterface || {};
+    const queued = Array.isArray(bridge._queue) ? [...bridge._queue] : [];
+    bridge.registerAction = action => {
+        if (!action || typeof action !== 'object') return () => {};
+        const id = interfaceItemId(action.id || action.label, 'action');
+        commandActions.set(id, {...action, id});
+        while (commandActions.size > 10) commandActions.delete(commandActions.keys().next().value);
+        renderCommandActions();
+        return () => bridge.removeAction(id);
+    };
+    bridge.removeAction = id => {
+        commandActions.delete(interfaceItemId(id, 'action'));
+        renderCommandActions();
+    };
+    bridge.notify = notification => {
+        if (!notification || typeof notification !== 'object') return '';
+        const id = interfaceItemId(notification.id || notification.title, 'signal');
+        const level = ['info', 'success', 'warning', 'error'].includes(notification.level)
+            ? notification.level : 'info';
+        commandNotifications.set(id, {...notification, id, level});
+        while (commandNotifications.size > 8) commandNotifications.delete(commandNotifications.keys().next().value);
+        renderCommandNotifications();
+        return id;
+    };
+    bridge.dismissNotification = id => {
+        commandNotifications.delete(interfaceItemId(id, 'signal'));
+        renderCommandNotifications();
+    };
+    bridge._queue = [];
+    queued.forEach(([kind, value]) => {
+        if (kind === 'action') bridge.registerAction(value);
+        else if (kind === 'removeAction') bridge.removeAction(value);
+        else if (kind === 'notification') bridge.notify(value);
+        else if (kind === 'dismissNotification') bridge.dismissNotification(value);
+    });
+    renderCommandActions();
+    renderCommandNotifications();
+    window.dispatchEvent(new CustomEvent('petey:interface-ready', {detail: {layout: 'command'}}));
+}
+
+function refreshCommandOverview() {
+    const runtime = document.getElementById('command-runtime-status');
+    if (!runtime) return;
+    const status = boundedInterfaceText(statusText?.textContent, 80);
+    runtime.textContent = status || 'Ready';
+    document.getElementById('command-status-dot').classList.toggle('busy', Boolean(status));
+    document.getElementById('command-chat-name').textContent = boundedInterfaceText(chatNameText?.textContent, 52) || 'New chat';
+    const selectedProfile = chatPersonaSelect?.selectedOptions?.[0]?.textContent;
+    document.getElementById('command-profile').textContent = boundedInterfaceText(selectedProfile, 52) || 'System persona';
+    const voiceAvailable = speechConfiguration?.provider !== 'disabled';
+    document.getElementById('command-voice').textContent = voiceAvailable
+        ? (voiceResponseEnabled ? 'Replies spoken' : 'Replies muted') : 'Speech disabled';
+}
+
+function updateCommandClock() {
+    const clock = document.getElementById('command-clock');
+    if (clock) clock.textContent = new Intl.DateTimeFormat([], {hour: 'numeric', minute: '2-digit'}).format(new Date());
+}
+
+document.querySelectorAll('[data-command-view]').forEach(button => {
+    button.addEventListener('click', () => showView(button.dataset.commandView));
+});
+document.getElementById('command-open-visual').addEventListener('click', () => {
+    showView('chat');
+    savePreferences({visual_mode: true});
+});
+new MutationObserver(refreshCommandOverview).observe(statusText, {childList: true, characterData: true, subtree: true});
+new MutationObserver(refreshCommandOverview).observe(chatNameText, {childList: true, characterData: true, subtree: true});
+chatPersonaSelect.addEventListener('change', refreshCommandOverview);
+initializePeteyInterface();
+updateCommandClock();
+window.setInterval(updateCommandClock, 30000);
 
 const requestedView = window.location.hash.replace('#', '');
 const knownViews = [...document.querySelectorAll('.app-view[id]')].map(page => page.id.replace('view-', ''));

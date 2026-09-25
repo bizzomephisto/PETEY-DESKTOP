@@ -294,6 +294,7 @@ def create_desktop_app(
             app_version=__version__,
             asset_revision=app.config["PETEY_ASSET_REVISION"],
             theme=app.config["PETEY_STATE"].preferences.get("theme", "nebula"),
+            interface_layout=app.config["PETEY_STATE"].preferences.get("interface_layout", "classic"),
             theme_accents=app.config["PETEY_STATE"].preferences.get("theme_accents", {}),
             project_url=PROJECT_URL,
             media_provider_url=MEDIA_PROVIDER_URL,

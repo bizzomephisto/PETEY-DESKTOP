@@ -181,6 +181,18 @@ class DesktopStateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "signal", "theme_accent": "red"})
 
+    def test_desktop_interface_layout_persists_and_validates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            self.assertEqual(state.preferences["interface_layout"], "classic")
+            self.assertEqual(
+                state.update_preferences({"interface_layout": "command"})["interface_layout"],
+                "command",
+            )
+            self.assertEqual(DesktopState(directory).preferences["interface_layout"], "command")
+            with self.assertRaises(ValueError):
+                state.update_preferences({"interface_layout": "spaceship"})
+
     def test_legacy_themes_migrate_to_new_desktop_styles(self):
         import json
         with tempfile.TemporaryDirectory() as directory:

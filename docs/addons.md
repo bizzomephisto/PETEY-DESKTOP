@@ -204,6 +204,39 @@ argument server-side.
 Asset URLs include a revision derived from the add-on's panel, script, and stylesheet
 modification times so browser and tunnel caches refresh after those files change.
 
+### Command Center actions and notifications
+
+The optional desktop Command Center interface includes bounded areas for add-on
+controls and signals. Add-on scripts load before PETEY's main script, so these calls
+may be made immediately; PETEY queues them until the interface is ready. Listen for
+`petey:interface-ready` only when later setup work depends on the rendered host.
+
+```javascript
+const removeStatus = window.peteyInterface.registerAction({
+    id: 'my-addon-status',
+    label: 'Open status',
+    icon: '◈',
+    badge: '2',
+    view: 'addon-my-addon',
+});
+
+const noticeId = window.peteyInterface.notify({
+    id: 'my-addon-finished',
+    title: 'Import finished',
+    body: '12 records are ready to review.',
+    level: 'success',
+    view: 'addon-my-addon',
+});
+
+removeStatus();
+window.peteyInterface.dismissNotification(noticeId);
+```
+
+An action or notification may use `onClick` instead of `view`. Labels, badges, and
+notification text render with `textContent`; raw HTML is not accepted. PETEY keeps
+at most 10 actions and 8 notifications in the browser session. These hooks do not
+persist data and do not replace the add-on's own settings or API state.
+
 ### Camera and microphone ownership
 
 Use `window.peteyMediaDevices` when a panel opens browser media hardware. Register a

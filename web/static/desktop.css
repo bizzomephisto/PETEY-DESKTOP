@@ -1222,6 +1222,111 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
 }
 body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inset:0;z-index:3000;display:grid;grid-template-rows:auto minmax(0,1fr);background:#05070a;color:#f5f7fb}.artifact-preview[hidden]{display:none}.artifact-preview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);box-shadow:0 8px 24px rgba(0,0,0,.28)}.artifact-preview-toolbar>div{display:flex;align-items:center;gap:8px}.artifact-preview-toolbar .icon-button{font-size:28px;line-height:1}.artifact-preview iframe{width:100%;height:100%;border:0;background:#fff}@media(max-width:760px){.artifact-preview-toolbar{padding:8px 10px}.artifact-preview-toolbar strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.artifact-preview-toolbar .secondary-button{padding:8px 10px}}
 
+/* Optional desktop workspace: a dense command surface built from real PETEY state. */
+.command-rail { display: none; }
+.interface-layout-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.interface-layout-choice { position: relative; display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 14px; min-height: 112px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel-2); cursor: pointer; }
+.interface-layout-choice:has(input:checked) { border-color: var(--accent-border); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.interface-layout-choice input { position: absolute; inset: 10px 10px auto auto; width: auto; accent-color: var(--accent); }
+.interface-layout-choice strong, .interface-layout-choice small { display: block; }
+.interface-layout-choice small { margin-top: 5px; color: var(--muted); line-height: 1.4; }
+.layout-preview { position: relative; display: grid; grid-template-columns: 25% 1fr; gap: 4px; width: 104px; height: 72px; padding: 5px; overflow: hidden; border: 1px solid var(--accent-border); border-radius: 8px; background: #070b12; }
+.layout-preview::after { content: ''; position: absolute; inset: 8px 7px 8px 31%; border-radius: 3px; background: linear-gradient(180deg, color-mix(in srgb, var(--theme-accent) 35%, #132033), #0b111c); }
+.layout-preview i, .layout-preview b, .layout-preview em { z-index: 1; border-radius: 3px; background: color-mix(in srgb, var(--theme-accent) 34%, #101a28); }
+.layout-preview-command { grid-template-columns: 20% 1fr 27%; }
+.layout-preview-command::after { inset: 8px 31% 8px 25%; }
+
+@media (min-width: 761px) {
+    :root[data-interface="command"] {
+        color-scheme: dark;
+        --bg: #05080d; --sidebar: #080d14; --panel: #0c121b; --panel-2: #101925;
+        --field: #080e16; --border: #213044; --text: #edf6ff; --muted: #8494a8;
+        --accent: var(--theme-accent); --accent-2: color-mix(in srgb, var(--theme-accent) 74%, #2b70ff);
+        --accent-text: color-mix(in srgb, var(--theme-accent) 58%, white);
+        --accent-soft: color-mix(in srgb, var(--theme-accent) 13%, transparent);
+        --accent-border: color-mix(in srgb, var(--theme-accent) 52%, #24354a);
+        --button-secondary: #152233; --success: #55e6a5; --danger: #ff7185; --danger-soft: #35141d;
+        --on-accent: #02070c; --surface-radius: 12px; --control-radius: 7px;
+        --font-ui: Inter, system-ui, sans-serif;
+    }
+    :root[data-interface="command"] body {
+        background-color: var(--bg);
+        background-image: linear-gradient(color-mix(in srgb, var(--theme-accent) 5%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--theme-accent) 5%, transparent) 1px, transparent 1px), radial-gradient(circle at 55% -20%, color-mix(in srgb, var(--theme-accent) 14%, transparent), transparent 42%);
+        background-size: 28px 28px, 28px 28px, auto;
+    }
+    :root[data-interface="command"] .app-shell {
+        grid-template-columns: 224px minmax(480px, 1fr) 292px;
+        gap: 12px; padding: 12px; background: transparent;
+    }
+    :root[data-interface="command"] .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(480px, 1fr) 292px; }
+    :root[data-interface="command"] .sidebar,
+    :root[data-interface="command"] .app-view,
+    :root[data-interface="command"] .command-rail { border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: 0 18px 60px rgba(0, 0, 0, .24); }
+    :root[data-interface="command"] .sidebar { grid-column: 1; grid-row: 1; height: auto; padding: 18px 12px; border-right: 1px solid var(--border); }
+    :root[data-interface="command"] .app-view { grid-column: 2; grid-row: 1; height: auto; }
+    :root[data-interface="command"] .brand { padding: 2px 8px 16px; border-bottom: 1px solid var(--border); }
+    :root[data-interface="command"] .brand img { width: 38px; height: 38px; border-radius: 11px; }
+    :root[data-interface="command"] .nav-button { border-radius: 7px; }
+    :root[data-interface="command"] .nav-button.active { border-color: var(--accent-border); background: linear-gradient(90deg, var(--accent-soft), transparent); box-shadow: inset 3px 0 var(--accent); }
+    :root[data-interface="command"] .chat-header { min-height: 68px; padding: 12px 18px; background: rgba(5, 9, 15, .62); }
+    :root[data-interface="command"] .chat-header h1 { font-size: 19px; letter-spacing: -.02em; }
+    :root[data-interface="command"] .messages { padding-inline: clamp(26px, 6vw, 92px); }
+    :root[data-interface="command"] .composer-wrap { padding: 12px clamp(24px, 5vw, 76px) 18px; background: linear-gradient(180deg, transparent, rgba(3, 7, 12, .88) 30%); }
+    :root[data-interface="command"] .composer { border-color: var(--accent-border); box-shadow: 0 14px 38px rgba(0, 0, 0, .32), 0 0 28px color-mix(in srgb, var(--theme-accent) 9%, transparent); }
+    :root[data-interface="command"] .tool-header { background: rgba(5, 9, 15, .68); }
+    :root[data-interface="command"] .settings-card,
+    :root[data-interface="command"] .tool-card { border-color: #25364b; }
+    :root[data-interface="command"] .command-rail { grid-column: 3; grid-row: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 14px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+    .command-rail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 5px 3px 10px; }
+    .command-rail-header strong, .command-kicker { display: block; }
+    .command-rail-header strong { margin-top: 3px; font-size: 18px; }
+    .command-kicker { color: var(--accent-text); font: 700 9px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .18em; }
+    #command-clock { color: var(--accent-text); font: 600 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .command-card { padding: 13px; border: 1px solid #223247; border-radius: 11px; background: linear-gradient(145deg, rgba(19, 29, 42, .95), rgba(8, 13, 21, .96)); }
+    .command-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 11px; color: var(--text); font-size: 12px; font-weight: 700; letter-spacing: .03em; }
+    .command-card-heading small { min-width: 22px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); text-align: center; font-size: 9px; }
+    #command-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 9px color-mix(in srgb, var(--success) 75%, transparent); }
+    #command-status-dot.busy { background: var(--accent); box-shadow: 0 0 9px var(--accent); animation: command-pulse 1.15s ease-in-out infinite; }
+    .command-session-card dl { display: grid; gap: 8px; margin: 0; }
+    .command-session-card dl div { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+    .command-session-card dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    .command-session-card dd { margin: 0; overflow: hidden; color: var(--text); font-size: 11px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+    .command-launch-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .command-launch-grid button, .command-addon-action { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 38px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: #0b121c; color: var(--text); cursor: pointer; font-size: 11px; text-align: left; }
+    .command-launch-grid button:hover, .command-addon-action:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+    .command-launch-grid button span, .command-addon-action-icon { color: var(--accent-text); font-size: 15px; }
+    .command-addon-actions, .command-addon-notifications { display: grid; gap: 7px; }
+    .command-addon-action { width: 100%; }
+    .command-addon-action strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+    .command-addon-action small { padding: 2px 5px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 9px; }
+    .command-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .command-signal-card { min-height: 116px; }
+    .command-notification { display: grid; grid-template-columns: minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 7px; background: #09111b; }
+    .command-notification.level-success { border-left-color: var(--success); }
+    .command-notification.level-warning { border-left-color: #ffc45e; }
+    .command-notification.level-error { border-left-color: var(--danger); }
+    .command-notification-copy { min-width: 0; padding: 8px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+    .command-notification-copy strong, .command-notification-copy small { display: block; }
+    .command-notification-copy strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .command-notification-copy small { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+    .command-notification-dismiss { align-self: start; padding: 5px 7px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+    :root[data-interface="command"] body.native-visual-fullscreen .app-shell { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0; }
+    :root[data-interface="command"] body.native-visual-fullscreen .command-rail { display: none; }
+}
+
+@media (min-width: 761px) and (max-width: 1320px) {
+    :root[data-interface="command"] .app-shell { grid-template-columns: 210px minmax(0, 1fr); }
+    :root[data-interface="command"] .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+    :root[data-interface="command"] .command-rail { display: none; }
+}
+
+@media (max-width: 760px) {
+    .interface-layout-settings { display: none; }
+    .command-rail { display: none !important; }
+}
+
+@keyframes command-pulse { 50% { opacity: .45; transform: scale(.8); } }
+
 /* Desktop theme choices never restyle the established phone interface. */
 @media (max-width: 760px) {
     :root[data-theme] {

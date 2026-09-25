@@ -66,6 +66,10 @@ filesystem and network permissions, so they are trusted local code.
   `window.peteyMediaDevices`. Recording add-ons use `window.peteyConferenceAudio`
   to yield and restore PETEY's ordinary continuous microphone instead of competing
   for the same input.
+- Browser add-ons may pin bounded buttons and transient notifications in the optional
+  Command Center rail through `window.peteyInterface`. The hooks remain available
+  when the user chooses the Companion interface, although that interface does not
+  display the rail.
 - Model tools stay unavailable until **Allow Petey to control** is enabled. The
   user grants Desktop, Mobile, Discord, and Petey Life separately, can disable
   individual capabilities, and can cap autonomous daily use of metered actions.

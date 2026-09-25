@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="{{ theme }}" style="--theme-accent: {{ theme_accents.get(theme, '#8b5cf6') }}">
+<html lang="en" data-theme="{{ theme }}" data-interface="{{ interface_layout }}" style="--theme-accent: {{ theme_accents.get(theme, '#8b5cf6') }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -60,6 +60,7 @@
                     <summary aria-label="Open chat controls" title="Chat controls"><span aria-hidden="true">⌄</span></summary>
                     <div class="chat-header-menu-panel">
                         <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Petey profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
+                        <label class="chat-header-menu-field"><span>Desktop interface</span><select id="chat-interface-layout" aria-label="Desktop interface"><option value="classic">Companion</option><option value="command">Command Center</option></select></label>
                         <label class="chat-header-menu-field chat-theme-field"><span>Desktop style</span><span class="chat-theme-controls"><select id="chat-theme-select" aria-label="Desktop style"><option value="nebula">Nebula</option><option value="studio">Studio</option><option value="signal">Signal</option><option value="terminal">Terminal</option><option value="ember">Ember</option></select><input id="chat-theme-accent" type="color" aria-label="Accent color for selected desktop style"></span></label>
                         <div class="chat-header-actions">
                             <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
@@ -274,6 +275,43 @@
         </section>
 
         {% include "settings/shell.html" %}
+
+        <aside id="command-rail" class="command-rail" aria-label="Command Center overview">
+            <header class="command-rail-header">
+                <div><span class="command-kicker">PETEY COMMAND</span><strong>At a glance</strong></div>
+                <time id="command-clock">--:--</time>
+            </header>
+            <section class="command-card command-session-card">
+                <div class="command-card-heading"><span>Live session</span><i id="command-status-dot" aria-hidden="true"></i></div>
+                <dl>
+                    <div><dt>Status</dt><dd id="command-runtime-status">Starting…</dd></div>
+                    <div><dt>Chat</dt><dd id="command-chat-name">New chat</dd></div>
+                    <div><dt>Profile</dt><dd id="command-profile">System persona</dd></div>
+                    <div><dt>Voice</dt><dd id="command-voice">Loading…</dd></div>
+                </dl>
+            </section>
+            <section class="command-card">
+                <div class="command-card-heading"><span>Quick launch</span><small>Core</small></div>
+                <div class="command-launch-grid">
+                    <button type="button" data-command-view="chat"><span>◌</span>Chat</button>
+                    <button id="command-open-visual" type="button"><span>◉</span>Visual</button>
+                    <button type="button" data-command-view="media"><span>◆</span>Media</button>
+                    <button type="button" data-command-view="gallery"><span>▦</span>Gallery</button>
+                    <button type="button" data-command-view="addons"><span>▧</span>Add-ons</button>
+                    <button type="button" data-command-view="settings"><span>⚙</span>Settings</button>
+                </div>
+            </section>
+            <section class="command-card command-addon-card">
+                <div class="command-card-heading"><span>Add-on controls</span><small id="command-action-count">0</small></div>
+                <div id="command-addon-actions" class="command-addon-actions"></div>
+                <p id="command-actions-empty" class="command-empty">Enabled add-ons can pin useful controls here.</p>
+            </section>
+            <section class="command-card command-signal-card">
+                <div class="command-card-heading"><span>Signals</span><small id="command-notification-count">0</small></div>
+                <div id="command-addon-notifications" class="command-addon-notifications" aria-live="polite"></div>
+                <p id="command-notifications-empty" class="command-empty">No add-on notifications.</p>
+            </section>
+        </aside>
     </main>
     <dialog id="image-browser-dialog" class="image-browser-dialog">
         <div class="image-browser-shell">
@@ -306,7 +344,26 @@
         <iframe id="artifact-preview-frame" title="OpenCode artifact preview"
             sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts"></iframe>
     </section>
-    <script>window.PETEY_ADDON_VIEWS = {{ addon_view_ids|tojson }};</script>
+    <script>
+        window.PETEY_ADDON_VIEWS = {{ addon_view_ids|tojson }};
+        window.peteyInterface = window.peteyInterface || {
+            _queue: [],
+            registerAction(action) {
+                const value = {...(action || {})};
+                value.id = value.id || `action-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+                this._queue.push(['action', value]);
+                return () => this.removeAction(value.id);
+            },
+            removeAction(id) { this._queue.push(['removeAction', id]); },
+            notify(notification) {
+                const value = {...(notification || {})};
+                value.id = value.id || `signal-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+                this._queue.push(['notification', value]);
+                return value.id;
+            },
+            dismissNotification(id) { this._queue.push(['dismissNotification', id]); },
+        };
+    </script>
     {% if discord_enabled %}<script src="{{ url_for('static', filename='discord.js', v=asset_revision) }}"></script>{% endif %}
     {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=addon.asset_revision) }}"></script>{% endif %}{% endfor %}
     <script src="{{ url_for('static', filename='settings.js', v=asset_revision) }}"></script>

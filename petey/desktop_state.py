@@ -21,6 +21,7 @@ PERSONA_SLOT_COUNT = 5
 DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
 PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_life"}
 DESKTOP_THEMES = {"nebula", "studio", "signal", "terminal", "ember"}
+INTERFACE_LAYOUTS = {"classic", "command"}
 DEFAULT_THEME_ACCENTS = {
     "nebula": "#8b5cf6",
     "studio": "#d65f36",
@@ -152,6 +153,7 @@ class DesktopState:
             "ui_scale": 1.0,
             "visual_mode": False,
             "visual_style": "neural_core",
+            "interface_layout": "classic",
             "theme": "nebula",
             "theme_accents": copy.deepcopy(DEFAULT_THEME_ACCENTS),
         }
@@ -172,6 +174,12 @@ class DesktopState:
             migrated_theme = "nebula"
         if settings["preferences"].get("theme") != migrated_theme:
             settings["preferences"]["theme"] = migrated_theme
+            changed = True
+        saved_layout = str(settings["preferences"].get("interface_layout") or "classic")
+        if saved_layout not in INTERFACE_LAYOUTS:
+            saved_layout = "classic"
+        if settings["preferences"].get("interface_layout") != saved_layout:
+            settings["preferences"]["interface_layout"] = saved_layout
             changed = True
         saved_accents = settings["preferences"].get("theme_accents")
         normalized_accents = copy.deepcopy(DEFAULT_THEME_ACCENTS)
@@ -658,6 +666,11 @@ class DesktopState:
                 raise ValueError("Choose a valid theme accent color.")
         if "theme" in changes:
             preferences["theme"] = theme
+        if "interface_layout" in changes:
+            layout = str(changes.get("interface_layout") or "classic")
+            if layout not in INTERFACE_LAYOUTS:
+                raise ValueError("Choose a supported desktop interface.")
+            preferences["interface_layout"] = layout
         if "theme_accent" in changes:
             accents = copy.deepcopy(preferences.get("theme_accents") or DEFAULT_THEME_ACCENTS)
             accents[theme] = color

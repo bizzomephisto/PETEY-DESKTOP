@@ -1,3 +1,12 @@
+<section id="interface-layout-settings" class="settings-card interface-layout-settings" data-settings-keywords="desktop interface layout command center dashboard companion">
+    <div class="card-heading"><div><h2>Desktop interface</h2><p>Choose the familiar companion layout or a live workspace with grouped tools and add-on signals.</p></div><span class="provider-badge">Desktop only</span></div>
+    <div class="interface-layout-choices" role="radiogroup" aria-label="Desktop interface">
+        <label class="interface-layout-choice"><input type="radio" name="interface-layout" value="classic" {% if interface_layout == 'classic' %}checked{% endif %}><span class="layout-preview layout-preview-classic" aria-hidden="true"><i></i><b></b></span><span><strong>Companion</strong><small>Simple sidebar and one focused workspace.</small></span></label>
+        <label class="interface-layout-choice"><input type="radio" name="interface-layout" value="command" {% if interface_layout == 'command' %}checked{% endif %}><span class="layout-preview layout-preview-command" aria-hidden="true"><i></i><b></b><em></em></span><span><strong>Command Center</strong><small>Tool groups, live session context, and add-on controls at a glance.</small></span></label>
+    </div>
+    <p id="interface-layout-status" class="wide-status" aria-live="polite"></p>
+</section>
+
 <section id="theme-settings" class="settings-card theme-settings" data-settings-keywords="theme color accent appearance desktop">
     <div class="card-heading"><div><h2>Desktop styles</h2><p>Choose a complete desktop look, then make its accent color yours. Mobile keeps its familiar interface.</p></div><span class="provider-badge">Desktop only</span></div>
     <fieldset class="theme-picker"><legend class="sr-only">Desktop interface style</legend>

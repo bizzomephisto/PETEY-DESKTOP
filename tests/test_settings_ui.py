@@ -126,6 +126,25 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('[data-theme="terminal"] body::after', stylesheet)
         self.assertIn('animation: terminal-cursor-blink', stylesheet)
 
+    def test_desktop_interface_picker_and_addon_command_hooks_render(self):
+        radios = [attrs for tag, attrs in self.markup.elements
+                  if tag == 'input' and attrs.get('name') == 'interface-layout']
+        self.assertEqual({item.get('value') for item in radios}, {'classic', 'command'})
+        ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
+        for name in (
+            'interface-layout-settings', 'chat-interface-layout', 'command-rail',
+            'command-addon-actions', 'command-addon-notifications',
+        ):
+            self.assertIn(name, ids)
+        template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(encoding='utf-8')
+        stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(encoding='utf-8')
+        self.assertLess(template.index('window.peteyInterface'), template.index("filename='desktop.js'"))
+        self.assertIn('function initializePeteyInterface()', javascript)
+        self.assertIn("window.dispatchEvent(new CustomEvent('petey:interface-ready'", javascript)
+        self.assertIn(':root[data-interface="command"] .app-shell', stylesheet)
+        self.assertIn('.command-rail { display: none !important; }', stylesheet)
+
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         for name in (
