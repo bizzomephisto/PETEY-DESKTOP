@@ -916,6 +916,12 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
 .discord-admin-proposal strong, .discord-admin-proposal small { display: block; overflow-wrap: anywhere; }
 .discord-admin-proposal small { color: var(--muted); margin-top: 4px; text-transform: capitalize; }
 .addons-list { display: grid; gap: 10px; margin-top: 16px; }
+.updates-list { display: grid; gap: 10px; margin-top: 16px; }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
+.update-copy { min-width: 0; }
+.update-copy strong, .update-copy small { display: block; }
+.update-copy small { margin-top: 5px; color: var(--muted); overflow-wrap: anywhere; }
+.update-row .primary-button { flex: 0 0 auto; }
 .addon-row { padding: 0 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
 .addon-row p { margin: 5px 0 0; color: var(--muted); }
 .addon-summary { display: flex; align-items: center; gap: 16px; min-height: 76px; }
@@ -956,6 +962,8 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
 .addon-restart { display: block; margin-top: 6px; color: var(--accent-text); }
 .code-path { overflow-wrap: anywhere; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 @media (max-width: 760px) {
+    .update-row { align-items: stretch; flex-direction: column; }
+    .update-row .primary-button { width: 100%; }
     .addon-row { padding: 0 14px; }
     .addon-summary { min-height: 70px; }
     .addon-controls { min-width: 0; }

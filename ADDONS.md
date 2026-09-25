@@ -46,6 +46,9 @@ filesystem and network permissions, so they are trusted local code.
 
 - Discovery reads a bounded `petey-addon.json` without importing disabled code.
 - Enable/disable changes are saved immediately and applied after PETEY restarts.
+- Update checks are explicit. Add-ons with a declared HTTPS GitHub `repository` can
+  be updated from a validated ZIP asset on their latest release; writable
+  `addon-data/<id>` is preserved and activation waits for restart.
 - Core routes and databases exist before external `setup(context)` runs.
 - Optional panel assets are served only from an enabled, successfully loaded
   add-on folder and cannot escape that folder. Their URLs change when the add-on's

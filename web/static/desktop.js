@@ -1830,6 +1830,80 @@ document.getElementById('temporary-mode').addEventListener('change', async event
 let addonsLoaded = false;
 const expandedAddonIds = new Set();
 
+function updateDescription(item) {
+    if (item.error) return item.error;
+    const versions = item.latest && item.current
+        ? `${item.current} → ${item.latest}`
+        : item.current_revision && item.latest_revision
+            ? `${item.current_revision} → ${item.latest_revision}`
+            : item.current ? `Installed ${item.current}` : '';
+    return [versions, item.message].filter(Boolean).join(' · ');
+}
+
+function renderUpdates(payload) {
+    const list = document.getElementById('updates-list');
+    list.replaceChildren();
+    const items = [payload.petey, ...(payload.addons || [])].filter(Boolean);
+    for (const item of items) {
+        const row = document.createElement('article');
+        row.className = 'update-row';
+        const copy = document.createElement('div');
+        copy.className = 'update-copy';
+        const name = document.createElement('strong');
+        name.textContent = item.name || item.id;
+        const detail = document.createElement('small');
+        detail.textContent = updateDescription(item);
+        copy.append(name, detail);
+        row.append(copy);
+        if (item.installable) {
+            const button = document.createElement('button');
+            button.className = 'primary-button';
+            button.type = 'button';
+            button.textContent = 'Install update';
+            button.addEventListener('click', async () => {
+                const label = item.name || item.id;
+                if (!window.confirm(`Install the available update for ${label}?`)) return;
+                button.disabled = true;
+                const status = document.getElementById('updates-status');
+                status.textContent = `Installing ${label}…`;
+                try {
+                    const endpoint = item.id === 'petey'
+                        ? '/api/desktop/updates/petey/install'
+                        : `/api/desktop/updates/addons/${encodeURIComponent(item.id)}/install`;
+                    await apiJson(endpoint, {method: 'POST'});
+                    button.remove();
+                    detail.textContent = 'Installed. Restart PETEY to activate this update.';
+                    status.textContent = `${label} was updated. Restart PETEY when you are ready.`;
+                    addonsLoaded = false;
+                } catch (error) {
+                    status.textContent = error.message;
+                    button.disabled = false;
+                }
+            });
+            row.append(button);
+        }
+        list.append(row);
+    }
+    if (!items.length) list.innerHTML = '<p class="muted">No update information is available.</p>';
+}
+
+async function checkForUpdates() {
+    const button = document.getElementById('check-updates');
+    const status = document.getElementById('updates-status');
+    button.disabled = true;
+    status.textContent = 'Checking GitHub for updates…';
+    try {
+        renderUpdates(await apiJson('/api/desktop/updates'));
+        status.textContent = 'Update check complete.';
+    } catch (error) {
+        status.textContent = error.message;
+    } finally {
+        button.disabled = false;
+    }
+}
+
+document.getElementById('check-updates').addEventListener('click', checkForUpdates);
+
 async function reloadAddonsInPlace() {
     const view = document.getElementById('view-addons');
     const scrollTop = view.scrollTop;

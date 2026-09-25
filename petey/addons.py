@@ -15,6 +15,9 @@ from petey.tools.registry import ToolSpec
 
 ADDON_ID = re.compile(r"[a-z][a-z0-9_-]{1,48}")
 MANIFEST_NAME = "petey-addon.json"
+GITHUB_REPOSITORY = re.compile(
+    r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?$"
+)
 
 
 @dataclass(frozen=True)
@@ -119,12 +122,16 @@ class AddonManager:
         navigation = manifest.get("navigation") or {}
         if not isinstance(navigation, dict):
             raise ValueError("Add-on navigation must be an object.")
+        repository = str(manifest.get("repository") or "").strip()
+        if repository and not GITHUB_REPOSITORY.fullmatch(repository):
+            raise ValueError("Add-on repository must be an HTTPS github.com project URL.")
         return {
             "id": addon_id, "name": name, "version": str(manifest.get("version") or "0.1")[:40],
             "description": description, "source": "user",
             "default_enabled": manifest.get("default_enabled") is True,
             "loaded": False, "error": "", "path": directory, "manifest": manifest,
             "instance": None,
+            "repository": repository,
             "configurable_enabled": True, "control_capabilities": [],
         }
 
@@ -246,6 +253,7 @@ class AddonManager:
         return {
             "id": record["id"], "name": record["name"], "version": record["version"],
             "description": record["description"], "source": record["source"],
+            "repository": record.get("repository", ""),
             "enabled": desired, "loaded": record["loaded"], "error": record["error"],
             "configurable_enabled": record.get("configurable_enabled", True),
             "has_model_tools": bool(
@@ -255,7 +263,9 @@ class AddonManager:
                 self.state.petey_control_status(record["id"], capabilities)
                 if capabilities else None
             ),
-            "restart_required": desired != record["loaded"] and not bool(record["error"]),
+            "restart_required": (
+                desired != record["loaded"] and not bool(record["error"])
+            ) or bool(record.get("update_installed")),
         }
 
     def public_status(self) -> dict:

@@ -43,6 +43,26 @@ def setup(context):
 
 
 class AddonManagerTests(unittest.TestCase):
+    def test_manifest_exposes_valid_update_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            addon = write_addon(state.data_dir / "addons")
+            manifest_path = addon / "petey-addon.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["repository"] = "https://github.com/example/sample-addon"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            status = AddonManager(state).public_status()["addons"]
+            sample = next(item for item in status if item["id"] == "sample-addon")
+            self.assertEqual(sample["repository"], manifest["repository"])
+
+            manifest["repository"] = "https://example.com/unsafe"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            broken = next(
+                item for item in AddonManager(state).public_status()["addons"]
+                if item["id"] == "sample-addon"
+            )
+            self.assertIn("repository", broken["error"].lower())
+
     def test_disabled_addon_is_discovered_without_importing_python(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)

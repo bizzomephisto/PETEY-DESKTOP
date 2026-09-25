@@ -48,6 +48,13 @@ configuration values to that projection.
 Use **Restart PETEY** on the Add-ons screen to apply changes immediately in the
 native desktop app. In browser development mode, stop and rerun the launch command.
 
+The **Updates** card checks PETEY and update-enabled add-ons only when the user
+presses **Check for updates**. An add-on participates by declaring its public GitHub
+`repository` and publishing a ZIP asset on its latest GitHub release. PETEY validates
+the archive, ID, manifest, and release version before replacing the add-on code. Its
+separate `addon-data/<addon-id>` folder is preserved. Installed updates take effect
+after PETEY restarts.
+
 PETEY stores each add-on's writable data separately under `addon-data/<addon-id>`
 in the PETEY data directory. Keep add-on source and dependencies outside the PETEY
 repository so source releases remain independent of third-party code.
@@ -72,6 +79,7 @@ my-addon/
   "name": "My add-on",
   "version": "0.1.0",
   "description": "A local PETEY Desktop add-on.",
+  "repository": "https://github.com/example/my-petey-addon",
   "entrypoint": "addon.py",
   "panel": "panel.html",
   "script": "panel.js",
@@ -86,6 +94,9 @@ All file paths are relative to the add-on folder and cannot contain `..`. Omit
 `panel`, `script`, `stylesheet`, and `navigation` for a background/API-only add-on.
 Set `default_enabled` to `true` only for an add-on distributed as part of a controlled
 installation; user add-ons should normally require an explicit toggle.
+`repository` is optional. When present, it must be an HTTPS `github.com` project URL
+and enables PETEY's update checker. Each published release must use a semantic version
+tag such as `v0.2.0` and include a ZIP asset containing exactly one add-on manifest.
 
 ## Python entrypoint
 

@@ -41,6 +41,7 @@ from petey.voice_cues import VoiceCueLibrary
 from petey.wake_detector import LocalWakeDetector, WakeDetectorError
 from petey.tools import ToolRegistry, build_desktop_tool_registry, build_media_tools
 from petey.subscription_plans import estimate_plan
+from petey.updater import PeteyUpdater, UpdateError
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
@@ -86,6 +87,7 @@ def create_desktop_app(
     discord_bridge: DiscordBridge | None = None,
     addon_manager: AddonManager | None = None,
     wake_detector: LocalWakeDetector | None = None,
+    updater: PeteyUpdater | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     core_assets = ("desktop.css", "desktop.js", "settings.js", "discord.js")
@@ -153,6 +155,7 @@ def create_desktop_app(
         app.config["PETEY_STATE"].data_dir
     )
     app.config["PETEY_ADDONS"] = addon_manager or AddonManager(app.config["PETEY_STATE"])
+    app.config["PETEY_UPDATER"] = updater or PeteyUpdater(app.config["PETEY_ADDONS"])
     app.config["PETEY_DISCORD"] = discord_bridge
 
     def create_embedding(text: str):
@@ -328,6 +331,33 @@ def create_desktop_app(
     @app.get("/api/desktop/addons")
     def desktop_addons():
         return jsonify(app.config["PETEY_ADDONS"].public_status())
+
+    @app.get("/api/desktop/updates")
+    def desktop_updates():
+        try:
+            return jsonify(app.config["PETEY_UPDATER"].check_all())
+        except UpdateError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.post("/api/desktop/updates/petey/install")
+    def desktop_install_petey_update():
+        origin = request.headers.get("Origin")
+        if origin and origin != request.host_url.rstrip("/"):
+            return jsonify({"error": "Updates must be installed from the PETEY app."}), 403
+        try:
+            return jsonify(app.config["PETEY_UPDATER"].install_petey())
+        except UpdateError as exc:
+            return jsonify({"error": str(exc)}), 409
+
+    @app.post("/api/desktop/updates/addons/<addon_id>/install")
+    def desktop_install_addon_update(addon_id):
+        origin = request.headers.get("Origin")
+        if origin and origin != request.host_url.rstrip("/"):
+            return jsonify({"error": "Updates must be installed from the PETEY app."}), 403
+        try:
+            return jsonify(app.config["PETEY_UPDATER"].install_addon(addon_id))
+        except UpdateError as exc:
+            return jsonify({"error": str(exc)}), 409
 
     @app.get("/api/desktop/addon-events")
     def desktop_addon_events():

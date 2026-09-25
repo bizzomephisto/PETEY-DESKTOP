@@ -72,6 +72,7 @@ speed, and hardware setup.
 - Read-only Filesystem MCP tools scoped to folders approved under Settings → Tools
 - [Discord bot bridge](docs/discord.md) with online Gateway presence, deAPI media slash commands, startup auto-connect, AI-enhanced room prompts, adaptive participation, watched topics, and approved channel-management proposals
 - [Add-on system](docs/addons.md) with explicit enablement, lifecycle hooks, API routes, sidebar panels, shared desktop services, and model-tool extensions
+- User-triggered update checks and confirmed installs for PETEY and repository-declared add-ons, with add-on data preserved
 - Reorganized Settings overview with grouped categories, cross-page search, section links, compact layouts, and a catalog-driven page structure
 
 The GitHub release includes only PETEY's built-in Discord integration. Third-party
@@ -86,6 +87,10 @@ folder and are not bundled with the source release.
 Each add-on repository provides a ready-to-install release archive. Install them
 through PETEY's **Add-ons** screen; they remain independently versioned and are not
 included in PETEY Desktop source archives.
+
+The same screen can check for PETEY and add-on updates. PETEY installs only a clean
+fast-forward from the official Git checkout. Add-ons opt in through their manifest's
+GitHub repository field and install from a validated ZIP on the latest release.
 
 PETEY normally runs a loopback-only Flask server inside a pywebview desktop
 window. If a native backend is unavailable, the launcher can open the same

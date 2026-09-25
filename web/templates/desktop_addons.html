@@ -5,6 +5,15 @@
     </header>
     <div class="tool-content">
         <section class="settings-card">
+            <h2>Updates</h2>
+            <p class="hint">Check PETEY and add-ons that declare an official GitHub repository. Nothing downloads or installs until you choose it.</p>
+            <div class="inline-actions">
+                <button id="check-updates" class="secondary-button" type="button">Check for updates</button>
+            </div>
+            <div id="updates-list" class="updates-list"><p class="muted">Updates have not been checked.</p></div>
+            <p id="updates-status" class="wide-status" role="status"></p>
+        </section>
+        <section class="settings-card">
             <h2>Installed add-ons</h2>
             <p class="hint">Add-ons run trusted Python code with the same local access as PETEY. Install only modules you trust. Loading changes require a restart. Model control is separately disabled by default; choose its capabilities, allowed surfaces, and autonomous daily limits below.</p>
             <p id="addons-directory" class="code-path"></p>

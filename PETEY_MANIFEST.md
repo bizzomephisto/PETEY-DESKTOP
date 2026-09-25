@@ -157,6 +157,12 @@ restart-gated. Disabled code is never imported. Their routes live under
 `addon-data/<id>`, and cleanup runs at shutdown. Read `ADDONS.md` and
 `docs/addons.md` before extension work.
 
+Update checks run only on explicit user action. PETEY core accepts only a clean
+fast-forward from its official Git origin. Add-on updates require a manifest-declared
+HTTPS GitHub repository and a bounded release ZIP whose ID, version, paths, and
+manifest validate before atomic replacement. Add-on data remains separate and is
+never replaced by an update.
+
 Background add-on events are opt-in at the add-on level. The host serializes them
 through a bounded queue, hides their source prompts from chat, persists PETEY's
 visible reply in the transcript, and lets requested speech obey the client mute
