@@ -36,6 +36,9 @@ QUICK_WINDOW_HEIGHT = 390
 LAN_TLS_DIRECTORY = "lan-tls"
 REMOTE_ACCESS_FILE = "remote-access.json"
 REMOTE_SESSION_SECONDS = 365 * 24 * 60 * 60
+CLOUDFLARE_HOSTNAME_PATTERN = re.compile(
+    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}"
+)
 DESKTOP_WINDOW_FILE = "desktop-window.json"
 DEFAULT_DESKTOP_WIDTH = 1180
 DEFAULT_DESKTOP_HEIGHT = 780
@@ -159,31 +162,28 @@ class DesktopWindowSizeStore:
     close = flush
 
 
-def persistent_remote_access_token(
-    data_dir: str | Path | None = None, *, rotate: bool = False,
-) -> str:
-    """Load PETEY's durable remote pairing secret, creating or rotating it safely."""
+def _remote_access_path(data_dir: str | Path | None = None) -> Path:
     directory = Path(data_dir) if data_dir else default_data_dir()
     directory.mkdir(parents=True, exist_ok=True)
     try:
         directory.chmod(0o700)
     except OSError:
         pass
-    path = directory / REMOTE_ACCESS_FILE
-    if not rotate:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            token = str(payload.get("access_token") or "")
-            if re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
-                return token
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            pass
-    token = secrets.token_urlsafe(32)
+    return directory / REMOTE_ACCESS_FILE
+
+
+def _read_remote_access(data_dir: str | Path | None = None) -> dict:
+    try:
+        payload = json.loads(_remote_access_path(data_dir).read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_remote_access(payload: dict, data_dir: str | Path | None = None) -> None:
+    path = _remote_access_path(data_dir)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps({"version": 1, "access_token": token}, indent=2),
-        encoding="utf-8",
-    )
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     try:
         temporary.chmod(0o600)
     except OSError:
@@ -193,6 +193,55 @@ def persistent_remote_access_token(
         path.chmod(0o600)
     except OSError:
         pass
+
+
+def saved_cloudflare_connection(
+    data_dir: str | Path | None = None,
+) -> tuple[str, int]:
+    """Return the last valid named-tunnel hostname and origin port."""
+    payload = _read_remote_access(data_dir)
+    hostname = str(payload.get("cloudflare_hostname") or "").strip().lower()
+    try:
+        port = int(payload.get("cloudflare_port") or 8765)
+    except (TypeError, ValueError):
+        port = 8765
+    if not CLOUDFLARE_HOSTNAME_PATTERN.fullmatch(hostname):
+        return "", 8765
+    return hostname, port if 1 <= port <= 65535 else 8765
+
+
+def save_cloudflare_connection(
+    hostname: str, port: int, data_dir: str | Path | None = None,
+) -> tuple[str, int]:
+    """Persist a named-tunnel connection without replacing its pairing token."""
+    hostname = str(hostname or "").strip().lower()
+    port = int(port)
+    if not CLOUDFLARE_HOSTNAME_PATTERN.fullmatch(hostname):
+        raise ValueError("Enter a valid Cloudflare hostname such as petey.example.com.")
+    if not 1 <= port <= 65535:
+        raise ValueError("Cloudflare origin port must be between 1 and 65535.")
+    payload = _read_remote_access(data_dir)
+    payload.update({
+        "version": 1,
+        "cloudflare_hostname": hostname,
+        "cloudflare_port": port,
+    })
+    _write_remote_access(payload, data_dir)
+    return hostname, port
+
+
+def persistent_remote_access_token(
+    data_dir: str | Path | None = None, *, rotate: bool = False,
+) -> str:
+    """Load PETEY's durable remote pairing secret, creating or rotating it safely."""
+    payload = _read_remote_access(data_dir)
+    if not rotate:
+        token = str(payload.get("access_token") or "")
+        if re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+            return token
+    token = secrets.token_urlsafe(32)
+    payload.update({"version": 1, "access_token": token})
+    _write_remote_access(payload, data_dir)
     return token
 
 
@@ -323,7 +372,7 @@ class DesktopBridge:
     def __init__(
         self, gallery=None, addons_dir=None, voice_cues_dir=None, restart_args=(), data_dir=None,
         window_size_store=None, petey_public_origin="", petey_access_token="",
-        restart_modes=None,
+        restart_modes=None, cloudflare_port=8765,
     ):
         self.window = None
         self.gallery = gallery
@@ -333,6 +382,7 @@ class DesktopBridge:
         self.window_size_store = window_size_store
         self.petey_public_origin = str(petey_public_origin or "").rstrip("/")
         self.petey_access_token = str(petey_access_token or "")
+        self.cloudflare_port = int(cloudflare_port)
         self.restart_args = tuple(restart_args)
         self.restart_modes = {
             "current": self.restart_args,
@@ -418,7 +468,7 @@ class DesktopBridge:
         except OSError as exc:
             return {"ok": False, "error": f"Could not open the voice acknowledgement folder: {exc}"}
 
-    def restart_petey(self, mode="current"):
+    def restart_petey(self, mode="current", cloudflare_hostname=""):
         """Replace this desktop process so restart cannot leave stale copies."""
         if self.window is None:
             return {"ok": False, "error": "Restart is available in the PETEY desktop window."}
@@ -426,10 +476,21 @@ class DesktopBridge:
         if mode not in self.restart_modes:
             return {"ok": False, "error": "Choose a supported PETEY restart mode."}
         arguments = self.restart_modes.get(mode)
+        if arguments is None and mode == "cloudflare" and cloudflare_hostname:
+            try:
+                hostname, port = save_cloudflare_connection(
+                    cloudflare_hostname, self.cloudflare_port, self.data_dir,
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                return {"ok": False, "error": str(exc), "needs_cloudflare_hostname": True}
+            arguments = (
+                "--cloudflare", "--cloudflare-hostname", hostname, "--port", str(port),
+            )
         if arguments is None:
             return {
                 "ok": False,
                 "error": "Cloudflare restart needs a configured hostname. Start PETEY with --cloudflare-hostname first.",
+                "needs_cloudflare_hostname": mode == "cloudflare",
             }
         if self._restart_started:
             return {"ok": True, "restarting": True}
@@ -972,9 +1033,20 @@ def main():
     )
     args = parser.parse_args()
 
-    cloudflare_port = os.getenv("PETEY_CLOUDFLARE_PORT", "8765") if args.cloudflare else "8765"
+    saved_hostname, saved_port = saved_cloudflare_connection()
+    requested_hostname = str(args.cloudflare_hostname or "").strip().lower()
+    cloudflare_hostname = requested_hostname or saved_hostname
+    cloudflare_port = os.getenv("PETEY_CLOUDFLARE_PORT", "") if args.cloudflare else ""
     try:
-        port = args.port if args.port is not None else int(cloudflare_port)
+        if args.cloudflare:
+            port = (
+                args.port if args.port is not None else
+                int(cloudflare_port) if cloudflare_port else
+                saved_port if cloudflare_hostname == saved_hostname and saved_hostname else
+                8765
+            )
+        else:
+            port = args.port if args.port is not None else 8765
     except ValueError:
         parser.error("PETEY_CLOUDFLARE_PORT must be a TCP port number")
     if not 1 <= port <= 65535:
@@ -987,15 +1059,20 @@ def main():
         parser.error("--install-lan-certificate requires --lan-https")
     if args.rotate_mobile_access and not args.cloudflare:
         parser.error("--rotate-mobile-access requires --cloudflare")
-    cloudflare_hostname = str(args.cloudflare_hostname or "").strip().lower()
-    if args.cloudflare and not re.fullmatch(
-        r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}",
-        cloudflare_hostname,
-    ):
+    if args.cloudflare and not CLOUDFLARE_HOSTNAME_PATTERN.fullmatch(cloudflare_hostname):
         parser.error(
             "--cloudflare needs a valid --cloudflare-hostname or "
             "PETEY_CLOUDFLARE_HOSTNAME"
         )
+    if args.cloudflare:
+        try:
+            save_cloudflare_connection(cloudflare_hostname, port)
+        except (TypeError, ValueError) as exc:
+            parser.error(f"Could not save Cloudflare connection: {exc}")
+        except OSError:
+            # Remembering the route is a convenience and must not prevent an
+            # otherwise valid Cloudflare launch on a read-only data volume.
+            pass
 
     if args.install_shortcut:
         try:
@@ -1115,8 +1192,13 @@ def main():
         window_size_store = DesktopWindowSizeStore(
             state.data_dir, window_width, window_height
         )
+        remembered_cloudflare_port = (
+            port if args.cloudflare or (requested_hostname and args.port is not None)
+            else saved_port
+        )
         preserved_cloudflare_args = (
-            "--cloudflare-hostname", cloudflare_hostname, "--port", str(port),
+            "--cloudflare-hostname", cloudflare_hostname,
+            "--port", str(remembered_cloudflare_port),
         ) if cloudflare_hostname else ()
         cloudflare_restart_args = (
             "--cloudflare", *preserved_cloudflare_args,
@@ -1141,6 +1223,7 @@ def main():
                 "cloudflare": cloudflare_restart_args,
                 "browser": ("--browser", *preserved_cloudflare_args),
             },
+            cloudflare_port=remembered_cloudflare_port,
         )
         bridge.window = webview.create_window(
             "PETEY",

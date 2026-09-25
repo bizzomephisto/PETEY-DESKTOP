@@ -92,7 +92,10 @@ Cloudflare mode expects an already configured `cloudflared` tunnel and does not
 start or manage it. It requires a durable PETEY pairing token stored in the private
 data root's `remote-access.json` and exchanges it for a one-year HttpOnly, SameSite,
 Secure cookie; the bare public hostname returns `401`. `--rotate-mobile-access`
-replaces the token and revokes existing browser cookies on the next request.
+replaces the token and revokes existing browser cookies on the next request. A
+successful named-tunnel launch also stores the hostname and origin port there so a
+later plain desktop launch can restart into Cloudflare mode. If none has been saved,
+the native restart flow asks for the hostname.
 Cloudflare Access should remain an outer identity check. Default startup must remain
 loopback-only, and network binding must remain explicit.
 
@@ -109,7 +112,7 @@ directory. Important contents include:
 - `addon-data/<id>/`: external add-on state and credentials
 - `voice-cues/<voice>/`: user-replaceable wake acknowledgements
 - `lan-tls/`: reusable local CA and LAN certificates
-- `remote-access.json`: durable private Cloudflare mobile pairing secret
+- `remote-access.json`: durable private Cloudflare pairing secret, hostname, and origin port
 - `desktop-window.json`: last normal native desktop width and height
 - `wake-word/`: downloaded local keyword model
 

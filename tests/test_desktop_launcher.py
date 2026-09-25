@@ -49,6 +49,24 @@ class DesktopLauncherTests(unittest.TestCase):
             token_file = Path(directory) / run_desktop.REMOTE_ACCESS_FILE
             self.assertEqual(token_file.stat().st_mode & 0o777, 0o600)
 
+    def test_cloudflare_connection_persists_without_replacing_pairing_token(self):
+        with TemporaryDirectory() as directory:
+            token = run_desktop.persistent_remote_access_token(directory)
+            saved = run_desktop.save_cloudflare_connection(
+                "MBO.MeetPetey.com", 8765, directory,
+            )
+            self.assertEqual(saved, ("mbo.meetpetey.com", 8765))
+            self.assertEqual(
+                run_desktop.saved_cloudflare_connection(directory),
+                ("mbo.meetpetey.com", 8765),
+            )
+            self.assertEqual(run_desktop.persistent_remote_access_token(directory), token)
+            run_desktop.persistent_remote_access_token(directory, rotate=True)
+            self.assertEqual(
+                run_desktop.saved_cloudflare_connection(directory),
+                ("mbo.meetpetey.com", 8765),
+            )
+
     def test_cloudflare_mode_continues_into_the_local_desktop_flow(self):
         server = MagicMock()
         server.url = "http://127.0.0.1:43909"
@@ -103,6 +121,37 @@ class DesktopLauncherTests(unittest.TestCase):
         self.assertEqual(window_options["min_size"], (760, 560))
         size_store_class.return_value.close.assert_called()
         server.close.assert_called_once_with()
+
+    def test_plain_desktop_loads_saved_cloudflare_restart_settings(self):
+        server = MagicMock()
+        server.url = "http://127.0.0.1:43909"
+        server.private_url = "http://127.0.0.1:43909/?access_token=private-token"
+        webview = MagicMock()
+        with (
+            patch("run_desktop.sys.argv", ["run_desktop.py"]),
+            patch("run_desktop.saved_cloudflare_connection",
+                  return_value=("mbo.meetpetey.com", 9876)),
+            patch("run_desktop.LocalServer", return_value=server),
+            patch("run_desktop.linux_webview_backend_available", return_value=True),
+            patch("run_desktop.preferred_linux_webview_backend", return_value=None),
+            patch("run_desktop.load_desktop_window_size", return_value=(1180, 780)),
+            patch("run_desktop.DesktopWindowSizeStore"),
+            patch.dict("run_desktop.os.environ", {
+                "PETEY_CLOUDFLARE_HOSTNAME": "",
+                "PETEY_CLOUDFLARE_PORT": "",
+            }),
+            patch.dict("sys.modules", {"webview": webview}),
+        ):
+            run_desktop.main()
+
+        bridge = webview.create_window.call_args.kwargs["js_api"]
+        self.assertEqual(bridge.restart_modes["cloudflare"], (
+            "--cloudflare", "--cloudflare-hostname", "mbo.meetpetey.com",
+            "--port", "9876",
+        ))
+        self.assertEqual(bridge.restart_modes["desktop"], (
+            "--cloudflare-hostname", "mbo.meetpetey.com", "--port", "9876",
+        ))
 
     def test_native_window_size_is_validated_and_persisted(self):
         with TemporaryDirectory() as directory:
@@ -482,6 +531,28 @@ class DesktopLauncherTests(unittest.TestCase):
         unavailable = run_desktop.DesktopBridge(restart_modes={"cloudflare": None})
         unavailable.window = MagicMock()
         self.assertFalse(unavailable.restart_petey("cloudflare")["ok"])
+
+    def test_desktop_bridge_accepts_and_saves_missing_cloudflare_hostname(self):
+        with TemporaryDirectory() as directory:
+            bridge = run_desktop.DesktopBridge(
+                data_dir=directory,
+                restart_modes={"cloudflare": None},
+                cloudflare_port=8765,
+            )
+            bridge.window = MagicMock()
+            with patch("run_desktop.os.chdir"), patch("run_desktop.os.execv") as replaced:
+                result = bridge.restart_petey("cloudflare", "MBO.MeetPetey.com")
+            self.assertEqual(result, {"ok": True, "restarting": True})
+            replaced.assert_called_once_with(
+                run_desktop.sys.executable,
+                [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve()),
+                 "--cloudflare", "--cloudflare-hostname", "mbo.meetpetey.com",
+                 "--port", "8765"],
+            )
+            self.assertEqual(
+                run_desktop.saved_cloudflare_connection(directory),
+                ("mbo.meetpetey.com", 8765),
+            )
 
     def test_restart_requires_native_window_and_recovers_from_launch_error(self):
         bridge = run_desktop.DesktopBridge()

@@ -156,6 +156,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertLess(menu.index('id="temporary-mode"'), menu.index('id="chat-restart-petey"'))
         self.assertLess(menu.index('id="chat-restart-mode"'), menu.index('id="chat-restart-petey"'))
         self.assertIn('Restart PETEY in ${label}?', javascript)
+        self.assertIn('Enter the Cloudflare hostname for this PETEY computer:', javascript)
         self.assertIn('restartPetey(event.currentTarget, statusText, mode.value);', javascript)
         self.assertIn('.chat-header-menu-panel {', stylesheet)
         self.assertIn('.chat-header-menu[open] > summary span', stylesheet)

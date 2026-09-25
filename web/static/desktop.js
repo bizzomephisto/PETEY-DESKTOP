@@ -2063,7 +2063,16 @@ async function restartPetey(button, status, mode = 'current') {
     button.disabled = true;
     status.textContent = 'Restarting PETEY…';
     try {
-        const result = await window.pywebview.api.restart_petey(mode);
+        let result = await window.pywebview.api.restart_petey(mode);
+        if (!result.ok && result.needs_cloudflare_hostname) {
+            const hostname = window.prompt(
+                'Enter the Cloudflare hostname for this PETEY computer:',
+                '',
+            );
+            if (hostname?.trim()) {
+                result = await window.pywebview.api.restart_petey(mode, hostname.trim());
+            }
+        }
         if (!result.ok) {
             status.textContent = result.error;
             button.disabled = false;

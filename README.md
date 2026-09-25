@@ -237,7 +237,8 @@ python run_desktop.py --install-shortcut --cloudflare --cloudflare-hostname meet
 The launcher saves the resolved Cloudflare hostname and port in its launch command.
 The top-right chat menu can restart PETEY in the current mode, a normal desktop
 window, Cloudflare plus desktop, or a browser. PETEY preserves a known Cloudflare
-hostname and port while switching modes. The `--install-shortcut` option only
+hostname and port in its private application data while switching modes. If no
+hostname has been saved yet, choosing Cloudflare plus desktop asks for it. The `--install-shortcut` option only
 updates the launcher; it does not start PETEY.
 
 For a free temporary address without a Cloudflare account or domain, start PETEY
