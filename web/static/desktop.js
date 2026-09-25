@@ -6553,8 +6553,6 @@ function renderCommandNotifications() {
     });
     const count = commandNotifications.size;
     document.getElementById('command-notification-count').textContent = String(count);
-    document.getElementById('command-rail-handle-count').textContent = String(count);
-    document.getElementById('command-rail-handle-count').hidden = count === 0;
     document.getElementById('command-notifications-empty').hidden = count > 0;
 }
 
