@@ -54,7 +54,7 @@ layouts. Use temporary data and mocked provider catalogs, never real keys or mem
 
 ## Appearance
 
-Use the semantic CSS tokens in `desktop.css` for surfaces, text, borders, accent, success, and danger. The desktop offers three complete styles: Nebula uses layered dark glass, Studio is a warm editorial workspace, and Signal is a compact technical command deck. Each style stores its own user-selected accent color. Media artwork and the visual-mode canvas retain their own colors.
+Use the semantic CSS tokens in `desktop.css` for surfaces, text, borders, accent, success, and danger. The desktop offers five complete styles: Nebula uses layered dark glass, Studio is a warm editorial workspace, Signal is a compact technical command deck, Terminal recreates a phosphor CRT with scan lines and a blinking composer cursor, and Ember uses smoked glass with a warm glow. Each style stores its own user-selected accent color. Media artwork and the visual-mode canvas retain their own colors.
 
 Theme previews are native radio inputs with visible selection and keyboard focus. Theme and color changes preview immediately, persist through `/preferences`, and revert on failure. Server-render the saved theme and accent to prevent a flash of the defaults. At widths up to 760px, pin the established mobile palette and layout regardless of the selected desktop style. Other settings show explicit save controls; window preferences apply immediately.
 

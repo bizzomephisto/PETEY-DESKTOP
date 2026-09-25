@@ -20,11 +20,13 @@ from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 PERSONA_SLOT_COUNT = 5
 DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
 PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_life"}
-DESKTOP_THEMES = {"nebula", "studio", "signal"}
+DESKTOP_THEMES = {"nebula", "studio", "signal", "terminal", "ember"}
 DEFAULT_THEME_ACCENTS = {
     "nebula": "#8b5cf6",
     "studio": "#d65f36",
     "signal": "#31d7a5",
+    "terminal": "#63ff8f",
+    "ember": "#ff8a4c",
 }
 LEGACY_THEME_MIGRATION = {
     "midnight": "nebula", "ocean": "nebula", "forest": "signal", "paper": "studio",

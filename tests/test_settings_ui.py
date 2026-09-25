@@ -109,15 +109,22 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(menu_button.get('aria-controls'), 'mobile-visual-actions')
         self.assertIn('hidden', ids['mobile-visual-actions'][1])
 
-    def test_desktop_theme_picker_has_three_styles_and_color_controls(self):
+    def test_desktop_theme_picker_has_five_styles_and_color_controls(self):
         radios = [attrs for tag, attrs in self.markup.elements
                   if tag == 'input' and attrs.get('name') == 'interface-theme']
         colors = [attrs for tag, attrs in self.markup.elements
                   if tag == 'input' and attrs.get('data-theme-accent')]
-        self.assertEqual({item.get('value') for item in radios}, {'nebula', 'studio', 'signal'})
-        self.assertEqual({item.get('data-theme-accent') for item in colors}, {'nebula', 'studio', 'signal'})
-        self.assertEqual(len(radios), 3)
-        self.assertEqual(len(colors), 3)
+        themes = {'nebula', 'studio', 'signal', 'terminal', 'ember'}
+        self.assertEqual({item.get('value') for item in radios}, themes)
+        self.assertEqual({item.get('data-theme-accent') for item in colors}, themes)
+        self.assertEqual(len(radios), 5)
+        self.assertEqual(len(colors), 5)
+        ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
+        message = ids['message']
+        self.assertEqual(message[0], 'textarea')
+        stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(encoding='utf-8')
+        self.assertIn('[data-theme="terminal"] body::after', stylesheet)
+        self.assertIn('animation: terminal-cursor-blink', stylesheet)
 
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}

@@ -162,12 +162,12 @@ class DesktopStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertEqual(state.preferences["theme"], "nebula")
-            for theme in ("nebula", "studio", "signal"):
+            for theme in ("nebula", "studio", "signal", "terminal", "ember"):
                 state.update_preferences({"theme": theme})
                 self.assertEqual(DesktopState(directory).preferences["theme"], theme)
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "unsupported"})
-            self.assertEqual(state.preferences["theme"], "signal")
+            self.assertEqual(state.preferences["theme"], "ember")
 
     def test_theme_accents_persist_independently(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -175,6 +175,8 @@ class DesktopStateTests(unittest.TestCase):
             result = state.update_preferences({"theme": "studio", "theme_accent": "#AABBCC"})
             self.assertEqual(result["theme_accents"]["studio"], "#aabbcc")
             self.assertEqual(result["theme_accents"]["nebula"], "#8b5cf6")
+            self.assertEqual(result["theme_accents"]["terminal"], "#63ff8f")
+            self.assertEqual(result["theme_accents"]["ember"], "#ff8a4c")
             self.assertEqual(DesktopState(directory).preferences["theme_accents"]["studio"], "#aabbcc")
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "signal", "theme_accent": "red"})

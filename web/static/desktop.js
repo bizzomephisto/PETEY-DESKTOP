@@ -1363,7 +1363,10 @@ document.addEventListener('keydown', event => {
 
 function applyPreferences() {
     const theme = preferences.theme || 'nebula';
-    const defaultAccents = {nebula: '#8b5cf6', studio: '#d65f36', signal: '#31d7a5'};
+    const defaultAccents = {
+        nebula: '#8b5cf6', studio: '#d65f36', signal: '#31d7a5',
+        terminal: '#63ff8f', ember: '#ff8a4c',
+    };
     const accents = preferences.theme_accents || {};
     const accent = accents[theme] || defaultAccents[theme] || defaultAccents.nebula;
     document.documentElement.dataset.theme = theme;
