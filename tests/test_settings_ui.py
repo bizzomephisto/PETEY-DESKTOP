@@ -243,6 +243,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('event.speak && voiceResponseEnabled', poller)
         self.assertIn('addonEventSpeechChain = addonEventSpeechChain', poller)
         self.assertIn('event.text, null, true, eventSpeechGeneration', poller)
+        self.assertIn("event.surface !== currentSurface", poller)
         self.assertNotIn('autoSpeechChain', poller)
 
     def test_mobile_automatic_speech_is_single_and_rechecks_mute(self):

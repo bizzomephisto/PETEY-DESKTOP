@@ -155,7 +155,10 @@ An add-on may react to an external state change without fabricating a visible us
 message. Call `context.emit_event()` only after the user enables that behavior in
 the add-on. PETEY processes events serially on a bounded queue, hides the event
 prompt, saves the assistant response to the selected conversation, and delivers it
-to connected desktop and mobile clients.
+only to connected clients on the event's `surface`. Use `petey_desktop` for a
+desktop-triggered action and `mobile_petey` for a phone-triggered action. The reply
+remains in shared chat history, but only the originating surface receives and speaks
+the live event.
 
 ```python
 context.emit_event(

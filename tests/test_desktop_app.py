@@ -463,6 +463,7 @@ class DesktopAppTests(unittest.TestCase):
 
             self.assertEqual(updates["events"][0]["text"], "Now playing So What.")
             self.assertTrue(updates["events"][0]["speak"])
+            self.assertEqual(updates["events"][0]["surface"], "petey_desktop")
             self.assertEqual(
                 updates["events"][0]["metadata"]["conference_session_id"], "session-1"
             )

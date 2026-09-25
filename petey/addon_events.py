@@ -57,7 +57,7 @@ class AddonEventBroker:
             for key, value in (metadata or {}).items()
             if isinstance(key, str) and isinstance(value, (str, int, float, bool, type(None)))
         }
-        dedupe_key = f"{source}:{target}:{text}"
+        dedupe_key = f"{source}:{target}:{safe_surface}:{text}"
         now = time.monotonic()
         with self._lock:
             self._recent_keys = {
@@ -108,6 +108,7 @@ class AddonEventBroker:
                         "id": self._next_id,
                         "addon_id": event["addon_id"],
                         "conversation_id": event["conversation_id"],
+                        "surface": event["surface"],
                         "text": str(reply["text"]),
                         "speak": event["speak"],
                         "tool_events": list(reply.get("tool_events") or []),

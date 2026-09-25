@@ -57,7 +57,8 @@ filesystem and network permissions, so they are trusted local code.
   names as `addon_<id>__<tool>` and closes add-ons before shared workers/runtimes.
 - Enabled add-ons receive a bounded `emit_event()` channel for user-opted-in
   background updates. Event prompts stay hidden; PETEY's reply enters the selected
-  chat and optional speech respects the client speaker mute state. Sanitized event
+  chat, is delivered live only to the event's desktop or mobile surface, and optional
+  speech respects that client's speaker mute state. Sanitized event
   metadata may attach one HTTPS image and optional external link to that reply.
   Direct user gestures may set `user_initiated=True` to retain the normal
   surface-authorized tool flow without showing the command in chat.

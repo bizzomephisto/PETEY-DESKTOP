@@ -1209,7 +1209,9 @@ async function pollAddonEvents() {
         const payload = await apiJson(`/api/desktop/addon-events?after=${addonEventCursor}`);
         addonEventCursor = Math.max(addonEventCursor, Number(payload.cursor || 0));
         for (const event of payload.events || []) {
-            if (event.conversation_id !== activeConversationId
+            const currentSurface = mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop';
+            if ((event.surface && event.surface !== currentSurface)
+                    || event.conversation_id !== activeConversationId
                     || document.getElementById('temporary-mode').checked) continue;
             addMessage('assistant', event.text || '', {
                 toolEvents: event.tool_events || [], metadata: event.metadata || {}, forceScroll: true,
