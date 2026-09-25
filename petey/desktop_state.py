@@ -21,7 +21,8 @@ PERSONA_SLOT_COUNT = 5
 DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
 PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_life"}
 DESKTOP_THEMES = {"nebula", "studio", "signal", "terminal", "ember"}
-INTERFACE_LAYOUTS = {"classic", "command"}
+COMMAND_RAIL_SECTIONS = {"session", "launch", "addons", "signals"}
+DEFAULT_COMMAND_RAIL_SECTIONS = {section: True for section in COMMAND_RAIL_SECTIONS}
 DEFAULT_THEME_ACCENTS = {
     "nebula": "#8b5cf6",
     "studio": "#d65f36",
@@ -153,7 +154,9 @@ class DesktopState:
             "ui_scale": 1.0,
             "visual_mode": False,
             "visual_style": "neural_core",
-            "interface_layout": "classic",
+            "command_rail_enabled": True,
+            "command_rail_open": True,
+            "command_rail_sections": copy.deepcopy(DEFAULT_COMMAND_RAIL_SECTIONS),
             "theme": "nebula",
             "theme_accents": copy.deepcopy(DEFAULT_THEME_ACCENTS),
         }
@@ -175,11 +178,17 @@ class DesktopState:
         if settings["preferences"].get("theme") != migrated_theme:
             settings["preferences"]["theme"] = migrated_theme
             changed = True
-        saved_layout = str(settings["preferences"].get("interface_layout") or "classic")
-        if saved_layout not in INTERFACE_LAYOUTS:
-            saved_layout = "classic"
-        if settings["preferences"].get("interface_layout") != saved_layout:
-            settings["preferences"]["interface_layout"] = saved_layout
+        if "interface_layout" in settings["preferences"]:
+            settings["preferences"].pop("interface_layout", None)
+            changed = True
+        saved_rail_sections = settings["preferences"].get("command_rail_sections")
+        normalized_rail_sections = copy.deepcopy(DEFAULT_COMMAND_RAIL_SECTIONS)
+        if isinstance(saved_rail_sections, dict):
+            for section in COMMAND_RAIL_SECTIONS:
+                if isinstance(saved_rail_sections.get(section), bool):
+                    normalized_rail_sections[section] = saved_rail_sections[section]
+        if saved_rail_sections != normalized_rail_sections:
+            settings["preferences"]["command_rail_sections"] = normalized_rail_sections
             changed = True
         saved_accents = settings["preferences"].get("theme_accents")
         normalized_accents = copy.deepcopy(DEFAULT_THEME_ACCENTS)
@@ -666,11 +675,22 @@ class DesktopState:
                 raise ValueError("Choose a valid theme accent color.")
         if "theme" in changes:
             preferences["theme"] = theme
-        if "interface_layout" in changes:
-            layout = str(changes.get("interface_layout") or "classic")
-            if layout not in INTERFACE_LAYOUTS:
-                raise ValueError("Choose a supported desktop interface.")
-            preferences["interface_layout"] = layout
+        if "command_rail_enabled" in changes:
+            preferences["command_rail_enabled"] = bool(changes["command_rail_enabled"])
+        if "command_rail_open" in changes:
+            preferences["command_rail_open"] = bool(changes["command_rail_open"])
+        if "command_rail_sections" in changes:
+            sections = changes["command_rail_sections"]
+            if not isinstance(sections, dict) or any(
+                key not in COMMAND_RAIL_SECTIONS or not isinstance(value, bool)
+                for key, value in sections.items()
+            ):
+                raise ValueError("Choose valid Command Center rail sections.")
+            normalized = copy.deepcopy(
+                preferences.get("command_rail_sections") or DEFAULT_COMMAND_RAIL_SECTIONS
+            )
+            normalized.update(sections)
+            preferences["command_rail_sections"] = normalized
         if "theme_accent" in changes:
             accents = copy.deepcopy(preferences.get("theme_accents") or DEFAULT_THEME_ACCENTS)
             accents[theme] = color

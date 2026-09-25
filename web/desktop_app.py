@@ -289,13 +289,16 @@ def create_desktop_app(
     @app.get("/")
     def desktop_home():
         addon_views = app.config["PETEY_ADDONS"].template_views()
+        preferences = app.config["PETEY_STATE"].preferences
+        rail_enabled = preferences.get("command_rail_enabled", True) is not False
+        rail_open = rail_enabled and preferences.get("command_rail_open", True) is not False
         return render_template(
             "desktop.html",
             app_version=__version__,
             asset_revision=app.config["PETEY_ASSET_REVISION"],
-            theme=app.config["PETEY_STATE"].preferences.get("theme", "nebula"),
-            interface_layout=app.config["PETEY_STATE"].preferences.get("interface_layout", "classic"),
-            theme_accents=app.config["PETEY_STATE"].preferences.get("theme_accents", {}),
+            theme=preferences.get("theme", "nebula"),
+            theme_accents=preferences.get("theme_accents", {}),
+            command_rail_state="open" if rail_open else "closed" if rail_enabled else "disabled",
             project_url=PROJECT_URL,
             media_provider_url=MEDIA_PROVIDER_URL,
             discord_enabled=app.config["PETEY_DISCORD"] is not None,

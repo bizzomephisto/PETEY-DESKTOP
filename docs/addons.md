@@ -206,10 +206,12 @@ modification times so browser and tunnel caches refresh after those files change
 
 ### Command Center actions and notifications
 
-The optional desktop Command Center interface includes bounded areas for add-on
-controls and signals. Add-on scripts load before PETEY's main script, so these calls
-may be made immediately; PETEY queues them until the interface is ready. Listen for
-`petey:interface-ready` only when later setup work depends on the rendered host.
+The desktop Command Center includes user-configurable areas for add-on controls and
+signals. The user may hide the rail, disable it completely, or hide any section;
+registration still succeeds and the items appear if that surface is later enabled.
+Add-on scripts load before PETEY's main script, so these calls may be made immediately;
+PETEY queues them until the interface is ready. Listen for `petey:interface-ready`
+only when later setup work depends on the rendered host.
 
 ```javascript
 const removeStatus = window.peteyInterface.registerAction({

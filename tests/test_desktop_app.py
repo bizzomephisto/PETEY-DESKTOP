@@ -190,27 +190,27 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(client.put('/api/desktop/preferences', json={'theme': 'bad'}).status_code, 400)
             self.assertEqual(client.put('/api/desktop/preferences', json={'theme_accent': 'orange'}).status_code, 400)
 
-    def test_command_interface_is_server_rendered_and_saved(self):
+    def test_command_center_and_configurable_rail_are_server_rendered(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             client = create_desktop_app(
                 state=state, memory=MagicMock(), job_manager=MagicMock()
             ).test_client()
             response = client.put(
-                "/api/desktop/preferences", json={"interface_layout": "command"}
+                "/api/desktop/preferences",
+                json={"command_rail_open": False, "command_rail_sections": {"launch": False}},
             )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json["preferences"]["interface_layout"], "command")
+            self.assertFalse(response.json["preferences"]["command_rail_open"])
+            self.assertFalse(response.json["preferences"]["command_rail_sections"]["launch"])
             html = client.get("/").get_data(as_text=True)
             self.assertIn('data-interface="command"', html)
+            self.assertIn('data-command-rail="closed"', html)
             self.assertIn('id="command-rail"', html)
-            self.assertEqual(
-                client.get("/api/desktop/bootstrap").json["preferences"]["interface_layout"],
-                "command",
-            )
-            invalid = client.put(
-                "/api/desktop/preferences", json={"interface_layout": "unknown"}
-            )
+            self.assertFalse(client.get("/api/desktop/bootstrap").json["preferences"]["command_rail_open"])
+            invalid = client.put("/api/desktop/preferences", json={
+                "command_rail_sections": {"other": True}
+            })
             self.assertEqual(invalid.status_code, 400)
 
     def test_gemini_model_selection_also_updates_vision(self):

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="{{ theme }}" data-interface="{{ interface_layout }}" style="--theme-accent: {{ theme_accents.get(theme, '#8b5cf6') }}">
+<html lang="en" data-theme="{{ theme }}" data-interface="command" data-command-rail="{{ command_rail_state }}" style="--theme-accent: {{ theme_accents.get(theme, '#8b5cf6') }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -60,7 +60,6 @@
                     <summary aria-label="Open chat controls" title="Chat controls"><span aria-hidden="true">⌄</span></summary>
                     <div class="chat-header-menu-panel">
                         <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Petey profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
-                        <label class="chat-header-menu-field"><span>Desktop interface</span><select id="chat-interface-layout" aria-label="Desktop interface"><option value="classic">Companion</option><option value="command">Command Center</option></select></label>
                         <label class="chat-header-menu-field chat-theme-field"><span>Desktop style</span><span class="chat-theme-controls"><select id="chat-theme-select" aria-label="Desktop style"><option value="nebula">Nebula</option><option value="studio">Studio</option><option value="signal">Signal</option><option value="terminal">Terminal</option><option value="ember">Ember</option></select><input id="chat-theme-accent" type="color" aria-label="Accent color for selected desktop style"></span></label>
                         <div class="chat-header-actions">
                             <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
@@ -281,7 +280,7 @@
                 <div><span class="command-kicker">PETEY COMMAND</span><strong>At a glance</strong></div>
                 <time id="command-clock">--:--</time>
             </header>
-            <section class="command-card command-session-card">
+            <section class="command-card command-session-card" data-command-section="session">
                 <div class="command-card-heading"><span>Live session</span><i id="command-status-dot" aria-hidden="true"></i></div>
                 <dl>
                     <div><dt>Status</dt><dd id="command-runtime-status">Starting…</dd></div>
@@ -290,7 +289,7 @@
                     <div><dt>Voice</dt><dd id="command-voice">Loading…</dd></div>
                 </dl>
             </section>
-            <section class="command-card">
+            <section class="command-card" data-command-section="launch">
                 <div class="command-card-heading"><span>Quick launch</span><small>Core</small></div>
                 <div class="command-launch-grid">
                     <button type="button" data-command-view="chat"><span>◌</span>Chat</button>
@@ -301,17 +300,29 @@
                     <button type="button" data-command-view="settings"><span>⚙</span>Settings</button>
                 </div>
             </section>
-            <section class="command-card command-addon-card">
+            <section class="command-card command-addon-card" data-command-section="addons">
                 <div class="command-card-heading"><span>Add-on controls</span><small id="command-action-count">0</small></div>
                 <div id="command-addon-actions" class="command-addon-actions"></div>
                 <p id="command-actions-empty" class="command-empty">Enabled add-ons can pin useful controls here.</p>
             </section>
-            <section class="command-card command-signal-card">
+            <section class="command-card command-signal-card" data-command-section="signals">
                 <div class="command-card-heading"><span>Signals</span><small id="command-notification-count">0</small></div>
                 <div id="command-addon-notifications" class="command-addon-notifications" aria-live="polite"></div>
                 <p id="command-notifications-empty" class="command-empty">No add-on notifications.</p>
             </section>
+            <details class="command-rail-config">
+                <summary><span>Customize rail</span><span aria-hidden="true">⚙</span></summary>
+                <div>
+                    <label><input type="checkbox" data-command-section-setting="session"> Live session</label>
+                    <label><input type="checkbox" data-command-section-setting="launch"> Quick launch</label>
+                    <label><input type="checkbox" data-command-section-setting="addons"> Add-on controls</label>
+                    <label><input type="checkbox" data-command-section-setting="signals"> Signals</label>
+                    <button id="command-disable-rail" type="button">Disable rail</button>
+                </div>
+            </details>
+            <button id="command-rail-close" class="command-rail-close" type="button" aria-label="Hide At a glance rail" title="Hide rail">›</button>
         </aside>
+        <button id="command-rail-handle" class="command-rail-handle" type="button" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">‹</span><strong>At a glance</strong><small id="command-rail-handle-count">0</small></button>
     </main>
     <dialog id="image-browser-dialog" class="image-browser-dialog">
         <div class="image-browser-shell">

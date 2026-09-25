@@ -1371,11 +1371,21 @@ function applyPreferences() {
     const accents = preferences.theme_accents || {};
     const accent = accents[theme] || defaultAccents[theme] || defaultAccents.nebula;
     document.documentElement.dataset.theme = theme;
-    const interfaceLayout = preferences.interface_layout === 'command' ? 'command' : 'classic';
-    document.documentElement.dataset.interface = interfaceLayout;
-    document.getElementById('chat-interface-layout').value = interfaceLayout;
-    document.querySelectorAll('[name="interface-layout"]').forEach(input => {
-        input.checked = input.value === interfaceLayout;
+    const railEnabled = preferences.command_rail_enabled !== false;
+    const railOpen = railEnabled && preferences.command_rail_open !== false;
+    document.documentElement.dataset.commandRail = railEnabled ? (railOpen ? 'open' : 'closed') : 'disabled';
+    document.getElementById('command-rail-enabled-setting').checked = railEnabled;
+    document.getElementById('command-rail-handle').setAttribute('aria-expanded', String(railOpen));
+    const railSections = {
+        session: true, launch: true, addons: true, signals: true,
+        ...(preferences.command_rail_sections || {}),
+    };
+    document.querySelectorAll('[data-command-section]').forEach(section => {
+        section.hidden = railSections[section.dataset.commandSection] === false;
+    });
+    document.querySelectorAll('[data-command-section-setting]').forEach(input => {
+        input.checked = railSections[input.dataset.commandSectionSetting] !== false;
+        input.disabled = !railEnabled;
     });
     document.documentElement.style.setProperty('--theme-accent', accent);
     document.getElementById('chat-theme-select').value = theme;
@@ -1411,39 +1421,53 @@ function applyPreferences() {
     refreshCommandOverview();
 }
 
-let interfaceLayoutSaving = false;
-async function chooseInterfaceLayout(layout) {
-    if (interfaceLayoutSaving || !['classic', 'command'].includes(layout)) return;
-    interfaceLayoutSaving = true;
-    const previous = preferences.interface_layout || 'classic';
-    const feedback = document.getElementById('interface-layout-status');
-    document.documentElement.dataset.interface = layout;
-    document.querySelectorAll('[name="interface-layout"]').forEach(control => { control.disabled = true; });
-    setFeedback(feedback, 'Saving interface…');
+let commandRailSaving = false;
+async function saveCommandRail(changes) {
+    if (commandRailSaving) return;
+    commandRailSaving = true;
+    const previous = {...preferences, command_rail_sections: {...(preferences.command_rail_sections || {})}};
+    preferences = {...preferences, ...changes};
+    if (changes.command_rail_sections) {
+        preferences.command_rail_sections = {
+            ...previous.command_rail_sections, ...changes.command_rail_sections,
+        };
+    }
+    applyPreferences();
     try {
         const payload = await apiJson('/api/desktop/preferences', {
             method: 'PUT', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({interface_layout: layout}),
+            body: JSON.stringify(changes),
         });
         preferences = {...preferences, ...payload.preferences};
-        setFeedback(feedback, layout === 'command' ? 'Command Center enabled.' : 'Companion interface enabled.', 'success');
     } catch (error) {
-        preferences.interface_layout = previous;
-        setFeedback(feedback, `Could not save interface: ${error.message}`, 'error');
+        preferences = previous;
+        setFeedback(document.getElementById('command-rail-status'), `Could not save rail: ${error.message}`, 'error');
     } finally {
-        interfaceLayoutSaving = false;
-        document.querySelectorAll('[name="interface-layout"]').forEach(control => { control.disabled = false; });
+        commandRailSaving = false;
         applyPreferences();
     }
 }
 
-document.querySelectorAll('[name="interface-layout"]').forEach(input => {
-    input.addEventListener('change', () => {
-        if (input.checked) chooseInterfaceLayout(input.value);
-    });
+document.getElementById('command-rail-close').addEventListener('click', () => {
+    saveCommandRail({command_rail_open: false});
 });
-document.getElementById('chat-interface-layout').addEventListener('change', event => {
-    chooseInterfaceLayout(event.target.value);
+document.getElementById('command-rail-handle').addEventListener('click', () => {
+    saveCommandRail({command_rail_open: true});
+});
+document.getElementById('command-disable-rail').addEventListener('click', () => {
+    saveCommandRail({command_rail_enabled: false, command_rail_open: false});
+});
+document.getElementById('command-rail-enabled-setting').addEventListener('change', event => {
+    saveCommandRail({command_rail_enabled: event.target.checked, command_rail_open: event.target.checked});
+});
+document.querySelectorAll('[data-command-section-setting]').forEach(input => {
+    input.addEventListener('change', () => {
+        const section = input.dataset.commandSectionSetting;
+        document.querySelectorAll(`[data-command-section-setting="${section}"]`).forEach(peer => {
+            peer.checked = input.checked;
+        });
+        saveCommandRail({command_rail_sections: {[section]: input.checked}});
+    });
 });
 
 let themeSaving = false;
@@ -6529,6 +6553,8 @@ function renderCommandNotifications() {
     });
     const count = commandNotifications.size;
     document.getElementById('command-notification-count').textContent = String(count);
+    document.getElementById('command-rail-handle-count').textContent = String(count);
+    document.getElementById('command-rail-handle-count').hidden = count === 0;
     document.getElementById('command-notifications-empty').hidden = count > 0;
 }
 

@@ -126,13 +126,14 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('[data-theme="terminal"] body::after', stylesheet)
         self.assertIn('animation: terminal-cursor-blink', stylesheet)
 
-    def test_desktop_interface_picker_and_addon_command_hooks_render(self):
+    def test_command_center_rail_and_addon_hooks_render(self):
         radios = [attrs for tag, attrs in self.markup.elements
                   if tag == 'input' and attrs.get('name') == 'interface-layout']
-        self.assertEqual({item.get('value') for item in radios}, {'classic', 'command'})
+        self.assertEqual(radios, [])
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         for name in (
-            'interface-layout-settings', 'chat-interface-layout', 'command-rail',
+            'command-center-settings', 'command-rail', 'command-rail-handle',
+            'command-rail-close', 'command-disable-rail', 'command-rail-enabled-setting',
             'command-addon-actions', 'command-addon-notifications',
         ):
             self.assertIn(name, ids)
@@ -144,6 +145,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("window.dispatchEvent(new CustomEvent('petey:interface-ready'", javascript)
         self.assertIn(':root[data-interface="command"] .app-shell', stylesheet)
         self.assertIn('.command-rail { display: none !important; }', stylesheet)
+        self.assertIn('[data-command-rail="closed"] .command-rail-handle', stylesheet)
+        self.assertNotIn('Companion</option>', template)
 
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
