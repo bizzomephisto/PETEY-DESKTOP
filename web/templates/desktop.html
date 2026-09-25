@@ -280,7 +280,7 @@
                 <div><span class="command-kicker">PETEY COMMAND</span><strong>At a glance</strong></div>
                 <time id="command-clock">--:--</time>
             </header>
-            <section class="command-card command-session-card" data-command-section="session">
+            <section class="command-card command-session-card" data-command-section="session" data-command-panel="session">
                 <div class="command-card-heading"><span>Live session</span><i id="command-status-dot" aria-hidden="true"></i></div>
                 <dl>
                     <div><dt>Status</dt><dd id="command-runtime-status">Starting…</dd></div>
@@ -289,7 +289,7 @@
                     <div><dt>Voice</dt><dd id="command-voice">Loading…</dd></div>
                 </dl>
             </section>
-            <section class="command-card" data-command-section="launch">
+            <section class="command-card" data-command-section="launch" data-command-panel="launch">
                 <div class="command-card-heading"><span>Quick launch</span><small>Core</small></div>
                 <div class="command-launch-grid">
                     <button type="button" data-command-view="chat"><span>◌</span>Chat</button>
@@ -300,12 +300,12 @@
                     <button type="button" data-command-view="settings"><span>⚙</span>Settings</button>
                 </div>
             </section>
-            <section class="command-card command-addon-card" data-command-section="addons">
+            <section class="command-card command-addon-card" data-command-section="addons" data-command-panel="addons">
                 <div class="command-card-heading"><span>Add-on controls</span><small id="command-action-count">0</small></div>
                 <div id="command-addon-actions" class="command-addon-actions"></div>
                 <p id="command-actions-empty" class="command-empty">Enabled add-ons can pin useful controls here.</p>
             </section>
-            <section class="command-card command-signal-card" data-command-section="signals">
+            <section class="command-card command-signal-card" data-command-section="signals" data-command-panel="signals">
                 <div class="command-card-heading"><span>Signals</span><small id="command-notification-count">0</small></div>
                 <div id="command-addon-notifications" class="command-addon-notifications" aria-live="polite"></div>
                 <p id="command-notifications-empty" class="command-empty">No add-on notifications.</p>
@@ -366,6 +366,13 @@
                 return () => this.removeAction(value.id);
             },
             removeAction(id) { this._queue.push(['removeAction', id]); },
+            registerPanel(panel) {
+                const value = {...(panel || {})};
+                value.id = value.id || `panel-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+                this._queue.push(['panel', value]);
+                return () => this.removePanel(value.id);
+            },
+            removePanel(id) { this._queue.push(['removePanel', id]); },
             notify(notification) {
                 const value = {...(notification || {})};
                 value.id = value.id || `signal-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;

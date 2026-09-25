@@ -1383,6 +1383,7 @@ function applyPreferences() {
     document.querySelectorAll('[data-command-section]').forEach(section => {
         section.hidden = railSections[section.dataset.commandSection] === false;
     });
+    applyCommandPanelPreferences();
     document.querySelectorAll('[data-command-section-setting]').forEach(input => {
         input.checked = railSections[input.dataset.commandSectionSetting] !== false;
         input.disabled = !railEnabled;
@@ -6478,6 +6479,9 @@ for (const [id, endpoint, statusId, read] of [
 
 const commandActions = new Map();
 const commandNotifications = new Map();
+const commandPanels = new Map();
+let draggedCommandPanel = null;
+let commandPanelOrderBeforeDrag = '';
 
 function boundedInterfaceText(value, limit) {
     return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, limit);
@@ -6496,6 +6500,138 @@ function runInterfaceItem(item) {
     const view = boundedInterfaceText(item.view, 80);
     if (view && document.getElementById(`view-${view}`)) showView(view);
 }
+
+function commandPanelCards() {
+    return [...document.querySelectorAll('#command-rail > .command-card[data-command-panel]')];
+}
+
+function currentCommandPanelOrder() {
+    return commandPanelCards().map(card => card.dataset.commandPanel);
+}
+
+function enhanceCommandPanel(card) {
+    if (!card || card.dataset.commandPanelReady === 'true') return;
+    const heading = card.querySelector(':scope > .command-card-heading');
+    if (!heading) return;
+    card.dataset.commandPanelReady = 'true';
+    const controls = document.createElement('span');
+    controls.className = 'command-card-controls';
+    const drag = document.createElement('span');
+    drag.className = 'command-card-drag';
+    drag.draggable = true;
+    drag.tabIndex = 0;
+    drag.setAttribute('role', 'button');
+    drag.setAttribute('aria-label', `Move ${heading.querySelector('span')?.textContent || 'panel'}`);
+    drag.title = 'Drag to rearrange';
+    drag.textContent = '⠿';
+    const collapse = document.createElement('button');
+    collapse.type = 'button';
+    collapse.className = 'command-card-collapse';
+    collapse.addEventListener('click', () => {
+        const panelId = card.dataset.commandPanel;
+        const collapsed = new Set(preferences.command_rail_collapsed || []);
+        if (collapsed.has(panelId)) collapsed.delete(panelId);
+        else collapsed.add(panelId);
+        saveCommandRail({command_rail_collapsed: [...collapsed]});
+    });
+    drag.addEventListener('dragstart', event => {
+        draggedCommandPanel = card;
+        commandPanelOrderBeforeDrag = currentCommandPanelOrder().join('|');
+        card.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', card.dataset.commandPanel);
+    });
+    drag.addEventListener('dragend', () => {
+        card.classList.remove('dragging');
+        const order = currentCommandPanelOrder();
+        draggedCommandPanel = null;
+        if (order.join('|') !== commandPanelOrderBeforeDrag) {
+            saveCommandRail({command_rail_order: order});
+        }
+    });
+    controls.append(drag, collapse);
+    heading.append(controls);
+}
+
+function applyCommandPanelPreferences() {
+    const rail = document.getElementById('command-rail');
+    const anchor = rail?.querySelector(':scope > .command-rail-config');
+    if (!rail || !anchor) return;
+    const cards = new Map(commandPanelCards().map(card => [card.dataset.commandPanel, card]));
+    const savedOrder = Array.isArray(preferences.command_rail_order) ? preferences.command_rail_order : [];
+    const ordered = [...savedOrder.filter(panelId => cards.has(panelId))];
+    for (const panelId of cards.keys()) {
+        if (!ordered.includes(panelId)) ordered.push(panelId);
+    }
+    ordered.forEach(panelId => rail.insertBefore(cards.get(panelId), anchor));
+    const collapsed = new Set(preferences.command_rail_collapsed || []);
+    commandPanelCards().forEach(card => {
+        enhanceCommandPanel(card);
+        const isCollapsed = collapsed.has(card.dataset.commandPanel);
+        card.classList.toggle('collapsed', isCollapsed);
+        const button = card.querySelector(':scope > .command-card-heading .command-card-collapse');
+        if (button) {
+            button.textContent = isCollapsed ? '›' : '⌄';
+            button.setAttribute('aria-expanded', String(!isCollapsed));
+            button.setAttribute('aria-label', `${isCollapsed ? 'Expand' : 'Collapse'} panel`);
+            button.title = isCollapsed ? 'Expand panel' : 'Collapse panel';
+        }
+    });
+}
+
+function registerCommandPanel(panel, bridge) {
+    if (!panel || typeof panel !== 'object') return () => {};
+    const panelId = interfaceItemId(panel.id || panel.title, 'panel');
+    if (commandPanelCards().some(card => card.dataset.commandPanel === panelId)) {
+        return () => {};
+    }
+    if (commandPanels.size >= 8) return () => {};
+    const card = document.createElement('section');
+    card.className = 'command-card command-custom-card';
+    card.dataset.commandPanel = panelId;
+    const heading = document.createElement('div');
+    heading.className = 'command-card-heading';
+    const title = document.createElement('span');
+    const icon = boundedInterfaceText(panel.icon, 3);
+    title.textContent = `${icon ? `${icon} ` : ''}${boundedInterfaceText(panel.title, 42) || 'Add-on panel'}`;
+    heading.append(title);
+    const badgeText = boundedInterfaceText(panel.badge, 12);
+    if (badgeText) {
+        const badge = document.createElement('small');
+        badge.textContent = badgeText;
+        heading.append(badge);
+    }
+    const body = document.createElement('div');
+    body.className = 'command-custom-panel-body';
+    card.append(heading, body);
+    document.getElementById('command-rail').insertBefore(
+        card, document.querySelector('#command-rail > .command-rail-config')
+    );
+    let cleanup = null;
+    try {
+        cleanup = typeof panel.render === 'function' ? panel.render(body) : null;
+    } catch (error) {
+        body.textContent = `Panel failed to load: ${error.message || error}`;
+        body.classList.add('command-empty');
+    }
+    commandPanels.set(panelId, {card, cleanup});
+    enhanceCommandPanel(card);
+    applyCommandPanelPreferences();
+    return () => bridge.removePanel(panelId);
+}
+
+document.getElementById('command-rail').addEventListener('dragover', event => {
+    if (!draggedCommandPanel) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const target = event.target.closest('.command-card[data-command-panel]');
+    if (!target || target === draggedCommandPanel) return;
+    const after = event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+    target.parentNode.insertBefore(draggedCommandPanel, after ? target.nextSibling : target);
+});
+document.getElementById('command-rail').addEventListener('drop', event => {
+    if (draggedCommandPanel) event.preventDefault();
+});
 
 function renderCommandActions() {
     const container = document.getElementById('command-addon-actions');
@@ -6571,6 +6707,15 @@ function initializePeteyInterface() {
         commandActions.delete(interfaceItemId(id, 'action'));
         renderCommandActions();
     };
+    bridge.registerPanel = panel => registerCommandPanel(panel, bridge);
+    bridge.removePanel = id => {
+        const panelId = interfaceItemId(id, 'panel');
+        const registered = commandPanels.get(panelId);
+        if (!registered) return;
+        if (typeof registered.cleanup === 'function') registered.cleanup();
+        registered.card.remove();
+        commandPanels.delete(panelId);
+    };
     bridge.notify = notification => {
         if (!notification || typeof notification !== 'object') return '';
         const id = interfaceItemId(notification.id || notification.title, 'signal');
@@ -6589,11 +6734,14 @@ function initializePeteyInterface() {
     queued.forEach(([kind, value]) => {
         if (kind === 'action') bridge.registerAction(value);
         else if (kind === 'removeAction') bridge.removeAction(value);
+        else if (kind === 'panel') bridge.registerPanel(value);
+        else if (kind === 'removePanel') bridge.removePanel(value);
         else if (kind === 'notification') bridge.notify(value);
         else if (kind === 'dismissNotification') bridge.dismissNotification(value);
     });
     renderCommandActions();
     renderCommandNotifications();
+    applyCommandPanelPreferences();
     window.dispatchEvent(new CustomEvent('petey:interface-ready', {detail: {layout: 'command'}}));
 }
 

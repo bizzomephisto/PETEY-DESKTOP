@@ -1280,8 +1280,20 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
     .command-kicker { color: var(--accent-text); font: 700 9px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .18em; }
     #command-clock { color: var(--accent-text); font: 600 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .command-card { padding: 13px; border: 1px solid #223247; border-radius: 11px; background: linear-gradient(145deg, rgba(19, 29, 42, .95), rgba(8, 13, 21, .96)); }
+    .command-card.dragging { opacity: .48; border-color: var(--accent-border); }
+    .command-card.collapsed { padding-block: 10px; }
+    .command-card.collapsed > :not(.command-card-heading) { display: none !important; }
     .command-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 11px; color: var(--text); font-size: 12px; font-weight: 700; letter-spacing: .03em; }
+    .command-card.collapsed > .command-card-heading { margin-bottom: 0; }
+    .command-card-heading > span:first-child { flex: 1; min-width: 0; }
     .command-card-heading small { min-width: 22px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); text-align: center; font-size: 9px; }
+    .command-card-controls { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
+    .command-card-drag, .command-card-collapse { display: grid; place-items: center; width: 23px; height: 23px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: 700 15px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .command-card-drag { cursor: grab; }
+    .command-card-drag:active { cursor: grabbing; }
+    .command-card-collapse { cursor: pointer; font-size: 18px; }
+    .command-card-drag:hover, .command-card-collapse:hover { background: var(--accent-soft); color: var(--accent-text); }
+    .command-custom-panel-body { min-width: 0; }
     #command-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 9px color-mix(in srgb, var(--success) 75%, transparent); }
     #command-status-dot.busy { background: var(--accent); box-shadow: 0 0 9px var(--accent); animation: command-pulse 1.15s ease-in-out infinite; }
     .command-session-card dl { display: grid; gap: 8px; margin: 0; }

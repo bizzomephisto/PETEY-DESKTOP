@@ -23,6 +23,8 @@ PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_lif
 DESKTOP_THEMES = {"nebula", "studio", "signal", "terminal", "ember"}
 COMMAND_RAIL_SECTIONS = {"session", "launch", "addons", "signals"}
 DEFAULT_COMMAND_RAIL_SECTIONS = {section: True for section in COMMAND_RAIL_SECTIONS}
+DEFAULT_COMMAND_RAIL_ORDER = ["session", "launch", "addons", "signals"]
+COMMAND_PANEL_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 DEFAULT_THEME_ACCENTS = {
     "nebula": "#8b5cf6",
     "studio": "#d65f36",
@@ -157,6 +159,8 @@ class DesktopState:
             "command_rail_enabled": True,
             "command_rail_open": True,
             "command_rail_sections": copy.deepcopy(DEFAULT_COMMAND_RAIL_SECTIONS),
+            "command_rail_order": copy.deepcopy(DEFAULT_COMMAND_RAIL_ORDER),
+            "command_rail_collapsed": [],
             "theme": "nebula",
             "theme_accents": copy.deepcopy(DEFAULT_THEME_ACCENTS),
         }
@@ -189,6 +193,19 @@ class DesktopState:
                     normalized_rail_sections[section] = saved_rail_sections[section]
         if saved_rail_sections != normalized_rail_sections:
             settings["preferences"]["command_rail_sections"] = normalized_rail_sections
+            changed = True
+        saved_rail_order = settings["preferences"].get("command_rail_order")
+        normalized_rail_order = self._normalized_command_panel_ids(saved_rail_order)
+        for panel_id in DEFAULT_COMMAND_RAIL_ORDER:
+            if panel_id not in normalized_rail_order:
+                normalized_rail_order.append(panel_id)
+        if saved_rail_order != normalized_rail_order:
+            settings["preferences"]["command_rail_order"] = normalized_rail_order
+            changed = True
+        saved_collapsed = settings["preferences"].get("command_rail_collapsed")
+        normalized_collapsed = self._normalized_command_panel_ids(saved_collapsed)
+        if saved_collapsed != normalized_collapsed:
+            settings["preferences"]["command_rail_collapsed"] = normalized_collapsed
             changed = True
         saved_accents = settings["preferences"].get("theme_accents")
         normalized_accents = copy.deepcopy(DEFAULT_THEME_ACCENTS)
@@ -663,6 +680,17 @@ class DesktopState:
             self._write_json(self.settings_path, self.settings)
         return copy.deepcopy(match), self.conversation_id
 
+    @staticmethod
+    def _normalized_command_panel_ids(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        result = []
+        for item in value[:32]:
+            panel_id = str(item or "").strip().lower()
+            if COMMAND_PANEL_ID.fullmatch(panel_id) and panel_id not in result:
+                result.append(panel_id)
+        return result
+
     def update_preferences(self, changes: dict) -> dict:
         preferences = self.preferences
         theme = str(changes.get("theme") or preferences.get("theme") or "nebula")
@@ -691,6 +719,18 @@ class DesktopState:
             )
             normalized.update(sections)
             preferences["command_rail_sections"] = normalized
+        if "command_rail_order" in changes:
+            order = changes["command_rail_order"]
+            normalized_order = self._normalized_command_panel_ids(order)
+            if not isinstance(order, list) or normalized_order != order:
+                raise ValueError("Choose a valid Command Center panel order.")
+            preferences["command_rail_order"] = normalized_order
+        if "command_rail_collapsed" in changes:
+            collapsed = changes["command_rail_collapsed"]
+            normalized_collapsed = self._normalized_command_panel_ids(collapsed)
+            if not isinstance(collapsed, list) or normalized_collapsed != collapsed:
+                raise ValueError("Choose valid collapsed Command Center panels.")
+            preferences["command_rail_collapsed"] = normalized_collapsed
         if "theme_accent" in changes:
             accents = copy.deepcopy(preferences.get("theme_accents") or DEFAULT_THEME_ACCENTS)
             accents[theme] = color

@@ -198,11 +198,18 @@ class DesktopAppTests(unittest.TestCase):
             ).test_client()
             response = client.put(
                 "/api/desktop/preferences",
-                json={"command_rail_open": False, "command_rail_sections": {"launch": False}},
+                json={
+                    "command_rail_open": False,
+                    "command_rail_sections": {"launch": False},
+                    "command_rail_order": ["signals", "session", "launch", "addons"],
+                    "command_rail_collapsed": ["signals"],
+                },
             )
             self.assertEqual(response.status_code, 200)
             self.assertFalse(response.json["preferences"]["command_rail_open"])
             self.assertFalse(response.json["preferences"]["command_rail_sections"]["launch"])
+            self.assertEqual(response.json["preferences"]["command_rail_order"][0], "signals")
+            self.assertEqual(response.json["preferences"]["command_rail_collapsed"], ["signals"])
             html = client.get("/").get_data(as_text=True)
             self.assertIn('data-interface="command"', html)
             self.assertIn('data-command-rail="closed"', html)

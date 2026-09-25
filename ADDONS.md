@@ -66,7 +66,7 @@ filesystem and network permissions, so they are trusted local code.
   `window.peteyMediaDevices`. Recording add-ons use `window.peteyConferenceAudio`
   to yield and restore PETEY's ordinary continuous microphone instead of competing
   for the same input.
-- Browser add-ons may pin bounded buttons and transient notifications in the
+- Browser add-ons may pin bounded buttons, live panels, and transient notifications in the
   user-configurable Command Center rail through `window.peteyInterface`. Registration
   remains safe when the rail is hidden or disabled; PETEY shows the items if the user
   later enables the relevant rail section. Example:
@@ -79,7 +79,15 @@ filesystem and network permissions, so they are trusted local code.
       id: 'weather-alert', title: 'Rain nearby', body: 'Expected in 20 minutes.',
       level: 'warning', view: 'addon-weather',
   });
+  const removePanel = window.peteyInterface.registerPanel({
+      id: 'weather-current', title: 'Weather', icon: '☁',
+      render(container) {
+          container.textContent = '72° · Clear';
+          return () => {}; // Optional cleanup for timers or listeners.
+      },
+  });
   // remove();
+  // removePanel();
   // window.peteyInterface.dismissNotification(noticeId);
   ```
 - Model tools stay unavailable until **Allow Petey to control** is enabled. The

@@ -142,10 +142,14 @@ class SettingsUITests(unittest.TestCase):
         stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(encoding='utf-8')
         self.assertLess(template.index('window.peteyInterface'), template.index("filename='desktop.js'"))
         self.assertIn('function initializePeteyInterface()', javascript)
+        self.assertIn('bridge.registerPanel = panel =>', javascript)
+        self.assertIn('command_rail_collapsed', javascript)
+        self.assertIn('data-command-panel="session"', template)
         self.assertIn("window.dispatchEvent(new CustomEvent('petey:interface-ready'", javascript)
         self.assertIn(':root[data-interface="command"] .app-shell', stylesheet)
         self.assertIn('.command-rail { display: none !important; }', stylesheet)
         self.assertIn('[data-command-rail="closed"] .command-rail-handle', stylesheet)
+        self.assertIn('.command-card-drag', stylesheet)
         self.assertNotIn('Companion</option>', template)
 
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):

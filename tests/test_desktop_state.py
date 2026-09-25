@@ -190,15 +190,23 @@ class DesktopStateTests(unittest.TestCase):
                 "command_rail_enabled": True,
                 "command_rail_open": False,
                 "command_rail_sections": {"launch": False, "signals": False},
+                "command_rail_order": ["spotify-now", "session", "launch", "addons", "signals"],
+                "command_rail_collapsed": ["launch", "spotify-now"],
             })
             self.assertFalse(result["command_rail_open"])
             self.assertFalse(result["command_rail_sections"]["launch"])
             self.assertTrue(result["command_rail_sections"]["session"])
+            self.assertEqual(result["command_rail_order"][0], "spotify-now")
+            self.assertEqual(result["command_rail_collapsed"], ["launch", "spotify-now"])
             self.assertFalse(DesktopState(directory).preferences["command_rail_sections"]["signals"])
             with self.assertRaises(ValueError):
                 state.update_preferences({"command_rail_sections": {"unknown": True}})
             with self.assertRaises(ValueError):
                 state.update_preferences({"command_rail_sections": {"signals": "yes"}})
+            with self.assertRaises(ValueError):
+                state.update_preferences({"command_rail_order": ["session", "bad panel"]})
+            with self.assertRaises(ValueError):
+                state.update_preferences({"command_rail_collapsed": ["session", "session"]})
 
     def test_legacy_themes_migrate_to_new_desktop_styles(self):
         import json

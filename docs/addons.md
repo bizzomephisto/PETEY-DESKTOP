@@ -204,7 +204,7 @@ argument server-side.
 Asset URLs include a revision derived from the add-on's panel, script, and stylesheet
 modification times so browser and tunnel caches refresh after those files change.
 
-### Command Center actions and notifications
+### Command Center actions, panels, and notifications
 
 The desktop Command Center includes user-configurable areas for add-on controls and
 signals. The user may hide the rail, disable it completely, or hide any section;
@@ -230,13 +230,33 @@ const noticeId = window.peteyInterface.notify({
     view: 'addon-my-addon',
 });
 
+const removePanel = window.peteyInterface.registerPanel({
+    id: 'my-addon-overview',
+    title: 'Import status',
+    icon: '◈',
+    badge: 'Live',
+    render(container) {
+        const status = document.createElement('p');
+        status.textContent = 'Waiting for work.';
+        container.append(status);
+        const timer = window.setInterval(() => {
+            status.textContent = 'Still connected.';
+        }, 15000);
+        return () => window.clearInterval(timer);
+    },
+});
+
 removeStatus();
+removePanel();
 window.peteyInterface.dismissNotification(noticeId);
 ```
 
+Panels are collapsed and drag-reordered by the user; PETEY persists both preferences.
+`render(container)` receives an empty, add-on-owned body and may return a cleanup
+function for timers and listeners. Build its contents with DOM methods and `textContent`.
 An action or notification may use `onClick` instead of `view`. Labels, badges, and
 notification text render with `textContent`; raw HTML is not accepted. PETEY keeps
-at most 10 actions and 8 notifications in the browser session. These hooks do not
+at most 10 actions, 8 live panels, and 8 notifications in the browser session. Panel contents do not
 persist data and do not replace the add-on's own settings or API state.
 
 ### Camera and microphone ownership
