@@ -63,7 +63,8 @@ filesystem and network permissions, so they are trusted local code.
   Direct user gestures may set `user_initiated=True` to retain the normal
   surface-authorized tool flow without showing the command in chat.
 - Browser add-ons share camera and microphone ownership through
-  `window.peteyMediaDevices`. Recording add-ons use `window.peteyConferenceAudio`
+  `window.peteyMediaDevices`; `stop(owner)` releases owned tracks, and PETEY applies
+  `stopAll()` on unload/restart as a final hardware guard. Recording add-ons use `window.peteyConferenceAudio`
   to yield and restore PETEY's ordinary continuous microphone instead of competing
   for the same input.
 - Browser add-ons may pin bounded buttons, live panels, and transient notifications in the

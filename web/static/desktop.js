@@ -138,12 +138,29 @@ window.peteyMediaDevices = (() => {
             deviceId: item.deviceId, shareable: item.shareable,
         }))},
     }));
+    const stopTracks = lease => {
+        lease?.stream?.getTracks?.().forEach(track => {
+            try { track.stop(); } catch (_) { /* Best-effort hardware release. */ }
+        });
+    };
+    const releaseLease = (owner, stop = false) => {
+        const key = String(owner);
+        const lease = leases.get(key);
+        if (!lease) return false;
+        leases.delete(key);
+        if (stop) stopTracks(lease);
+        changed();
+        return true;
+    };
     return {
         register(owner, options = {}) {
             const stream = options.stream;
             if (!owner || !stream?.getTracks) throw new Error('A media owner and stream are required.');
+            const key = String(owner);
+            const previous = leases.get(key);
+            if (previous && previous.stream !== stream) stopTracks(previous);
             const lease = {
-                owner: String(owner), stream,
+                owner: key, stream,
                 kinds: Array.isArray(options.kinds)
                     ? options.kinds : stream.getTracks().map(track => track.kind),
                 label: String(options.label || owner),
@@ -154,7 +171,37 @@ window.peteyMediaDevices = (() => {
             changed();
             return lease;
         },
-        release(owner) { const removed = leases.delete(String(owner)); if (removed) changed(); },
+        release(owner) { return releaseLease(owner); },
+        stop(owner) { return releaseLease(owner, true); },
+        stopAll() {
+            const active = Array.from(leases.values());
+            leases.clear();
+            active.forEach(stopTracks);
+            if (active.length) changed();
+            return active.length;
+        },
+        reconcileVideoDevices(devices = []) {
+            const available = new Set(devices
+                .filter(device => device.kind === 'videoinput')
+                .map(device => String(device.deviceId || ''))
+                .filter(Boolean));
+            let updated = false;
+            leases.forEach((lease, owner) => {
+                lease.stream?.getVideoTracks?.().forEach(track => {
+                    const deviceId = String(track.getSettings?.().deviceId || lease.deviceId || '');
+                    if (track.readyState === 'ended' || (deviceId && !available.has(deviceId))) {
+                        try { track.stop(); } catch (_) { /* Device is already gone. */ }
+                        updated = true;
+                    }
+                });
+                const liveTracks = lease.stream?.getTracks?.()
+                    .filter(track => track.readyState !== 'ended') || [];
+                if (!liveTracks.length) leases.delete(owner);
+                else lease.kinds = [...new Set(liveTracks.map(track => track.kind))];
+            });
+            if (updated) changed();
+            return updated;
+        },
         findShareable(kind, deviceId = '') {
             return Array.from(leases.values()).find(item =>
                 item.shareable && item.kinds.includes(kind)
@@ -170,6 +217,16 @@ window.peteyMediaDevices = (() => {
         },
     };
 })();
+
+// A native restart can replace Python before add-on cleanup callbacks finish.
+// Release browser hardware synchronously while the WebEngine page still exists.
+window.addEventListener('pagehide', () => window.peteyMediaDevices.stopAll(), {capture: true});
+navigator.mediaDevices?.addEventListener?.('devicechange', async () => {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        window.peteyMediaDevices.reconcileVideoDevices(devices);
+    } catch (_) { /* Individual add-ons can still stop their own streams. */ }
+});
 
 function ensureNeuralVisualizationRunning() {
     const visual = document.getElementById('visual-chat');

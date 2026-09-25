@@ -319,6 +319,9 @@ class SettingsUITests(unittest.TestCase):
             encoding='utf-8'
         )
         self.assertIn('window.peteyMediaDevices = (() => {', javascript)
+        self.assertIn('stopAll()', javascript)
+        self.assertIn('reconcileVideoDevices(devices = [])', javascript)
+        self.assertIn("window.addEventListener('pagehide'", javascript)
         self.assertIn('findShareable(kind, deviceId', javascript)
         self.assertIn("window.peteyMediaDevices.register('petey-core-voice'", javascript)
         self.assertIn("window.peteyMediaDevices.release('petey-core-voice')", javascript)

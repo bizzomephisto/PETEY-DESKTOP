@@ -265,6 +265,8 @@ Use `window.peteyMediaDevices` when a panel opens browser media hardware. Regist
 stream with an add-on-specific owner ID and release that lease before stopping or
 discarding the stream. A consumer may clone a camera from `findShareable('video')`;
 it must stop only its clone. The original owner remains responsible for its stream.
+Use `stop(owner)` when PETEY should release both the lease and its tracks. PETEY calls
+`stopAll()` during page unload and native restart as a final hardware-release guard.
 
 Long-running recording modes should call `await window.peteyConferenceAudio.prepare()`
 before opening their microphone and `release()` when finished. This pauses and later

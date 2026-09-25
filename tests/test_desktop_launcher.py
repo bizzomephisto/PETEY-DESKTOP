@@ -480,6 +480,7 @@ class DesktopLauncherTests(unittest.TestCase):
         with (
             patch("run_desktop.os.chdir") as changed,
             patch("run_desktop.os.execv") as replaced,
+            patch("run_desktop.terminate_qt_webengine_children") as terminate_helpers,
         ):
             first = bridge.restart_petey()
             second = bridge.restart_petey()
@@ -490,7 +491,26 @@ class DesktopLauncherTests(unittest.TestCase):
             run_desktop.sys.executable,
             [run_desktop.sys.executable, str(Path(run_desktop.__file__).resolve())],
         )
+        bridge.window.evaluate_js.assert_called_once_with(
+            "window.peteyMediaDevices?.stopAll?.();"
+        )
+        terminate_helpers.assert_called_once_with()
         bridge.window.destroy.assert_not_called()
+
+    def test_qt_webengine_children_are_scoped_to_current_parent(self):
+        with TemporaryDirectory() as directory, patch("run_desktop.sys.platform", "linux"):
+            proc = Path(directory)
+            for pid, name, parent in (
+                (101, "QtWebEngineProc", 55),
+                (102, "QtWebEngineProc", 77),
+                (103, "python", 55),
+            ):
+                path = proc / str(pid)
+                path.mkdir()
+                (path / "status").write_text(
+                    f"Name:\t{name}\nPPid:\t{parent}\n", encoding="utf-8"
+                )
+            self.assertEqual(run_desktop.qt_webengine_child_pids(55, proc), (101,))
 
     def test_desktop_bridge_restart_preserves_cloudflare_launch_settings(self):
         size_store = MagicMock()

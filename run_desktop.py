@@ -10,11 +10,13 @@ import json
 import os
 import re
 import secrets
+import signal
 import shutil
 import socket
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +48,62 @@ MIN_DESKTOP_WIDTH = 760
 MIN_DESKTOP_HEIGHT = 560
 MAX_DESKTOP_DIMENSION = 10_000
 CUDA_RUNTIME_READY_ENV = "_PETEY_CUDA_RUNTIME_READY"
+
+
+def qt_webengine_child_pids(parent_pid: int | None = None, proc_root: str | Path = "/proc") -> tuple[int, ...]:
+    """Return direct QtWebEngine helpers owned by this PETEY process on Linux."""
+    if not sys.platform.startswith("linux"):
+        return ()
+    wanted_parent = os.getpid() if parent_pid is None else int(parent_pid)
+    result: list[int] = []
+    try:
+        entries = Path(proc_root).iterdir()
+    except OSError:
+        return ()
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = {}
+            for line in (entry / "status").read_text(encoding="utf-8").splitlines():
+                name, separator, value = line.partition(":")
+                if separator and name in {"Name", "PPid"}:
+                    fields[name] = value.strip()
+            if fields.get("Name") == "QtWebEngineProc" and int(fields.get("PPid", "-1")) == wanted_parent:
+                result.append(int(entry.name))
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+    return tuple(sorted(result))
+
+
+def terminate_qt_webengine_children() -> None:
+    """Stop old Qt helpers before execv keeps the parent PID alive."""
+    children = qt_webengine_child_pids()
+    if not children:
+        return
+    for pid in children:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + 0.35
+    remaining = set(children)
+    while remaining and time.monotonic() < deadline:
+        for pid in tuple(remaining):
+            try:
+                finished, _ = os.waitpid(pid, os.WNOHANG)
+                if finished == pid:
+                    remaining.discard(pid)
+            except (ChildProcessError, ProcessLookupError):
+                remaining.discard(pid)
+        if remaining:
+            time.sleep(0.02)
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ChildProcessError, ProcessLookupError, PermissionError):
+            pass
 
 
 def bundled_cuda_library_paths() -> tuple[str, ...]:
@@ -498,6 +556,12 @@ class DesktopBridge:
         try:
             if self.window_size_store is not None:
                 self.window_size_store.flush()
+            try:
+                self.window.evaluate_js("window.peteyMediaDevices?.stopAll?.();")
+            except Exception:
+                # Restart must still work if WebEngine is already closing.
+                pass
+            terminate_qt_webengine_children()
             os.chdir(PROJECT_ROOT)
             os.execv(
                 sys.executable,
