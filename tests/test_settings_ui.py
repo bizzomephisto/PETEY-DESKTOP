@@ -191,6 +191,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("document.getElementById('visual-style-field').hidden = !visualMode;", javascript)
         self.assertIn('chat-restart-petey', ids)
         self.assertEqual(ids['chat-restart-mode'][0], 'select')
+        self.assertIn('<option value="current">Keep current launch mode</option>', self.html)
         self.assertEqual(ids['chat-theme-select'][0], 'select')
         self.assertEqual(ids['chat-theme-accent'][1].get('type'), 'color')
         self.assertEqual(ids['desktop-visual-back'][0], 'button')
