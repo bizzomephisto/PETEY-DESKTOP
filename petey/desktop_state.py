@@ -161,6 +161,7 @@ class DesktopState:
             "command_rail_sections": copy.deepcopy(DEFAULT_COMMAND_RAIL_SECTIONS),
             "command_rail_order": copy.deepcopy(DEFAULT_COMMAND_RAIL_ORDER),
             "command_rail_collapsed": [],
+            "addon_interface": {},
             "theme": "nebula",
             "theme_accents": copy.deepcopy(DEFAULT_THEME_ACCENTS),
         }
@@ -206,6 +207,20 @@ class DesktopState:
         normalized_collapsed = self._normalized_command_panel_ids(saved_collapsed)
         if saved_collapsed != normalized_collapsed:
             settings["preferences"]["command_rail_collapsed"] = normalized_collapsed
+            changed = True
+        saved_addon_interface = settings["preferences"].get("addon_interface")
+        normalized_addon_interface = {}
+        if isinstance(saved_addon_interface, dict):
+            for addon_id, raw in list(saved_addon_interface.items())[:64]:
+                addon_id = str(addon_id or "")
+                if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id) or not isinstance(raw, dict):
+                    continue
+                normalized_addon_interface[addon_id] = {
+                    "badges": raw.get("badges") is not False,
+                    "controls": raw.get("controls") is not False,
+                }
+        if saved_addon_interface != normalized_addon_interface:
+            settings["preferences"]["addon_interface"] = normalized_addon_interface
             changed = True
         saved_accents = settings["preferences"].get("theme_accents")
         normalized_accents = copy.deepcopy(DEFAULT_THEME_ACCENTS)
@@ -1031,6 +1046,33 @@ class DesktopState:
             self.settings["addons"] = addons
             self._write_json(self.settings_path, self.settings)
         return self.addon_enabled(addon_id)
+
+    def addon_interface(self, addon_id: str) -> dict:
+        saved = self.preferences.get("addon_interface", {}).get(str(addon_id), {})
+        return {
+            "badges": saved.get("badges") is not False,
+            "controls": saved.get("controls") is not False,
+        }
+
+    def update_addon_interface(self, addon_id: str, changes: dict) -> dict:
+        addon_id = str(addon_id or "")
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id):
+            raise ValueError("Choose a valid add-on.")
+        if not isinstance(changes, dict) or any(
+            key not in {"badges", "controls"} or not isinstance(value, bool)
+            for key, value in changes.items()
+        ):
+            raise ValueError("Choose valid add-on interface settings.")
+        with self._lock:
+            preferences = dict(self.settings.get("preferences") or {})
+            all_addons = dict(preferences.get("addon_interface") or {})
+            current = self.addon_interface(addon_id)
+            current.update(changes)
+            all_addons[addon_id] = current
+            preferences["addon_interface"] = all_addons
+            self.settings["preferences"] = preferences
+            self._write_json(self.settings_path, self.settings)
+        return self.addon_interface(addon_id)
 
     @staticmethod
     def _normalized_petey_control(value) -> dict:

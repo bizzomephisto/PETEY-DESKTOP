@@ -139,6 +139,20 @@ class AddonManagerTests(unittest.TestCase):
             self.assertTrue(response.json["restart_required"])
             self.assertTrue(DesktopState(directory).addon_enabled("sample-addon"))
 
+            interface = app.test_client().put(
+                "/api/desktop/addons/sample-addon",
+                json={"interface": {"badges": False, "controls": False}},
+            )
+            self.assertEqual(interface.status_code, 200)
+            self.assertEqual(
+                interface.json["addon"]["interface"],
+                {"badges": False, "controls": False},
+            )
+            self.assertEqual(
+                DesktopState(directory).addon_interface("sample-addon"),
+                {"badges": False, "controls": False},
+            )
+
             control = app.test_client().put(
                 "/api/desktop/addons/deapi-media",
                 json={"petey_control": {

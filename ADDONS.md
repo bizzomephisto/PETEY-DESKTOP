@@ -73,7 +73,7 @@ filesystem and network permissions, so they are trusted local code.
   later enables the relevant rail section. Example:
   ```javascript
   const remove = window.peteyInterface.registerAction({
-      id: 'weather-open', label: 'Weather', icon: '☁', badge: '2',
+      addonId: 'weather', id: 'weather-open', label: 'Weather', icon: '☁', badge: '2',
       view: 'addon-weather',
   });
   const noticeId = window.peteyInterface.notify({
@@ -81,7 +81,7 @@ filesystem and network permissions, so they are trusted local code.
       level: 'warning', view: 'addon-weather',
   });
   const removePanel = window.peteyInterface.registerPanel({
-      id: 'weather-current', title: 'Weather', icon: '☁',
+      addonId: 'weather', id: 'weather-current', title: 'Weather', icon: '☁',
       render(container) {
           container.textContent = '72° · Clear';
           return () => {}; // Optional cleanup for timers or listeners.

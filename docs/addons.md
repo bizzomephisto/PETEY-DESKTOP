@@ -215,6 +215,7 @@ only when later setup work depends on the rendered host.
 
 ```javascript
 const removeStatus = window.peteyInterface.registerAction({
+    addonId: 'my-addon',
     id: 'my-addon-status',
     label: 'Open status',
     icon: '◈',
@@ -231,6 +232,7 @@ const noticeId = window.peteyInterface.notify({
 });
 
 const removePanel = window.peteyInterface.registerPanel({
+    addonId: 'my-addon',
     id: 'my-addon-overview',
     title: 'Import status',
     icon: '◈',
@@ -252,6 +254,10 @@ window.peteyInterface.dismissNotification(noticeId);
 ```
 
 Panels are collapsed and drag-reordered by the user; PETEY persists both preferences.
+Pass the manifest ID as `addonId` on every registered action and panel. PETEY's
+Manage Add-ons screen uses it to apply the user's independent **Show badges** and
+**Show interface controls** choices without disabling the add-on. Interface controls
+without an `addonId` remain visible for backward compatibility.
 `render(container)` receives an empty, add-on-owned body and may return a cleanup
 function for timers and listeners. Build its contents with DOM methods and `textContent`.
 An action or notification may use `onClick` instead of `view`. Labels, badges, and

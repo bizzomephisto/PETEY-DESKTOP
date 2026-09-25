@@ -1149,6 +1149,8 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
 .addon-toggle small { color: var(--muted); font-weight: normal; line-height: 1.3; }
 .addon-discord-toggle { padding-top: 10px; border-top: 1px solid var(--border); }
 .addon-control-panel { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.addon-interface-panel { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+.addon-interface-panel > strong { font-size: 14px; }
 .addon-control-master { align-items: flex-start; }
 .addon-control-surfaces { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--border); }
 .addon-control-surfaces legend { padding: 0 8px 0 0; color: var(--muted); font-size: .82rem; }
@@ -1288,6 +1290,8 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
     .command-rail-header strong, .command-kicker { display: block; }
     .command-rail-header strong { margin-top: 3px; font-size: 18px; }
     .command-rail-header-tools { display: flex; align-items: center; gap: 7px; }
+    .command-addon-badge-slot { display: flex; align-items: center; gap: 6px; }
+    .command-addon-badge-slot:empty { display: none; }
     #command-chat-menu-slot:empty { display: none; }
     .command-kicker { color: var(--accent-text); font: 700 9px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .18em; }
     #command-clock { color: var(--accent-text); font: 600 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }

@@ -203,6 +203,12 @@ class AddonManager:
         self.state.update_addon_enabled(addon_id, enabled)
         return self.public_record(self._records[addon_id])
 
+    def set_interface(self, addon_id: str, changes: dict) -> dict:
+        if addon_id not in self._records:
+            raise ValueError("Unknown add-on.")
+        self.state.update_addon_interface(addon_id, changes)
+        return self.public_record(self._records[addon_id])
+
     def _control_capabilities(self, record: dict) -> list[dict]:
         declared = record.get("control_capabilities")
         if declared:
@@ -256,6 +262,7 @@ class AddonManager:
             "repository": record.get("repository", ""),
             "enabled": desired, "loaded": record["loaded"], "error": record["error"],
             "configurable_enabled": record.get("configurable_enabled", True),
+            "interface": self.state.addon_interface(record["id"]),
             "has_model_tools": bool(
                 capabilities
             ),

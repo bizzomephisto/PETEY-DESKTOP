@@ -381,6 +381,10 @@ def create_desktop_app(
                 addon = app.config["PETEY_ADDONS"].set_enabled(
                     addon_id, payload.get("enabled")
                 )
+            elif "interface" in payload:
+                addon = app.config["PETEY_ADDONS"].set_interface(
+                    addon_id, payload.get("interface")
+                )
             elif "petey_control" in payload:
                 addon = app.config["PETEY_ADDONS"].set_petey_control(
                     addon_id, payload.get("petey_control")

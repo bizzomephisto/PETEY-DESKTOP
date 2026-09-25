@@ -1431,6 +1431,7 @@ function applyPreferences() {
     const railEnabled = preferences.command_rail_enabled !== false;
     const railOpen = railEnabled && preferences.command_rail_open !== false;
     document.documentElement.dataset.commandRail = railEnabled ? (railOpen ? 'open' : 'closed') : 'disabled';
+    window.PETEY_ADDON_INTERFACE = {...(preferences.addon_interface || {})};
     const chatMenuHome = document.getElementById('chat-header-menu-home');
     const commandChatMenuSlot = document.getElementById('command-chat-menu-slot');
     const chatMenuTarget = railOpen && !mobileLayoutQuery.matches
@@ -1442,6 +1443,9 @@ function applyPreferences() {
         else chatMenuHome.after(chatHeaderMenu);
     }
     chatHeaderMenu.classList.toggle('in-command-rail', chatMenuTarget === commandChatMenuSlot);
+    window.dispatchEvent(new CustomEvent('petey:addon-interface', {
+        detail: {settings: window.PETEY_ADDON_INTERFACE},
+    }));
     document.getElementById('command-rail-enabled-setting').checked = railEnabled;
     document.getElementById('command-rail-handle').setAttribute('aria-expanded', String(railOpen));
     const railSections = {
@@ -1452,6 +1456,7 @@ function applyPreferences() {
         section.hidden = railSections[section.dataset.commandSection] === false;
     });
     applyCommandPanelPreferences();
+    renderCommandActions();
     document.querySelectorAll('[data-command-section-setting]').forEach(input => {
         input.checked = railSections[input.dataset.commandSectionSetting] !== false;
         input.disabled = !railEnabled;
@@ -2177,6 +2182,51 @@ function renderAddons(payload) {
         }
         const controls = document.createElement('div');
         controls.className = 'addon-controls';
+        if (addon.source === 'user') {
+            const interfacePanel = document.createElement('section');
+            interfacePanel.className = 'addon-interface-panel';
+            const interfaceTitle = document.createElement('strong');
+            interfaceTitle.textContent = 'Interface';
+            interfacePanel.append(interfaceTitle);
+            const saveInterface = async (key, value) => {
+                try {
+                    const response = await apiJson(`/api/desktop/addons/${encodeURIComponent(addon.id)}`, {
+                        method: 'PUT', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({interface: {[key]: value}}),
+                    });
+                    preferences.addon_interface = {
+                        ...(preferences.addon_interface || {}),
+                        [addon.id]: response.addon.interface,
+                    };
+                    applyPreferences();
+                    document.getElementById('addons-status').textContent = `${addon.name} interface updated.`;
+                } catch (error) {
+                    document.getElementById('addons-status').textContent = error.message;
+                    await reloadAddonsInPlace();
+                }
+            };
+            for (const [key, title, hint] of [
+                ['badges', 'Show badges', 'Status indicators beside chat or in the Command Center.'],
+                ['controls', 'Show interface controls', 'Command Center panels and action buttons.'],
+            ]) {
+                const label = document.createElement('label');
+                label.className = 'addon-toggle';
+                const text = document.createElement('span');
+                const strong = document.createElement('strong');
+                strong.textContent = title;
+                const small = document.createElement('small');
+                small.textContent = hint;
+                text.append(strong, small);
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.role = 'switch';
+                input.checked = addon.interface?.[key] !== false;
+                input.addEventListener('change', () => saveInterface(key, input.checked));
+                label.append(text, input);
+                interfacePanel.append(label);
+            }
+            controls.append(interfacePanel);
+        }
         const enabledLabel = document.createElement('label');
         enabledLabel.className = 'addon-enable-toggle';
         const toggle = document.createElement('input');
@@ -6554,6 +6604,12 @@ function interfaceItemId(value, prefix) {
     return candidate || `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+function addonInterfaceAllows(addonId, kind) {
+    const id = boundedInterfaceText(addonId, 49);
+    if (!id) return true;
+    return preferences.addon_interface?.[id]?.[kind] !== false;
+}
+
 function runInterfaceItem(item) {
     if (typeof item.onClick === 'function') {
         item.onClick();
@@ -6629,6 +6685,7 @@ function applyCommandPanelPreferences() {
     const collapsed = new Set(preferences.command_rail_collapsed || []);
     commandPanelCards().forEach(card => {
         enhanceCommandPanel(card);
+        card.hidden = !addonInterfaceAllows(card.dataset.addonId, 'controls');
         const isCollapsed = collapsed.has(card.dataset.commandPanel);
         card.classList.toggle('collapsed', isCollapsed);
         const button = card.querySelector(':scope > .command-card-heading .command-card-collapse');
@@ -6651,6 +6708,7 @@ function registerCommandPanel(panel, bridge) {
     const card = document.createElement('section');
     card.className = 'command-card command-custom-card';
     card.dataset.commandPanel = panelId;
+    card.dataset.addonId = boundedInterfaceText(panel.addonId, 49);
     const heading = document.createElement('div');
     heading.className = 'command-card-heading';
     const title = document.createElement('span');
@@ -6699,7 +6757,10 @@ function renderCommandActions() {
     const container = document.getElementById('command-addon-actions');
     if (!container) return;
     container.replaceChildren();
-    [...commandActions.values()].slice(-10).forEach(action => {
+    const visibleActions = [...commandActions.values()]
+        .filter(action => addonInterfaceAllows(action.addonId, 'controls'))
+        .slice(-10);
+    visibleActions.forEach(action => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'command-addon-action';
@@ -6718,7 +6779,7 @@ function renderCommandActions() {
         button.addEventListener('click', () => runInterfaceItem(action));
         container.append(button);
     });
-    const count = commandActions.size;
+    const count = visibleActions.length;
     document.getElementById('command-action-count').textContent = String(count);
     document.getElementById('command-actions-empty').hidden = count > 0;
 }
