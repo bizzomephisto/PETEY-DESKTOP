@@ -179,12 +179,16 @@ class DesktopAppTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             client = create_desktop_app(state=state, memory=MagicMock(), job_manager=MagicMock()).test_client()
-            response = client.put("/api/desktop/preferences", json={"theme": "paper"})
+            response = client.put("/api/desktop/preferences", json={"theme": "studio", "theme_accent": "#cc5500"})
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json["preferences"]["theme"], "paper")
-            self.assertIn('data-theme="paper"', client.get('/').get_data(as_text=True))
-            self.assertEqual(client.get('/api/desktop/bootstrap').json['preferences']['theme'], 'paper')
+            self.assertEqual(response.json["preferences"]["theme"], "studio")
+            self.assertEqual(response.json["preferences"]["theme_accents"]["studio"], "#cc5500")
+            html = client.get('/').get_data(as_text=True)
+            self.assertIn('data-theme="studio"', html)
+            self.assertIn('--theme-accent: #cc5500', html)
+            self.assertEqual(client.get('/api/desktop/bootstrap').json['preferences']['theme'], 'studio')
             self.assertEqual(client.put('/api/desktop/preferences', json={'theme': 'bad'}).status_code, 400)
+            self.assertEqual(client.put('/api/desktop/preferences', json={'theme_accent': 'orange'}).status_code, 400)
 
     def test_gemini_model_selection_also_updates_vision(self):
         with tempfile.TemporaryDirectory() as directory:

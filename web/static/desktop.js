@@ -1362,9 +1362,18 @@ document.addEventListener('keydown', event => {
 });
 
 function applyPreferences() {
-    const theme = preferences.theme || 'midnight';
+    const theme = preferences.theme || 'nebula';
+    const defaultAccents = {nebula: '#8b5cf6', studio: '#d65f36', signal: '#31d7a5'};
+    const accents = preferences.theme_accents || {};
+    const accent = accents[theme] || defaultAccents[theme] || defaultAccents.nebula;
     document.documentElement.dataset.theme = theme;
+    document.documentElement.style.setProperty('--theme-accent', accent);
     document.querySelectorAll('[name="interface-theme"]').forEach(input => { input.checked = input.value === theme; });
+    document.querySelectorAll('[data-theme-accent]').forEach(input => {
+        const inputTheme = input.dataset.themeAccent;
+        input.value = accents[inputTheme] || defaultAccents[inputTheme];
+        input.closest('[data-theme-preview]')?.style.setProperty('--preview-accent', input.value);
+    });
     const scale = Number(preferences.ui_scale) || 1;
     document.documentElement.style.setProperty('--ui-scale', scale);
     document.querySelector('.app-shell').classList.toggle('sidebar-collapsed', Boolean(preferences.sidebar_collapsed));
@@ -1394,10 +1403,12 @@ document.querySelectorAll('[name="interface-theme"]').forEach(input => {
     input.addEventListener('change', async () => {
         if (!input.checked || themeSaving) return;
         themeSaving = true;
-        const previous = preferences.theme || 'midnight';
+        const previous = preferences.theme || 'nebula';
         const controls = document.querySelectorAll('[name="interface-theme"]');
         controls.forEach(control => { control.disabled = true; });
         document.documentElement.dataset.theme = input.value;
+        const selectedAccent = document.querySelector(`[data-theme-accent="${input.value}"]`)?.value;
+        if (selectedAccent) document.documentElement.style.setProperty('--theme-accent', selectedAccent);
         const feedback = document.getElementById('theme-status');
         setFeedback(feedback, 'Saving theme…');
         try {
@@ -1412,6 +1423,46 @@ document.querySelectorAll('[name="interface-theme"]').forEach(input => {
         } finally {
             themeSaving = false;
             controls.forEach(control => { control.disabled = false; });
+            applyPreferences();
+        }
+    });
+});
+
+document.querySelectorAll('[data-theme-accent]').forEach(input => {
+    input.addEventListener('input', () => {
+        input.closest('[data-theme-preview]')?.style.setProperty('--preview-accent', input.value);
+        if (input.dataset.themeAccent === (preferences.theme || 'nebula')) {
+            document.documentElement.style.setProperty('--theme-accent', input.value);
+        }
+    });
+    input.addEventListener('change', async () => {
+        if (themeSaving) return;
+        themeSaving = true;
+        const theme = input.dataset.themeAccent;
+        const previousTheme = preferences.theme || 'nebula';
+        const previousAccents = {...(preferences.theme_accents || {})};
+        document.querySelectorAll('[name="interface-theme"]').forEach(control => {
+            control.checked = control.value === theme;
+            control.disabled = true;
+        });
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--theme-accent', input.value);
+        const feedback = document.getElementById('theme-status');
+        setFeedback(feedback, 'Saving color…');
+        try {
+            const payload = await apiJson('/api/desktop/preferences', {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({theme, theme_accent: input.value}),
+            });
+            preferences = {...preferences, ...payload.preferences};
+            setFeedback(feedback, 'Style and color saved.', 'success');
+        } catch (error) {
+            preferences.theme = previousTheme;
+            preferences.theme_accents = previousAccents;
+            setFeedback(feedback, `Could not save color: ${error.message}`, 'error');
+        } finally {
+            themeSaving = false;
+            document.querySelectorAll('[name="interface-theme"]').forEach(control => { control.disabled = false; });
             applyPreferences();
         }
     });

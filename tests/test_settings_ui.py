@@ -88,6 +88,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(form_tag, 'form')
         self.assertEqual(input_tag, 'input')
         self.assertEqual(dictation_input.get('type'), 'text')
+
         self.assertEqual(dictation_input.get('enterkeyhint'), 'send')
         mute_tag, mute_button = ids['visual-mic-mute-button']
         self.assertEqual(mute_tag, 'button')
@@ -107,6 +108,16 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(menu_button.get('aria-expanded'), 'false')
         self.assertEqual(menu_button.get('aria-controls'), 'mobile-visual-actions')
         self.assertIn('hidden', ids['mobile-visual-actions'][1])
+
+    def test_desktop_theme_picker_has_three_styles_and_color_controls(self):
+        radios = [attrs for tag, attrs in self.markup.elements
+                  if tag == 'input' and attrs.get('name') == 'interface-theme']
+        colors = [attrs for tag, attrs in self.markup.elements
+                  if tag == 'input' and attrs.get('data-theme-accent')]
+        self.assertEqual({item.get('value') for item in radios}, {'nebula', 'studio', 'signal'})
+        self.assertEqual({item.get('data-theme-accent') for item in colors}, {'nebula', 'studio', 'signal'})
+        self.assertEqual(len(radios), 3)
+        self.assertEqual(len(colors), 3)
 
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}

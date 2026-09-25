@@ -20,6 +20,16 @@ from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 PERSONA_SLOT_COUNT = 5
 DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
 PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_life"}
+DESKTOP_THEMES = {"nebula", "studio", "signal"}
+DEFAULT_THEME_ACCENTS = {
+    "nebula": "#8b5cf6",
+    "studio": "#d65f36",
+    "signal": "#31d7a5",
+}
+LEGACY_THEME_MIGRATION = {
+    "midnight": "nebula", "ocean": "nebula", "forest": "signal", "paper": "studio",
+}
+HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 PETEY_CONTROL_ID = re.compile(r"[a-z][a-z0-9_-]{1,63}")
 
 
@@ -140,7 +150,8 @@ class DesktopState:
             "ui_scale": 1.0,
             "visual_mode": False,
             "visual_style": "neural_core",
-            "theme": "midnight",
+            "theme": "nebula",
+            "theme_accents": copy.deepcopy(DEFAULT_THEME_ACCENTS),
         }
         for key, value in defaults.items():
             if key not in settings["preferences"]:
@@ -153,8 +164,22 @@ class DesktopState:
         if settings.get("plan_preview") != plan_preview:
             settings["plan_preview"] = plan_preview
             changed = True
-        if str(settings["preferences"].get("theme")) not in {"midnight", "ocean", "forest", "paper"}:
-            settings["preferences"]["theme"] = "midnight"
+        saved_theme = str(settings["preferences"].get("theme") or "")
+        migrated_theme = LEGACY_THEME_MIGRATION.get(saved_theme, saved_theme)
+        if migrated_theme not in DESKTOP_THEMES:
+            migrated_theme = "nebula"
+        if settings["preferences"].get("theme") != migrated_theme:
+            settings["preferences"]["theme"] = migrated_theme
+            changed = True
+        saved_accents = settings["preferences"].get("theme_accents")
+        normalized_accents = copy.deepcopy(DEFAULT_THEME_ACCENTS)
+        if isinstance(saved_accents, dict):
+            for theme in DESKTOP_THEMES:
+                color = str(saved_accents.get(theme) or "")
+                if HEX_COLOR.fullmatch(color):
+                    normalized_accents[theme] = color.lower()
+        if saved_accents != normalized_accents:
+            settings["preferences"]["theme_accents"] = normalized_accents
             changed = True
         if not isinstance(settings.get("approved_folders"), list):
             legacy_folders = settings.get("workspaces")
@@ -621,11 +646,20 @@ class DesktopState:
 
     def update_preferences(self, changes: dict) -> dict:
         preferences = self.preferences
+        theme = str(changes.get("theme") or preferences.get("theme") or "nebula")
         if "theme" in changes:
-            theme = str(changes["theme"])
-            if theme not in {"midnight", "ocean", "forest", "paper"}:
+            if theme not in DESKTOP_THEMES:
                 raise ValueError("Choose a supported theme.")
+        if "theme_accent" in changes:
+            color = str(changes["theme_accent"] or "").lower()
+            if theme not in DESKTOP_THEMES or not HEX_COLOR.fullmatch(color):
+                raise ValueError("Choose a valid theme accent color.")
+        if "theme" in changes:
             preferences["theme"] = theme
+        if "theme_accent" in changes:
+            accents = copy.deepcopy(preferences.get("theme_accents") or DEFAULT_THEME_ACCENTS)
+            accents[theme] = color
+            preferences["theme_accents"] = accents
         if "always_on_top" in changes:
             preferences["always_on_top"] = bool(changes["always_on_top"])
         if "sidebar_collapsed" in changes:

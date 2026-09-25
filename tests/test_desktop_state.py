@@ -161,13 +161,35 @@ class DesktopStateTests(unittest.TestCase):
     def test_theme_persists_and_invalid_theme_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
-            self.assertEqual(state.preferences["theme"], "midnight")
-            for theme in ("midnight", "ocean", "forest", "paper"):
+            self.assertEqual(state.preferences["theme"], "nebula")
+            for theme in ("nebula", "studio", "signal"):
                 state.update_preferences({"theme": theme})
                 self.assertEqual(DesktopState(directory).preferences["theme"], theme)
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "unsupported"})
-            self.assertEqual(state.preferences["theme"], "paper")
+            self.assertEqual(state.preferences["theme"], "signal")
+
+    def test_theme_accents_persist_independently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            result = state.update_preferences({"theme": "studio", "theme_accent": "#AABBCC"})
+            self.assertEqual(result["theme_accents"]["studio"], "#aabbcc")
+            self.assertEqual(result["theme_accents"]["nebula"], "#8b5cf6")
+            self.assertEqual(DesktopState(directory).preferences["theme_accents"]["studio"], "#aabbcc")
+            with self.assertRaises(ValueError):
+                state.update_preferences({"theme": "signal", "theme_accent": "red"})
+
+    def test_legacy_themes_migrate_to_new_desktop_styles(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            for old_theme, new_theme in {
+                "midnight": "nebula", "ocean": "nebula", "forest": "signal", "paper": "studio",
+            }.items():
+                settings = json.loads(state.settings_path.read_text())
+                settings["preferences"]["theme"] = old_theme
+                state.settings_path.write_text(json.dumps(settings))
+                self.assertEqual(DesktopState(directory).preferences["theme"], new_theme)
 
     def test_old_or_invalid_theme_settings_load_with_default(self):
         import json
@@ -180,7 +202,7 @@ class DesktopStateTests(unittest.TestCase):
                 else:
                     settings["preferences"]["theme"] = theme
                 state.settings_path.write_text(json.dumps(settings))
-                self.assertEqual(DesktopState(directory).preferences["theme"], "midnight")
+                self.assertEqual(DesktopState(directory).preferences["theme"], "nebula")
 
     def test_installation_identity_is_stable(self):
         with tempfile.TemporaryDirectory() as directory:
