@@ -11,8 +11,8 @@ const voiceResponseButtons = [
 const statusText = document.getElementById('status');
 const chatNameText = document.getElementById('chat-name');
 const chatPersonaSelect = document.getElementById('chat-persona');
+const commandChatSelect = document.getElementById('command-chat-select');
 const mobileChatPersonaSelect = document.getElementById('mobile-chat-persona');
-const chatHeaderMenu = document.getElementById('chat-header-menu');
 const jumpToLatestButton = document.getElementById('jump-to-latest');
 const newChatDialog = document.getElementById('new-chat-dialog');
 const newChatTitle = document.getElementById('new-chat-title');
@@ -839,7 +839,9 @@ async function loadConversationMessages() {
 function renderConversations() {
     const list = document.getElementById('conversation-list');
     list.innerHTML = '';
+    commandChatSelect.replaceChildren();
     conversations.forEach(conversation => {
+        commandChatSelect.add(new Option(conversation.title, conversation.id));
         const row = document.createElement('div');
         row.className = `conversation-row${conversation.id === activeConversationId ? ' active' : ''}`;
         const select = document.createElement('button');
@@ -868,6 +870,8 @@ function renderConversations() {
         row.append(select, rename, remove);
         list.append(row);
     });
+    commandChatSelect.value = activeConversationId || '';
+    commandChatSelect.disabled = conversations.length === 0;
 }
 
 async function renameConversation(conversation) {
@@ -997,7 +1001,6 @@ document.getElementById('new-chat-form').addEventListener('submit', async event 
 });
 
 chatPersonaSelect.addEventListener('change', async () => {
-    chatHeaderMenu.open = false;
     const conversation = activeConversation();
     if (!conversation) return;
     const previous = conversation.persona_slot ?? null;
@@ -1026,6 +1029,9 @@ chatPersonaSelect.addEventListener('change', async () => {
 mobileChatPersonaSelect.addEventListener('change', () => {
     chatPersonaSelect.value = mobileChatPersonaSelect.value;
     chatPersonaSelect.dispatchEvent(new Event('change', {bubbles: true}));
+});
+commandChatSelect.addEventListener('change', () => {
+    if (commandChatSelect.value) selectConversation(commandChatSelect.value);
 });
 
 let selectedAttachmentPreviewUrl = '';
@@ -1404,21 +1410,6 @@ async function toggleVoiceResponse() {
 
 voiceResponseButtons.forEach(button => button.addEventListener('click', toggleVoiceResponse));
 
-chatHeaderMenu.addEventListener('toggle', () => {
-    const summary = chatHeaderMenu.querySelector('summary');
-    summary.setAttribute('aria-label', chatHeaderMenu.open ? 'Close chat controls' : 'Open chat controls');
-    summary.title = chatHeaderMenu.open ? 'Close chat controls' : 'Chat controls';
-});
-document.addEventListener('pointerdown', event => {
-    if (chatHeaderMenu.open && !chatHeaderMenu.contains(event.target)) chatHeaderMenu.open = false;
-});
-document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && chatHeaderMenu.open) {
-        chatHeaderMenu.open = false;
-        chatHeaderMenu.querySelector('summary').focus();
-    }
-});
-
 function applyPreferences() {
     const theme = preferences.theme || 'nebula';
     const defaultAccents = {
@@ -1432,17 +1423,6 @@ function applyPreferences() {
     const railOpen = railEnabled && preferences.command_rail_open !== false;
     document.documentElement.dataset.commandRail = railEnabled ? (railOpen ? 'open' : 'closed') : 'disabled';
     window.PETEY_ADDON_INTERFACE = {...(preferences.addon_interface || {})};
-    const chatMenuHome = document.getElementById('chat-header-menu-home');
-    const commandChatMenuSlot = document.getElementById('command-chat-menu-slot');
-    const chatMenuTarget = railOpen && !mobileLayoutQuery.matches
-        ? commandChatMenuSlot
-        : chatMenuHome?.parentElement;
-    if (chatMenuTarget && chatHeaderMenu.parentElement !== chatMenuTarget) {
-        chatHeaderMenu.open = false;
-        if (chatMenuTarget === commandChatMenuSlot) commandChatMenuSlot.append(chatHeaderMenu);
-        else chatMenuHome.after(chatHeaderMenu);
-    }
-    chatHeaderMenu.classList.toggle('in-command-rail', chatMenuTarget === commandChatMenuSlot);
     window.dispatchEvent(new CustomEvent('petey:addon-interface', {
         detail: {settings: window.PETEY_ADDON_INTERFACE},
     }));
@@ -1667,14 +1647,12 @@ document.getElementById('always-on-top').addEventListener('change', event => {
     savePreferences({always_on_top: event.target.checked}, true);
 });
 document.getElementById('visual-mode-toggle').addEventListener('click', () => {
-    chatHeaderMenu.open = false;
     savePreferences({visual_mode: !preferences.visual_mode});
 });
 document.getElementById('desktop-visual-back').addEventListener('click', () => {
     savePreferences({visual_mode: false});
 });
 document.getElementById('visual-style-select').addEventListener('change', event => {
-    chatHeaderMenu.open = false;
     savePreferences({visual_style: event.target.value});
 });
 
@@ -1760,7 +1738,6 @@ async function toggleVisualFullscreen() {
 }
 
 document.getElementById('visual-fullscreen').addEventListener('click', event => {
-    chatHeaderMenu.open = false;
     toggleVisualFullscreen(event);
 });
 document.getElementById('mobile-visual-fullscreen').addEventListener('click', toggleVisualFullscreen);
@@ -2032,7 +2009,6 @@ function leaveTemporaryMode() {
 }
 
 document.getElementById('temporary-mode').addEventListener('change', async event => {
-    chatHeaderMenu.open = false;
     const active = event.target.checked;
     event.target.closest('.temporary-toggle').classList.toggle('active', active);
     temporaryHistory = [];
@@ -2431,7 +2407,6 @@ document.getElementById('chat-restart-petey').addEventListener('click', event =>
     const mode = document.getElementById('chat-restart-mode');
     const label = mode.options[mode.selectedIndex]?.textContent || 'the selected mode';
     if (!window.confirm(`Any active responses or add-on jobs will stop. Restart PETEY in ${label}?`)) return;
-    chatHeaderMenu.open = false;
     restartPetey(event.currentTarget, statusText, mode.value);
 });
 
@@ -2753,6 +2728,7 @@ const visualMicMuteButton = document.getElementById('visual-mic-mute-button');
 const visualDictationForm = document.getElementById('visual-dictation-form');
 const visualDictationInput = document.getElementById('visual-dictation-input');
 const voiceInputModeSelect = document.getElementById('voice-input-mode');
+const commandMicrophoneModeSelect = document.getElementById('command-microphone-mode');
 const voiceInputProviderSelect = document.getElementById('voice-input-provider');
 
 function setVoiceInputStatus(message) {
@@ -2761,6 +2737,7 @@ function setVoiceInputStatus(message) {
 
 function configureVoiceInputUI() {
     const mode = effectiveVoiceInputMode();
+    commandMicrophoneModeSelect.value = voiceInputConfiguration.mode || 'disabled';
     const micIsMuted = microphoneMuted
         || (['always_on', 'wake_word'].includes(mode)
             && !voiceInputRunning && !microphoneCapturing);
@@ -2837,6 +2814,33 @@ function configureVoiceInputUI() {
         setVoiceInputStatus('Click the mic to begin listening');
     }
 }
+
+commandMicrophoneModeSelect.addEventListener('change', async () => {
+    const previousMode = voiceInputConfiguration.mode || 'disabled';
+    const nextMode = commandMicrophoneModeSelect.value;
+    commandMicrophoneModeSelect.disabled = true;
+    try {
+        await stopVoiceInput();
+        const payload = await apiJson('/api/desktop/voice-input', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mode: nextMode}),
+        });
+        voiceInputConfiguration = {...voiceInputConfiguration, ...payload.configuration};
+        microphoneMuted = Boolean(voiceInputConfiguration.muted);
+        voiceInputModeSelect.value = voiceInputConfiguration.mode;
+        configureVoiceInputSettings();
+        configureVoiceInputUI();
+        if (['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
+            await startContinuousVoiceInput();
+        }
+    } catch (error) {
+        commandMicrophoneModeSelect.value = previousMode;
+        statusText.textContent = `Could not change microphone mode: ${error.message}`;
+    } finally {
+        commandMicrophoneModeSelect.disabled = false;
+    }
+});
 
 function configureVoiceInputSettings() {
     const mode = voiceInputModeSelect.value;

@@ -54,22 +54,6 @@
                     <button id="mobile-visual-mode" type="button" title="Open visual mode">Visual</button>
                     <button id="mobile-settings-toggle" type="button" title="Mobile settings" aria-expanded="false">⚙</button>
                 </div>
-                <span id="chat-header-menu-home" hidden></span>
-                <details id="chat-header-menu" class="chat-header-menu">
-                    <summary aria-label="Open chat controls" title="Chat controls"><span aria-hidden="true">⌄</span></summary>
-                    <div class="chat-header-menu-panel">
-                        <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Petey profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
-                        <label class="chat-header-menu-field chat-theme-field"><span>Desktop style</span><span class="chat-theme-controls"><select id="chat-theme-select" aria-label="Desktop style"><option value="nebula">Nebula</option><option value="studio">Studio</option><option value="signal">Signal</option><option value="terminal">Terminal</option><option value="ember">Ember</option></select><input id="chat-theme-accent" type="color" aria-label="Accent color for selected desktop style"></span></label>
-                        <div class="chat-header-actions">
-                            <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
-                            <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
-                            <button id="visual-mode-toggle" class="visual-mode-toggle" type="button">Visual mode</button>
-                            <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary chat</span></label>
-                            <label class="chat-header-menu-field"><span>Restart mode</span><select id="chat-restart-mode" aria-label="PETEY restart mode"><option value="current">Keep current launch mode</option><option value="desktop">Desktop window</option><option value="cloudflare">Cloudflare + desktop</option><option value="browser">Browser</option></select></label>
-                            <button id="chat-restart-petey" class="chat-menu-restart" type="button">↻ Restart PETEY</button>
-                        </div>
-                    </div>
-                </details>
             </header>
 
             <div id="messages" class="messages" aria-live="polite">
@@ -282,11 +266,24 @@
                 <div><span class="command-kicker">PETEY COMMAND</span></div>
                 <div class="command-rail-header-tools">
                     <time id="command-clock">--:--</time>
-                    <div id="command-addon-badge-slot" class="command-addon-badge-slot" aria-label="Add-on badges"></div>
-                    <div id="command-chat-menu-slot"></div>
                     <button id="command-rail-close" class="command-rail-close" type="button" aria-label="Hide command drawer" title="Hide command drawer"><span aria-hidden="true">☰</span></button>
                 </div>
             </header>
+            <section id="command-core-controls" class="command-core-controls" aria-label="PETEY controls">
+                <div class="command-core-controls-heading"><span>Controls</span><small>Fixed</small></div>
+                <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
+                <label class="chat-header-menu-field"><span>Chat</span><select id="command-chat-select" aria-label="Select chat"></select></label>
+                <label class="chat-header-menu-field chat-theme-field"><span>Theme / color</span><span class="chat-theme-controls"><select id="chat-theme-select" aria-label="Desktop style"><option value="nebula">Nebula</option><option value="studio">Studio</option><option value="signal">Signal</option><option value="terminal">Terminal</option><option value="ember">Ember</option></select><input id="chat-theme-accent" type="color" aria-label="Accent color for selected desktop style"></span></label>
+                <div class="command-core-control-row">
+                    <button id="visual-mode-toggle" class="visual-mode-toggle" type="button">Visual mode</button>
+                    <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
+                </div>
+                <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
+                <label class="chat-header-menu-field"><span>Microphone mode</span><select id="command-microphone-mode" aria-label="Microphone mode"><option value="disabled">Off</option><option value="push_to_talk">Push to talk</option><option value="always_on">Always on</option><option value="wake_word">Wake name</option></select></label>
+                <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary chat</span></label>
+                <label class="chat-header-menu-field"><span>Restart mode</span><select id="chat-restart-mode" aria-label="PETEY restart mode"><option value="current">Keep current launch mode</option><option value="desktop">Desktop window</option><option value="cloudflare">Cloudflare + desktop</option><option value="browser">Browser</option></select></label>
+                <button id="chat-restart-petey" class="chat-menu-restart" type="button">↻ Restart PETEY</button>
+            </section>
             <section class="command-card command-session-card" data-command-section="session" data-command-panel="session">
                 <div class="command-card-heading"><span>Live session</span><i id="command-status-dot" aria-hidden="true"></i></div>
                 <dl>

@@ -150,13 +150,6 @@ button, textarea { font: inherit; }
 .chat-heading { min-width: 0; }
 .mobile-brand-logo { display: none; }
 .chat-title-line { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.chat-header-menu { position: relative; z-index: 12; flex: 0 0 auto; }
-.chat-header-menu > summary { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--accent-text); cursor: pointer; list-style: none; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); }
-.chat-header-menu > summary::-webkit-details-marker { display: none; }
-.chat-header-menu > summary:hover, .chat-header-menu[open] > summary { border-color: var(--accent-border); background: var(--accent-soft); color: var(--text); }
-.chat-header-menu > summary span { display: block; font-size: 25px; line-height: 1; transform: translateY(-2px); transition: transform .16s ease; }
-.chat-header-menu[open] > summary span { transform: translateY(2px) rotate(180deg); }
-.chat-header-menu-panel { position: absolute; top: calc(100% + 10px); right: 0; width: min(280px, calc(100vw - 40px)); display: grid; gap: 13px; padding: 15px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--panel) 97%, transparent); box-shadow: 0 20px 54px rgba(0, 0, 0, .48); backdrop-filter: blur(18px); }
 .chat-header-menu-field { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; }
 .chat-header-menu-field[hidden] { display: none; }
 .chat-header-menu-field select { width: 100%; min-width: 0; max-width: none; padding: 9px 32px 9px 10px; border: 1px solid var(--border); border-radius: 10px; background-color: var(--field); color: var(--text); font-size: 13px; cursor: pointer; text-overflow: ellipsis; }
@@ -831,7 +824,7 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
     :root[data-theme="nebula"] .settings-tabs { background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(20px); }
     :root[data-theme="nebula"] .settings-card,
     :root[data-theme="nebula"] .composer-row,
-    :root[data-theme="nebula"] .chat-header-menu-panel {
+    :root[data-theme="nebula"] .command-core-controls {
         background: linear-gradient(145deg, color-mix(in srgb, var(--panel) 92%, var(--accent) 8%), color-mix(in srgb, var(--panel) 96%, transparent));
         border-color: color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
         box-shadow: 0 22px 55px #02030a55, inset 0 1px #ffffff08;
@@ -929,7 +922,7 @@ input[role="switch"]:disabled { opacity: .45; cursor: default; }
     :root[data-theme="ember"] .settings-tabs { background: color-mix(in srgb, var(--bg) 84%, transparent); backdrop-filter: blur(16px); }
     :root[data-theme="ember"] .settings-card,
     :root[data-theme="ember"] .composer-row,
-    :root[data-theme="ember"] .chat-header-menu-panel {
+    :root[data-theme="ember"] .command-core-controls {
         background: linear-gradient(155deg, color-mix(in srgb, var(--panel) 88%, var(--accent) 12%), var(--panel));
         border-color: color-mix(in srgb, var(--border) 64%, var(--accent) 36%);
         box-shadow: 0 18px 45px #0007, inset 0 1px #ffd9c00c;
@@ -1265,9 +1258,7 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
         grid-template-columns: 224px minmax(480px, 1fr);
         gap: 12px; padding: 12px; background: transparent;
     }
-    :root[data-interface="command"][data-command-rail="open"] .app-shell { grid-template-columns: 224px minmax(480px, 1fr) 292px; }
     :root[data-interface="command"] .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(480px, 1fr); }
-    :root[data-interface="command"][data-command-rail="open"] .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(480px, 1fr) 292px; }
     :root[data-interface="command"] .sidebar,
     :root[data-interface="command"] .app-view,
     :root[data-interface="command"] .command-rail { border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: 0 18px 60px rgba(0, 0, 0, .24); }
@@ -1285,16 +1276,20 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
     :root[data-interface="command"] .tool-header { background: rgba(5, 9, 15, .68); }
     :root[data-interface="command"] .settings-card,
     :root[data-interface="command"] .tool-card { border-color: #25364b; }
-    :root[data-interface="command"][data-command-rail="open"] .command-rail { grid-column: 3; grid-row: 1; display: flex; position: relative; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 14px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+    :root[data-interface="command"] .command-rail { position: fixed; z-index: 44; top: 12px; right: 12px; bottom: 12px; display: flex; width: min(340px, calc(100vw - 28px)); flex-direction: column; gap: 10px; min-width: 0; min-height: 0; padding: 14px; overflow-x: hidden; overflow-y: auto; opacity: 0; pointer-events: none; transform: translateX(calc(100% + 28px)); transition: transform .24s cubic-bezier(.2,.72,.2,1), opacity .18s ease; scrollbar-width: thin; }
+    :root[data-interface="command"][data-command-rail="open"] .command-rail { opacity: 1; pointer-events: auto; transform: translateX(0); }
     .command-rail-header { position: relative; z-index: 15; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 0 10px 3px; }
     .command-rail-header strong, .command-kicker { display: block; }
     .command-rail-header strong { margin-top: 3px; font-size: 18px; }
     .command-rail-header-tools { display: flex; align-items: center; gap: 7px; }
-    .command-addon-badge-slot { display: flex; align-items: center; gap: 6px; }
-    .command-addon-badge-slot:empty { display: none; }
-    #command-chat-menu-slot:empty { display: none; }
     .command-kicker { color: var(--accent-text); font: 700 9px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .18em; }
     #command-clock { color: var(--accent-text); font: 600 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .command-core-controls { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--accent-border); border-radius: 11px; background: linear-gradient(145deg, color-mix(in srgb, var(--panel) 90%, var(--theme-accent) 10%), color-mix(in srgb, var(--panel) 97%, transparent)); box-shadow: inset 0 1px rgba(255, 255, 255, .035); }
+    .command-core-controls-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text); font-size: 12px; font-weight: 750; letter-spacing: .04em; }
+    .command-core-controls-heading small { color: var(--muted); font-size: 9px; font-weight: 650; text-transform: uppercase; }
+    .command-core-control-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+    .command-core-controls :is(.visual-mode-toggle, .chat-menu-restart) { min-height: 36px; border-radius: 8px; }
+    .command-core-controls .temporary-toggle { min-height: 36px; justify-content: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--field); }
     .command-card { padding: 13px; border: 1px solid #223247; border-radius: 11px; background: linear-gradient(145deg, rgba(19, 29, 42, .95), rgba(8, 13, 21, .96)); }
     .command-card.dragging { opacity: .48; border-color: var(--accent-border); }
     .command-card.collapsed { padding-block: 10px; }
@@ -1354,7 +1349,6 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
 @media (min-width: 761px) and (max-width: 1320px) {
     :root[data-interface="command"] .app-shell { grid-template-columns: 210px minmax(0, 1fr); }
     :root[data-interface="command"] .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
-    :root[data-interface="command"][data-command-rail="open"] .command-rail { position: fixed; z-index: 44; top: 12px; right: 12px; bottom: 12px; display: flex; width: min(320px, calc(100vw - 28px)); }
 }
 
 @media (max-width: 760px) {
@@ -1363,6 +1357,10 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
 }
 
 @keyframes command-pulse { 50% { opacity: .45; transform: scale(.8); } }
+
+@media (prefers-reduced-motion: reduce) {
+    :root[data-interface="command"] .command-rail { transition: none; }
+}
 
 /* Desktop theme choices never restyle the established phone interface. */
 @media (max-width: 760px) {

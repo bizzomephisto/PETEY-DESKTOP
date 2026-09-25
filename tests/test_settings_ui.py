@@ -147,7 +147,9 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("['controls', 'Show interface controls'", javascript)
         self.assertIn("addonInterfaceAllows(action.addonId, 'controls')", javascript)
         self.assertIn("addonInterfaceAllows(card.dataset.addonId, 'controls')", javascript)
-        self.assertIn('id="command-addon-badge-slot"', template)
+        self.assertIn('id="command-core-controls"', template)
+        self.assertIn('id="command-chat-select"', template)
+        self.assertIn('id="command-microphone-mode"', template)
         self.assertIn('command_rail_collapsed', javascript)
         self.assertIn('data-command-panel="session"', template)
         self.assertIn("window.dispatchEvent(new CustomEvent('petey:interface-ready'", javascript)
@@ -187,11 +189,11 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('saveMobileVoiceMode(mobileVoiceMethod.value);', javascript)
         self.assertIn('await stopVoiceInput();', javascript)
 
-    def test_desktop_chat_controls_collapse_behind_chevron_menu(self):
+    def test_desktop_chat_controls_live_in_fixed_command_panel(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
-        self.assertEqual(ids['chat-header-menu'][0], 'details')
-        self.assertIn('chat-header-menu-home', ids)
-        self.assertIn('command-chat-menu-slot', ids)
+        self.assertEqual(ids['command-core-controls'][0], 'section')
+        self.assertEqual(ids['command-chat-select'][0], 'select')
+        self.assertEqual(ids['command-microphone-mode'][0], 'select')
         self.assertIn('chat-utility-dock', ids)
         self.assertIn('visual-style-field', ids)
         self.assertIn('hidden', ids['visual-style-field'][1])
@@ -201,10 +203,10 @@ class SettingsUITests(unittest.TestCase):
         stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(
             encoding='utf-8'
         )
-        self.assertIn("const chatHeaderMenu = document.getElementById('chat-header-menu');", javascript)
-        self.assertIn("commandChatMenuSlot.append(chatHeaderMenu);", javascript)
-        self.assertIn("chatMenuHome.after(chatHeaderMenu);", javascript)
-        self.assertIn("if (chatHeaderMenu.open && !chatHeaderMenu.contains(event.target))", javascript)
+        self.assertNotIn('id="chat-header-menu"', self.html)
+        self.assertNotIn('aria-label="Open chat controls"', self.html)
+        self.assertIn("commandChatSelect.addEventListener('change'", javascript)
+        self.assertIn("commandMicrophoneModeSelect.addEventListener('change'", javascript)
         self.assertIn("document.getElementById('visual-style-field').hidden = !visualMode;", javascript)
         self.assertIn('chat-restart-petey', ids)
         self.assertEqual(ids['chat-restart-mode'][0], 'select')
@@ -212,8 +214,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(ids['chat-theme-select'][0], 'select')
         self.assertEqual(ids['chat-theme-accent'][1].get('type'), 'color')
         self.assertEqual(ids['desktop-visual-back'][0], 'button')
-        menu = self.html[self.html.index('<div class="chat-header-actions">'):]
-        menu = menu[:menu.index('</div>')]
+        menu = self.html[self.html.index('<section id="command-core-controls"'):]
+        menu = menu[:menu.index('</section>')]
         self.assertLess(menu.index('id="temporary-mode"'), menu.index('id="chat-restart-petey"'))
         self.assertLess(menu.index('id="chat-restart-mode"'), menu.index('id="chat-restart-petey"'))
         self.assertIn('Restart PETEY in ${label}?', javascript)
@@ -222,8 +224,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("document.getElementById('chat-theme-select').addEventListener('change'", javascript)
         self.assertIn("document.getElementById('desktop-visual-back').addEventListener('click'", javascript)
         self.assertIn('savePreferences({visual_mode: false});', javascript)
-        self.assertIn('.chat-header-menu-panel {', stylesheet)
-        self.assertIn('.chat-header-menu[open] > summary span', stylesheet)
+        self.assertIn('.command-core-controls {', stylesheet)
+        self.assertIn('transform: translateX(calc(100% + 28px))', stylesheet)
         self.assertIn('.chat-utility-dock:empty { display: none; }', stylesheet)
         self.assertIn('body.native-visual-fullscreen .desktop-visual-back { display: none; }', stylesheet)
 
