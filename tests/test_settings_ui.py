@@ -149,6 +149,9 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn(':root[data-interface="command"] .app-shell', stylesheet)
         self.assertIn('.command-rail { display: none !important; }', stylesheet)
         self.assertIn('[data-command-rail="closed"] .command-rail-handle', stylesheet)
+        self.assertIn('aria-label="Show command drawer"', template)
+        self.assertIn('<span aria-hidden="true">☰</span>', template)
+        self.assertIn('top: 22px; right: 22px;', stylesheet)
         self.assertIn('.command-card-drag', stylesheet)
         self.assertNotIn('Companion</option>', template)
 
@@ -241,16 +244,21 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("apiJson('/api/desktop/personality'", save_flow)
         self.assertEqual(save_flow.count("method: 'PUT'"), 2)
 
-    def test_version_sits_below_desktop_sidebar_provider_link(self):
+    def test_version_stays_in_sidebar_and_provider_link_moves_to_media_header(self):
         template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(
             encoding='utf-8'
         )
         footer_start = template.index('<div class="coming-next">')
         footer_end = template.index('</div>', footer_start)
         footer = template[footer_start:footer_end]
-        self.assertLess(footer.index('id="media-provider-link"'), footer.index('class="sidebar-version"'))
+        self.assertNotIn('media-provider-link', footer)
         self.assertNotIn('project-link', footer)
         self.assertNotIn('GitHub', footer)
+        media_header = template[template.index('<section id="view-media"'):]
+        media_header = media_header[:media_header.index('</header>')]
+        self.assertIn('<div class="media-title-line"><h1>Media</h1>', media_header)
+        self.assertIn('id="media-provider-link"', media_header)
+        self.assertIn('>Powered by DeAPI.ai</a>', media_header)
         self.assertEqual(template.count('PETEY v{{ app_version }}'), 1)
 
     def test_mobile_composer_exposes_attachment_and_tap_to_mute_push_to_talk(self):

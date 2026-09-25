@@ -532,6 +532,10 @@ input:focus, select:focus, .tool-view textarea:focus { border-color: var(--accen
 .danger-card { border-color: #5d3037; }
 .danger-card .danger-button { margin: 10px 0; }
 #view-media { container-type: inline-size; }
+.media-title-line { display: flex; align-items: baseline; gap: 10px; }
+.media-title-line h1 { margin: 0; }
+.media-title-line a { color: var(--muted); font-size: 11px; font-weight: 500; text-decoration: none; }
+.media-title-line a:hover { color: var(--accent-text); }
 .tool-content.media-layout { display: grid; grid-template-columns: minmax(460px, 620px) minmax(420px, 1fr); gap: clamp(18px, 2cqw, 28px); align-items: start; width: 100%; max-width: 1600px; margin: 0 auto; padding: clamp(20px, 2.5cqw, 38px); }
 .media-layout .settings-card { min-width: 0; margin-bottom: 0; }
 .media-form-card .field-grid > *, .media-parameter-group > * { min-width: 0; }
@@ -1328,7 +1332,9 @@ body.artifact-preview-open{overflow:hidden}.artifact-preview{position:fixed;inse
     .command-rail-config label { display: flex; align-items: center; gap: 7px; font-size: 10px; }
     .command-rail-config input { width: auto; accent-color: var(--accent); }
     #command-disable-rail { margin-top: 4px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border)); border-radius: 6px; background: var(--danger-soft); color: var(--danger); cursor: pointer; font-size: 10px; }
-    :root[data-interface="command"][data-command-rail="closed"] .command-rail-handle { position: fixed; z-index: 45; top: 50%; right: 0; display: grid; place-items: center; width: 30px; height: 48px; padding: 0; transform: translateY(-50%); border: 1px solid var(--accent-border); border-right: 0; border-radius: 10px 0 0 10px; background: #0a111b; color: var(--accent-text); box-shadow: 0 10px 32px rgba(0, 0, 0, .38); cursor: pointer; font-size: 22px; }
+    :root[data-interface="command"][data-command-rail="closed"] :is(.chat-header, .tool-header) { padding-right: 64px; }
+    :root[data-interface="command"][data-command-rail="closed"] .command-rail-handle { position: fixed; z-index: 45; top: 22px; right: 22px; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--accent-border); border-radius: 8px; background: #0a111b; color: var(--accent-text); box-shadow: 0 10px 32px rgba(0, 0, 0, .38); cursor: pointer; font-size: 18px; line-height: 1; }
+    :root[data-interface="command"][data-command-rail="closed"] .command-rail-handle:hover { background: var(--accent-soft); color: var(--text); }
     :root[data-interface="command"] body.native-visual-fullscreen .app-shell { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0; }
     :root[data-interface="command"] body.native-visual-fullscreen :is(.command-rail, .command-rail-handle) { display: none; }
 }

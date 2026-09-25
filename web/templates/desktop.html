@@ -37,7 +37,6 @@
                 <button class="nav-button" data-view="help" type="button"><span class="nav-icon">?</span><span class="nav-label">Help</span></button>
             </nav>
             <div class="coming-next">
-                <a id="media-provider-link" href="{{ media_provider_url }}" target="_blank" rel="noopener">Media powered by deAPI ↗</a>
                 <span class="sidebar-version">PETEY v{{ app_version }}</span>
             </div>
         </aside>
@@ -182,7 +181,7 @@
         {% for addon in addon_views %}<section id="view-{{ addon.id }}" class="tool-view app-view addon-view" data-addon-id="{{ addon.addon_id }}">{{ addon.html|safe }}</section>{% endfor %}
 
         <section id="view-media" class="tool-view app-view">
-            <header class="tool-header"><div><h1>Media</h1><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>
+            <header class="tool-header"><div><div class="media-title-line"><h1>Media</h1><a id="media-provider-link" href="{{ media_provider_url }}" target="_blank" rel="noopener">Powered by DeAPI.ai</a></div><p>Generate and transform images, video, music, and speech.</p></div><div class="media-account"><span id="media-connection" class="save-status"></span><button id="deapi-balance" class="balance-chip" type="button" title="Refresh media balance">Balance: — <span>↻</span></button></div></header>
             <div class="tool-content media-layout">
                 <section class="settings-card media-form-card">
                     <div id="media-operation-fields" class="field-grid two-column">
@@ -321,7 +320,7 @@
             </details>
             <button id="command-rail-close" class="command-rail-close" type="button" aria-label="Hide At a glance rail" title="Hide rail">›</button>
         </aside>
-        <button id="command-rail-handle" class="command-rail-handle" type="button" aria-label="Show At a glance rail" title="Show rail" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">‹</span></button>
+        <button id="command-rail-handle" class="command-rail-handle" type="button" aria-label="Show command drawer" title="Show command drawer" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">☰</span></button>
     </main>
     <dialog id="image-browser-dialog" class="image-browser-dialog">
         <div class="image-browser-shell">
