@@ -1,17 +1,17 @@
 <details data-settings-keywords="Google Gemini OpenAI deAPI local credentials connection" id="api-key-settings" class="settings-card settings-section" open>
-                    <summary><div class="settings-section-heading"><div><h2>API keys</h2><p>Shared credentials for chat, vision, speech, memory, and media.</p></div></div></summary>
+                    <summary><div class="settings-section-heading"><div><h2>Optional hosted-service keys</h2><p>Credentials for cloud chat, vision, speech, transcription, memory, and media.</p></div></div></summary>
                     <div class="settings-section-body">
                         <p class="hint">Keys are stored in this installation’s settings. Blank fields keep existing keys; clearing a saved key restores any environment key.</p><p class="hint"><button class="text-button" data-settings-view="help" data-settings-target="help-api-keys" type="button">Where do I get an API key? →</button></p><div id="provider-key-fields" class="credential-grid"></div><p id="provider-keys-status" class="wide-status" role="status"></p></div>
                 </details>
                 <details id="chat-model-settings" class="settings-card settings-section ai-provider-card" open>
-                    <summary><div class="settings-section-heading"><div><h2>Chat &amp; vision</h2><p>Choose the language model that powers Petey’s chat and prompt tools.</p></div><span id="ai-provider-badge" class="provider-badge">Gemini</span></div></summary>
+                    <summary><div class="settings-section-heading"><div><h2>Chat &amp; vision</h2><p>Run chat and prompt tools on a local model server, or choose a hosted provider.</p></div><span id="ai-provider-badge" class="provider-badge">Gemini</span></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column ai-provider-fields">
                             <label><span>Provider</span>
                                 <select id="ai-provider">
+                                    <option value="local">Local / OpenAI-compatible</option>
                                     <option value="gemini">Google Gemini</option>
                                     <option value="openai">OpenAI / ChatGPT API</option>
-                                    <option value="local">Local / OpenAI-compatible</option>
                                 </select>
                             </label>
                             <label><span>Model</span><select id="ai-model-select" aria-label="Available chat models"><option value="">Loading models…</option></select></label>
@@ -25,7 +25,7 @@
                             <span class="hint">Start its local server and load a model first.</span>
                         </div>
                         <p id="ai-provider-note" class="hint"></p>
-                        <p class="hint">Gemini uses your selected model to read image attachments. Other chat providers use your configured Gemini model for image descriptions.</p>
+                        <p class="hint">Chat and prompt enhancement use the provider selected above. Image attachments currently use Gemini vision; when chat is local or OpenAI, only the image description is sent through the configured Gemini vision model.</p>
                         <div class="inline-actions">
                             <button id="save-ai-provider" class="primary-button" type="button">Save provider</button>
                             <button id="test-ai-provider" class="secondary-button" type="button">Test connection</button>
@@ -35,7 +35,7 @@
                     </div>
                 </details>
                 <details id="speech-model-settings" class="settings-card settings-section">
-                    <summary><div class="settings-section-heading"><div><h2>Speech models</h2><p>Choose the model used by each speech provider.</p></div></div></summary>
+                    <summary><div class="settings-section-heading"><div><h2>Spoken replies</h2><p>Optional hosted text-to-speech for reading Petey’s replies aloud.</p></div></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
                             <label id="speech-deapi-model-field" hidden><span>deAPI TTS model</span><select id="speech-deapi-model"><option value="Qwen3_TTS_12Hz_1_7B_CustomVoice">Qwen3 TTS Custom Voice</option></select></label>
@@ -49,7 +49,7 @@
                     <summary><div class="settings-section-heading"><div><h2>Speech recognition</h2><p>Choose who converts microphone recordings into text for every listening mode.</p></div></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
-                            <label><span>Transcription provider</span><select id="voice-input-provider"><option value="automatic">Automatic — deAPI, then Gemini</option><option value="deapi">deAPI only</option><option value="gemini">Google Gemini only</option><option value="local_whisper">Local Whisper — on this computer</option></select></label>
+                            <label><span>Transcription provider</span><select id="voice-input-provider"><option value="local_whisper">Local Whisper — on this computer</option><option value="automatic">Automatic — deAPI, then Gemini</option><option value="deapi">deAPI only</option><option value="gemini">Google Gemini only</option></select></label>
                             <label id="voice-input-model-field"><span>Transcription model</span><select id="voice-input-model"><option value="WhisperLargeV3">Whisper Large V3</option></select></label>
                             <label id="voice-input-local-whisper-device-field" hidden><span>Local Whisper device</span><select id="voice-input-local-whisper-device"><option value="auto">Automatic</option><option value="cpu">CPU</option><option value="cuda">NVIDIA CUDA</option></select></label>
                         </div>

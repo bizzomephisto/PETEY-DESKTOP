@@ -1,15 +1,17 @@
 # Getting Started
 
-Start with one chat provider. Add the other services only when you want them.
+PETEY stores its app data locally and lets you choose where each AI capability runs.
+Start with local chat when you want model requests to stay on your computer, or use
+a hosted chat provider. Add the other services only when you want them.
 
 ## First conversation
 
-1. Get a Gemini or OpenAI key from [API Keys and Providers](API-Keys-and-Providers),
-   or start a local OpenAI-compatible model server.
-2. Open **Settings → Models & API keys → API keys**.
-3. Paste the key into its provider field and select **Save key**.
-4. Open **Chat & vision**, choose the provider and model, and select **Save provider**.
-5. Select **Test connection**. This sends a small generation request to the provider.
+1. Start LM Studio, Ollama, or another OpenAI-compatible server and load a model,
+   or get a Gemini or OpenAI key from [API Keys and Providers](API-Keys-and-Providers).
+2. Open **Settings → Models & API keys → Chat & vision**.
+3. Choose Local or a hosted provider, select the model, and save the provider.
+4. For a hosted provider, save its key under **Optional hosted-service keys**.
+5. Select **Test connection**. This sends a small generation request to the selected provider.
 6. Open Chat and send a message. Enter sends; Shift+Enter inserts a new line.
 
 ## Useful next steps
@@ -23,7 +25,9 @@ Start with one chat provider. Add the other services only when you want them.
 
 API keys, model choices, speech, transcription, and memory search are separate
 settings. A working chat connection does not automatically configure every other
-feature.
+feature. Prompt enhancement uses the selected chat provider. Image inspection
+currently uses Gemini, microphone transcription can run locally with Local Whisper,
+and spoken replies are optional hosted services that can remain disabled.
 
 ## Quick PETEY on COSMIC
 

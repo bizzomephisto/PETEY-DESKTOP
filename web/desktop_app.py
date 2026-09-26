@@ -1311,8 +1311,9 @@ def create_desktop_app(
             "their intent. Return only the final prompt with no quotes or markdown."
         )
         try:
-            enhanced = AIProvider(current.ai_provider).complete(prompt, system_message, [])
-            return jsonify({"prompt": enhanced.strip()})
+            provider = AIProvider(current.ai_provider)
+            enhanced = provider.complete(prompt, system_message, [])
+            return jsonify({"prompt": enhanced.strip(), "provider": provider.provider})
         except AIProviderError as exc:
             return jsonify({"error": str(exc)}), 502
 
@@ -1516,8 +1517,11 @@ def create_desktop_app(
             "and motion details where relevant. Return only the enhanced prompt under 500 characters."
         )
         try:
-            enhanced = AIProvider(current.ai_provider).complete(prompt, system_message, [])
-            return jsonify({"prompt": enhanced.strip()[:500]})
+            provider = AIProvider(current.ai_provider)
+            enhanced = provider.complete(prompt, system_message, [])
+            return jsonify({
+                "prompt": enhanced.strip()[:500], "provider": provider.provider,
+            })
         except AIProviderError as exc:
             return jsonify({"error": str(exc)}), 502
 

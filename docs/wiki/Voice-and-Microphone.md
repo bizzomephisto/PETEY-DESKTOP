@@ -1,17 +1,18 @@
 # Voice and Microphone
 
-Speech output and microphone transcription use separate settings from chat.
+Speech output and microphone transcription use separate settings from chat. Local
+Whisper is the private on-device transcription path. Spoken replies currently use
+optional hosted providers and can remain disabled.
 
 ## Spoken replies
 
 1. Open **Settings → Personality & voice**.
-2. Choose Automatic, Gemini, OpenAI, or Disabled, then choose PETEY's voice,
+2. Choose Automatic, deAPI, Gemini, OpenAI, or Disabled, then choose PETEY's voice,
    delivery directions, and whether new replies should play automatically.
 3. Select **Save Petey profile**. Instructions, traits, communication style, voice,
    and speech provider save together.
-4. Use **Models & API keys → Speech models** only when you want to change the model
-   used by Gemini or OpenAI speech.
-4. Use the Speak control on an individual reply whenever you want manual playback.
+4. Use **Models & API keys → Spoken replies** only when you want to change a hosted speech model.
+5. Use the Speak control on an individual reply whenever you want manual playback.
 
 Automatic speech tries Gemini and can fall back to OpenAI when configured. The
 required provider key must be saved or present in the environment.
@@ -56,10 +57,11 @@ browser can be reloaded after files are added.
 
 ## Transcription
 
-The default automatic transcription path uses deAPI and falls back to Gemini when
-available. You can choose Gemini directly under **Models & API keys**. Completed
-utterance clips are sent to the selected transcription provider and are not stored
-in PETEY's gallery or memory.
+Choose **Local Whisper — on this computer** to transcribe completed recordings
+privately. Its optional engine and selected model must be installed first. The
+Automatic hosted path uses deAPI and falls back to Gemini; either hosted provider can
+also be selected directly. Completed utterance clips are sent only to the selected
+transcription route and are not stored in PETEY's gallery or memory.
 
 If voice is not working, verify the separate speech and transcription settings,
 provider keys, selected microphone, system input level, output volume, and operating

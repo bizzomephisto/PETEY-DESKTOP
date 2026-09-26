@@ -2592,6 +2592,10 @@ const aiProviderDefaults = {
     local: {model: '', base_url: 'http://localhost:1234/v1'},
 };
 
+function chatProviderLabel(provider = aiProviderConfiguration?.provider || aiProviderSelect.value || 'gemini') {
+    return {local: 'Local model', gemini: 'Gemini', openai: 'OpenAI'}[provider] || 'Chat model';
+}
+
 function configureAIProvider(provider = aiProviderSelect.value) {
     const saved = aiProviderConfiguration?.providers?.[provider] || aiProviderDefaults[provider];
     fillModelChoices(aiModelSelect, aiModelCatalogs.get(provider) || [], saved.model || aiProviderDefaults[provider].model);
@@ -4758,7 +4762,7 @@ document.getElementById('rewrite-persona').addEventListener('click', async () =>
     const button = document.getElementById('rewrite-persona');
     const feedback = document.getElementById('personality-status');
     button.disabled = true;
-    setFeedback(feedback, 'Gemini is rewriting the prompt…');
+    setFeedback(feedback, 'The selected chat model is rewriting the prompt…');
     try {
         const result = await apiJson('/api/desktop/personality/rewrite', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -4766,7 +4770,7 @@ document.getElementById('rewrite-persona').addEventListener('click', async () =>
         });
         document.getElementById('persona-prompt').value = result.prompt;
         document.getElementById('persona-preset').value = '';
-        setFeedback(feedback, 'Rewritten — review it, then save.', 'success');
+        setFeedback(feedback, `Rewritten with ${chatProviderLabel(result.provider)} — review it, then save.`, 'success');
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
     } finally {
@@ -5405,7 +5409,7 @@ document.getElementById('enhance-media-prompt').addEventListener('click', async 
     const operation = mediaOperation.value;
     const prompt = mediaPrompt.value;
     button.disabled = true;
-    setFeedback(mediaStatus, 'Gemini is enhancing the prompt…');
+    setFeedback(mediaStatus, 'The selected chat model is enhancing the prompt…');
     try {
         const payload = await apiJson('/api/desktop/media/enhance', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -5416,7 +5420,7 @@ document.getElementById('enhance-media-prompt').addEventListener('click', async 
         if (mediaOperation.value === operation) {
             mediaPrompt.value = payload.prompt;
             scheduleMediaEstimate();
-            setFeedback(mediaStatus, 'Prompt enhanced. Review it, then generate.', 'success');
+            setFeedback(mediaStatus, `Prompt enhanced with ${chatProviderLabel(payload.provider)}. Review it, then generate.`, 'success');
         }
     } catch (error) {
         setFeedback(mediaStatus, error.message, 'error');

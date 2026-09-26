@@ -342,6 +342,7 @@ class DiscordBridgeTests(unittest.TestCase):
         original = self.state.discord_room_prompt
         result = self.bridge.enhance_room_prompt("be nice and don't spam")
         self.assertEqual(result["prompt"], "Be warm, brief, and follow the room's pace.")
+        self.assertEqual(result["provider"], "local")
         self.assertEqual(self.state.discord_room_prompt, original)
         self.assertEqual(self.provider.complete.call_args.args[0], "be nice and don't spam")
         self.assertIn("Return only", self.provider.complete.call_args.args[1])

@@ -4,9 +4,20 @@ Current version: **v0.19.1** · Previous experimental preview: **v0.19.0-experim
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
-PETEY is a standalone desktop AI assistant with local conversations, configurable
-personality, universal SQLite memory, RAG document management, deAPI media tools,
-voice conversation, visual mode, and optional integrations.
+PETEY is a local-first desktop AI companion. Its interface, conversations, profiles,
+memory, knowledge files, gallery, and add-ons live on your computer. You choose where
+model work runs instead of tying the companion to one cloud service.
+
+| Capability | Local-first route | Optional hosted route |
+| --- | --- | --- |
+| Chat and prompt enhancement | LM Studio, Ollama, or another OpenAI-compatible server | Gemini or OpenAI |
+| Vision for image attachments | The resulting description returns to your selected chat model | Gemini currently performs image inspection |
+| Speech recognition (STT) | Local Whisper on this computer | deAPI or Gemini |
+| Spoken replies (TTS) | Leave speech disabled | deAPI, Gemini, or OpenAI |
+
+SQLite memory, retrieval, and keyword search remain local. Semantic embeddings can
+also use a local OpenAI-compatible server. Hosted features receive only the content
+needed for the feature you deliberately select.
 
 ## Preview
 
@@ -101,16 +112,17 @@ interface with your phone while PETEY is running.
 
 - Python 3.12 or newer
 - FFmpeg for browser-compatible generated-video previews
-- A language-model provider: Gemini, OpenAI, or a local OpenAI-compatible server
+- A local OpenAI-compatible model server, Gemini, or OpenAI for chat
 - A Gemini API key if you want image inspection, Gemini speech, or microphone transcription fallback
 - A deAPI key if you want media generation or microphone transcription
 - Node.js with `npx` if you want to enable the Filesystem tool
 - OpenSSL if you want trusted HTTPS phone access and live phone microphone capture
 
-Manage keys and service models in **Settings → Models & API keys**. Gemini,
-OpenAI, local-server, and deAPI keys can be saved independently of the active chat
-provider. Existing environment keys remain supported. Voice identity and delivery
-settings stay under **Personality & voice**.
+Choose local models and optional hosted services in **Settings → Models & API keys**.
+Local chat does not require a cloud key. Gemini, OpenAI, local-server, and deAPI
+credentials can be saved independently of the active chat provider. Existing
+environment keys remain supported. Voice identity and delivery settings stay under
+**Personality & voice**.
 
 Connected capabilities are managed under **Settings → Tools**. Filesystem uses a
 pinned release of the official MCP server and receives only folders you add there.
@@ -272,7 +284,7 @@ The API keys section in Settings also links directly to this guide.
 - **deAPI:** [Open the dashboard](https://app.deapi.ai/) and use Settings → API Keys
   ([official guide](https://docs.deapi.ai/quickstart)).
 
-Save each key in **Settings → Models & API keys → API keys**. Choose your chat
+Save each hosted key in **Settings → Models & API keys → Optional hosted-service keys**. Choose your chat
 provider and model, click **Save provider**, then **Test connection**. Add other
 services as needed; review provider pricing and account limits before use.
 

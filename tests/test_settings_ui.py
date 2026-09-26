@@ -169,6 +169,25 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('.command-card-drag', stylesheet)
         self.assertNotIn('Companion</option>', template)
 
+    def test_local_first_provider_copy_and_provider_neutral_prompt_tools(self):
+        root = Path(__file__).parents[1]
+        providers = (root / 'web/templates/settings/providers.html').read_text(encoding='utf-8')
+        personality = (root / 'web/templates/settings/personality.html').read_text(encoding='utf-8')
+        desktop = (root / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        help_page = (root / 'web/templates/desktop_help.html').read_text(encoding='utf-8')
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+
+        self.assertLess(providers.index('value="local"'), providers.index('value="gemini"'))
+        self.assertIn('Optional hosted-service keys', providers)
+        self.assertIn('Local Whisper — on this computer', providers)
+        self.assertIn('Improve with chat model', personality)
+        self.assertNotIn('Improve with Gemini', personality)
+        self.assertIn('Uses the selected chat provider', desktop)
+        self.assertIn('PETEY is local-first', help_page)
+        self.assertIn('function chatProviderLabel(', javascript)
+        self.assertNotIn('Gemini is rewriting the prompt', javascript)
+        self.assertNotIn('Gemini is enhancing the prompt', javascript)
+
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         for name in (

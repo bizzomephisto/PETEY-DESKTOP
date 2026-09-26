@@ -744,6 +744,43 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(saved.get_json()["voice_cues"]["voice"], "Sulafat")
             self.assertTrue(state.speech["auto_speak"])
 
+    def test_prompt_enhancement_uses_the_saved_active_chat_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_ai_provider({
+                "provider": "local", "model": "local-model",
+                "base_url": "http://localhost:1234/v1",
+            })
+            app = create_desktop_app(
+                state=state, memory=MagicMock(), job_manager=MagicMock()
+            )
+            client = app.test_client()
+            providers = []
+
+            def complete(provider, prompt, system_message, history):
+                providers.append(provider.provider)
+                return f"Enhanced: {prompt}"
+
+            with patch(
+                "web.desktop_app.AIProvider.complete", autospec=True,
+                side_effect=complete,
+            ):
+                persona = client.post(
+                    "/api/desktop/personality/rewrite", json={"prompt": "Be helpful"}
+                )
+                media = client.post(
+                    "/api/desktop/media/enhance",
+                    json={"operation": "txt2img", "prompt": "A local robot"},
+                )
+
+            self.assertEqual(persona.status_code, 200)
+            self.assertEqual(media.status_code, 200)
+            self.assertEqual(providers, ["local", "local"])
+            self.assertEqual(persona.json["prompt"], "Enhanced: Be helpful")
+            self.assertEqual(media.json["prompt"], "Enhanced: A local robot")
+            self.assertEqual(persona.json["provider"], "local")
+            self.assertEqual(media.json["provider"], "local")
+
     def test_personality_slots_can_be_saved_and_cleared(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)

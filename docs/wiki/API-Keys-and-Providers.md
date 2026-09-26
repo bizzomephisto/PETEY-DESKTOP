@@ -1,8 +1,24 @@
 # API Keys and Providers
 
-An API key connects PETEY to your account with a provider. You need keys only for
-the services you use. Save keys under **Settings → Models & API keys → API keys**.
-Keep them out of chat messages, screenshots, issue reports, and source control.
+PETEY is local-first and does not require a cloud account when you use a local chat
+server, local embeddings, local keyword memory search, and Local Whisper. An API key
+connects only the hosted services you choose. Save keys under **Settings → Models &
+API keys → Optional hosted-service keys**. Keep them out of chat messages,
+screenshots, issue reports, and source control.
+
+## Local models
+
+PETEY supports OpenAI-compatible local servers such as LM Studio and Ollama.
+
+1. Start the local server and load a model.
+2. Choose **Local** under **Chat & vision**.
+3. Enter the server URL. PETEY includes common LM Studio and Ollama presets.
+4. Load or enter a model, save the provider, and test the connection.
+
+Local chat and prompt enhancement use that endpoint. A local embedding endpoint can
+be configured separately for memory search, and Local Whisper can handle microphone
+transcription. Image inspection currently needs Gemini; spoken replies currently use
+deAPI, Gemini, or OpenAI and can remain disabled.
 
 ## Google Gemini
 
@@ -35,19 +51,6 @@ deAPI powers PETEY's media generation and its default microphone transcription.
 
 In the deAPI dashboard, open **Settings → API Keys** and create a secret key. Media
 jobs consume account credits; PETEY shows the balance and estimates supported jobs.
-
-## Local models
-
-PETEY supports OpenAI-compatible local servers such as LM Studio and Ollama.
-
-1. Start the local server and load a model.
-2. Choose **Local** under **Chat & vision**.
-3. Enter the server URL. PETEY includes common LM Studio and Ollama presets.
-4. Load or enter a model, save the provider, and test the connection.
-
-Local chat keeps that model request on the configured endpoint. Image inspection
-still needs Gemini. A local embedding endpoint can be configured separately for
-memory search.
 
 ## Environment variables
 

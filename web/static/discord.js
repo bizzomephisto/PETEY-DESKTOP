@@ -365,7 +365,10 @@ document.getElementById('discord-enhance-room-prompt').addEventListener('click',
         });
         input.value = result.prompt;
         input.focus();
-        status.textContent = 'Enhanced. Review the result, then save it.';
+        const provider = typeof chatProviderLabel === 'function'
+            ? chatProviderLabel(result.provider)
+            : 'the selected chat model';
+        status.textContent = `Enhanced with ${provider}. Review the result, then save it.`;
     } catch (error) {
         status.textContent = error.message;
     } finally {

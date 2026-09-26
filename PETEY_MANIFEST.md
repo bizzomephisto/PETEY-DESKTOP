@@ -11,7 +11,7 @@ drifts.
 - Current version: **v0.19.1**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 350 tests
+- Test framework: `unittest`; current full suite contains 352 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 
@@ -20,6 +20,13 @@ voice profiles, SQLite memory/RAG, media generation, voice conversation, visual
 mode, Discord, read-only approved-folder tools, and explicitly installed add-ons.
 The desktop app should remain usable without a JavaScript build pipeline or a
 separate web service.
+
+Local-first messaging must lead with what stays on the computer and clearly name
+the boundary of every model route: chat and prompt enhancement can use a local
+OpenAI-compatible server, transcription can use Local Whisper, image inspection
+currently uses Gemini, and conversational speech currently uses optional hosted
+providers or can remain disabled. Prompt-enhancement actions always use the saved
+active chat provider rather than naming or forcing Gemini.
 
 ## Product principles
 

@@ -200,13 +200,12 @@ class DiscordBridge:
             "remaining silent when no reply is useful. Do not invent capabilities or credentials. "
             "Return only the complete enhanced prompt with no introduction or code fence."
         )
-        result = self.provider_factory(self.state.ai_provider).complete(
-            prompt.strip(), system, []
-        )
+        config = self.state.ai_provider
+        result = self.provider_factory(config).complete(prompt.strip(), system, [])
         result = str(result or "").strip()
         if not result or len(result) > 12000:
             raise AIProviderError("The model did not return a usable enhanced room prompt.")
-        return {"prompt": result}
+        return {"prompt": result, "provider": str(config.get("provider") or "gemini")}
 
     def _matches_watched_topic(self, text):
         with self.lock:
