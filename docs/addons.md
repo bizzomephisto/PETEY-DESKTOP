@@ -13,10 +13,14 @@ integration. Third-party add-ons remain separate folders installed by the user.
 `scripts/package_release.py` enforces this boundary by rejecting `examples/`, known
 legacy add-on roots, external `petey-addon.json` files, `.env`, and symlinks.
 
-Official external add-ons are released independently:
+Official external add-ons are developed in separate repositories:
 
 - [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT)
 - [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE)
+- [Quick Actions](https://github.com/bizzomephisto/PETEY-QUICK-ACTIONS)
+- [OpenCode](https://github.com/bizzomephisto/PETEY-OPENCODE)
+- [Spotify](https://github.com/bizzomephisto/PETEY-SPOTIFY)
+- [Google Sheets Scorecards](https://github.com/bizzomephisto/PETEY-GOOGLE-SHEETS)
 
 Petey Life reads `DesktopState.system_prompt`, so its simulation always uses the
 system-default Petey profile and never the persona assigned to the active chat or
