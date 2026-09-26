@@ -1508,6 +1508,12 @@ document.getElementById('command-rail-close').addEventListener('click', () => {
 document.getElementById('command-rail-handle').addEventListener('click', () => {
     saveCommandRail({command_rail_open: true});
 });
+document.getElementById('command-core-collapse').addEventListener('click', () => {
+    const collapsed = new Set(preferences.command_rail_collapsed || []);
+    if (collapsed.has('controls')) collapsed.delete('controls');
+    else collapsed.add('controls');
+    saveCommandRail({command_rail_collapsed: [...collapsed]});
+});
 document.getElementById('command-disable-rail').addEventListener('click', () => {
     saveCommandRail({command_rail_enabled: false, command_rail_open: false});
 });
@@ -6687,6 +6693,14 @@ function applyCommandPanelPreferences() {
     }
     ordered.forEach(panelId => rail.insertBefore(cards.get(panelId), anchor));
     const collapsed = new Set(preferences.command_rail_collapsed || []);
+    const core = document.getElementById('command-core-controls');
+    const coreButton = document.getElementById('command-core-collapse');
+    const coreCollapsed = collapsed.has('controls');
+    core.classList.toggle('collapsed', coreCollapsed);
+    coreButton.textContent = coreCollapsed ? '›' : '⌄';
+    coreButton.setAttribute('aria-expanded', String(!coreCollapsed));
+    coreButton.setAttribute('aria-label', coreCollapsed ? 'Expand controls' : 'Collapse controls');
+    coreButton.title = coreCollapsed ? 'Expand controls' : 'Collapse controls';
     commandPanelCards().forEach(card => {
         enhanceCommandPanel(card);
         card.hidden = !addonInterfaceAllows(card.dataset.addonId, 'controls');
