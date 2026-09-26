@@ -24,6 +24,73 @@ These projects use PETEY add-on API version `1` and publish their own installabl
 archives. Their source, releases, issues, and version histories stay in their own
 repositories.
 
+## Discord Voice and YouTube DJ
+
+`discord-voice` is an external add-on, separate from PETEY's built-in Discord text
+bridge. The built-in bridge handles room conversation, presence, slash commands,
+media jobs, and administration proposals. Discord Voice adds the real-time voice
+channel and DJ process and must remain independently installable and removable.
+
+Version 0.2.2 provides these behaviors:
+
+- Joins a selected Discord voice channel with discord.py voice receive, PyNaCl,
+  and Discord's DAVE library. Incoming 48 kHz stereo PCM is separated by member
+  and converted to bounded 16 kHz mono captures.
+- Uses PETEY's local wake-name detector before transcription. A standalone
+  “Petey” plays the configured acknowledgement and arms the next utterance; a
+  continuous “Petey, ...” request and the configured same-speaker follow-up window
+  go directly to transcription. With Local Whisper selected, a completed local
+  utterance may also recover a missed wake-name detection without uploading
+  ordinary room conversation.
+- Uses PETEY's Discord room persona and assigned speech profile. Its public Discord
+  activity changes from **Listening for Petey** to **Thinking...**, then
+  **Speaking**, and returns to listening after playback.
+- Optimizes interactive latency by capping Discord's end-of-speech wait at 650 ms,
+  preloading the selected Local Whisper model after listening starts, and invoking
+  Gemini or OpenAI speech directly instead of placing short replies behind the
+  general media-job queue. The add-on panel exposes silence, transcription, model
+  reply, speech generation, and total-to-speech timing for the most recent turn.
+- Suspends core browser microphone capture and automatic desktop speech through
+  `window.peteyVoiceSessions` for the duration of an active joined/listening
+  session, then restores the prior runtime state when the session ends.
+- Streams a bounded YouTube-only queue through yt-dlp and FFmpeg. Text, spoken,
+  and panel controls cover play/queue, pause, resume, skip/next, stop/wait, and
+  volume. It deliberately has no Spotify control path.
+
+Its source manifest declares add-on API version `1`, ID `discord-voice`, and its
+own requirements. Keep DAVE, Discord voice receive, yt-dlp, and similar optional
+packages out of PETEY core requirements. Writable state remains under
+`addon-data/discord-voice`; cached generated voice files are disposable.
+
+## Lean private backup layout
+
+When the user explicitly requests a minimal full-project backup, place it in a
+protected directory outside the live PETEY checkout and use this layout:
+
+```text
+PETEY_DESKTOP_MINIMAL_BACKUP_<date>/
+  BACKUP_README.md
+  BACKUP_MANIFEST.sha256
+  petey-desktop/       # current Git-tracked core files plus the requested .env
+  addons/<addon-id>/   # installed add-on source, manifests, assets, and docs
+```
+
+Copy tracked core files from the working tree so intentional uncommitted edits are
+preserved. Include `.env` only because the user explicitly asked for it. Prefer a
+filesystem that enforces Unix ownership, set the backup folder to owner-only and
+`.env` to owner read/write, verify the resulting modes, and describe the folder as private. Copy
+installed add-on source so the current feature set can be restored, but omit `.git`,
+virtual environments, `__pycache__`, `.pytest_cache`, downloaded dependency trees,
+and transient caches. Do not copy the PETEY data root's settings, memory database,
+gallery, local model downloads, `addon-data`, remote-access secret, TLS material,
+or voice recordings into a minimum code backup.
+
+To restore, copy `petey-desktop/` to a new checkout folder, create a Python 3.12+
+environment, install `requirements.txt`, then copy each desired folder from
+`addons/` into `<PETEY data root>/addons/`. Install each enabled add-on's own
+requirements into the same PETEY environment, enable it in Manage Add-ons, and
+restart PETEY. Verify `BACKUP_MANIFEST.sha256` before using the restored files.
+
 ## Runtime locations
 
 External add-ons are installed as one folder each under:
