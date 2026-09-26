@@ -284,6 +284,13 @@ An add-on that plays its own optional spoken cue can check
 `window.peteyAudioControls.speakerEnabled()` first. This reflects PETEY's persisted
 speaker mute and disabled speech-provider state. Add-on cues must obey it.
 
+A remote voice conversation should call
+`await window.peteyVoiceSessions.suspend(addonId)` while it owns PETEY's live
+conversation surface and `release(addonId)` after disconnecting. The first owner
+stops local microphone capture and automatic speech without changing saved mute
+preferences. PETEY restores the prior runtime state after the final owner releases
+the session. Calls are idempotent per add-on ID.
+
 ### Downloading add-on files
 
 Normal browsers can download a same-origin add-on API response with an `<a>` link.

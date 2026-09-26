@@ -153,6 +153,9 @@ services.
   slowly. Profile/speech API responses carry the resolved catalog, and audio URLs
   include file modification revisions to prevent stale browser playback.
 - PETEY speech and wake acknowledgements must never overlap.
+- When a remote voice add-on owns an active conversation, the browser suspends
+  local microphone capture and automatic speech without changing saved mute
+  preferences, then restores the prior runtime state after the session ends.
 
 ## Tools and add-ons
 

@@ -375,6 +375,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("window.peteyMediaDevices.release('petey-core-voice')", javascript)
         self.assertIn('window.peteyConferenceAudio = {', javascript)
         self.assertIn('window.peteyAudioControls = {', javascript)
+        self.assertIn('window.peteyVoiceSessions = {', javascript)
+        self.assertIn("externalVoiceSessionOwners.size > 0", javascript)
         self.assertIn('speakerEnabled: () => Boolean(', javascript)
         self.assertIn("new CustomEvent('petey:voice-playback'", javascript)
 

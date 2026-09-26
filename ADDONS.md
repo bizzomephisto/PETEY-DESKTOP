@@ -67,6 +67,10 @@ filesystem and network permissions, so they are trusted local code.
   `stopAll()` on unload/restart as a final hardware guard. Recording add-ons use `window.peteyConferenceAudio`
   to yield and restore PETEY's ordinary continuous microphone instead of competing
   for the same input.
+- Remote voice add-ons use `window.peteyVoiceSessions.suspend(addonId)` while their
+  conversation is active and `release(addonId)` when it ends. PETEY pauses local
+  microphone capture and automatic speech for the first owner, then restores the
+  prior runtime state after the final owner releases it.
 - Browser add-ons may pin bounded buttons, live panels, and transient notifications in the
   user-configurable Command Center rail through `window.peteyInterface`. Registration
   remains safe when the rail is hidden or disabled; PETEY shows the items if the user

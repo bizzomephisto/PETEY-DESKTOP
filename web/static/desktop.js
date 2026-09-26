@@ -129,6 +129,9 @@ let speechUnlockAudio = null;
 let neuralAnimationFrame = null;
 let neuralDraw = null;
 let conferenceVoiceWasRunning = false;
+const externalVoiceSessionOwners = new Set();
+let externalVoiceRestoreMicrophone = false;
+let externalVoiceRestoreSpeech = false;
 
 window.peteyMediaDevices = (() => {
     const leases = new Map();
@@ -1364,7 +1367,9 @@ function renderVoiceResponseToggle() {
 }
 
 function setVoiceResponseEnabled(enabled) {
-    voiceResponseEnabled = Boolean(enabled) && speechConfiguration?.provider !== 'disabled';
+    voiceResponseEnabled = Boolean(enabled)
+        && externalVoiceSessionOwners.size === 0
+        && speechConfiguration?.provider !== 'disabled';
     if (voiceResponseEnabled) {
         primeSpeechPlayback();
     } else {
@@ -2747,6 +2752,7 @@ function setVoiceInputStatus(message) {
 
 function configureVoiceInputUI() {
     const mode = effectiveVoiceInputMode();
+    const externalVoiceActive = externalVoiceSessionOwners.size > 0;
     commandMicrophoneModeSelect.value = voiceInputConfiguration.mode || 'disabled';
     const micIsMuted = microphoneMuted
         || (['always_on', 'wake_word'].includes(mode)
@@ -2765,7 +2771,8 @@ function configureVoiceInputUI() {
         button.classList.toggle('listening', voiceInputRunning && !microphoneCapturing);
         button.classList.toggle('recording', microphoneCapturing);
         button.classList.toggle('processing', voiceInputBusy);
-        button.disabled = voiceInputBusy || (button === visualVoiceInputButton && microphoneMuted);
+        button.disabled = externalVoiceActive || voiceInputBusy
+            || (button === visualVoiceInputButton && microphoneMuted);
     });
     visualVoiceInputLabel.textContent = microphoneMuted
         ? 'Muted'
@@ -2793,7 +2800,9 @@ function configureVoiceInputUI() {
     } else {
         voiceInputButton.setAttribute('aria-label', voiceInputButton.title);
     }
-    if (mode !== 'disabled' && microphoneMuted) {
+    if (externalVoiceActive) {
+        setVoiceInputStatus('Discord voice is active · desktop microphone and speech are paused');
+    } else if (mode !== 'disabled' && microphoneMuted) {
         setVoiceInputStatus('Microphone muted · tap the crossed-out mic to unmute');
     } else if (mode === 'disabled') {
         setVoiceInputStatus('Ready');
@@ -3703,7 +3712,7 @@ function stopLocalWakeDetector() {
 
 async function startContinuousVoiceInput() {
     if (!['always_on', 'wake_word'].includes(effectiveVoiceInputMode())
-        || microphoneMuted) return;
+        || microphoneMuted || externalVoiceSessionOwners.size > 0) return;
     try {
         await ensureMicrophone();
         if (microphoneMuted) {
@@ -3757,6 +3766,37 @@ window.peteyConferenceAudio = {
             await startContinuousVoiceInput();
         }
     },
+};
+
+window.peteyVoiceSessions = {
+    async suspend(owner) {
+        const key = String(owner || '').trim();
+        if (!key || externalVoiceSessionOwners.has(key)) return;
+        const first = externalVoiceSessionOwners.size === 0;
+        externalVoiceSessionOwners.add(key);
+        if (!first) return;
+        externalVoiceRestoreMicrophone = Boolean(voiceInputRunning || microphoneStream?.active);
+        externalVoiceRestoreSpeech = Boolean(voiceResponseEnabled);
+        await stopVoiceInput();
+        setVoiceResponseEnabled(false);
+        configureVoiceInputUI();
+    },
+    async release(owner) {
+        const key = String(owner || '').trim();
+        if (!key || !externalVoiceSessionOwners.delete(key)
+                || externalVoiceSessionOwners.size > 0) return;
+        const restoreMicrophone = externalVoiceRestoreMicrophone;
+        const restoreSpeech = externalVoiceRestoreSpeech;
+        externalVoiceRestoreMicrophone = false;
+        externalVoiceRestoreSpeech = false;
+        setVoiceResponseEnabled(restoreSpeech);
+        if (restoreMicrophone && !microphoneMuted
+                && ['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
+            await startContinuousVoiceInput();
+        }
+        configureVoiceInputUI();
+    },
+    active() { return externalVoiceSessionOwners.size > 0; },
 };
 
 document.getElementById('test-voice-input').addEventListener('click', async () => {
