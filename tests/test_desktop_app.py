@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from petey.ai_provider import AIProvider
 from petey.assistant import AssistantReply
 from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
@@ -220,13 +221,19 @@ class DesktopAppTests(unittest.TestCase):
             })
             self.assertEqual(invalid.status_code, 400)
 
-    def test_gemini_model_selection_also_updates_vision(self):
+    def test_active_chat_model_is_reported_as_the_vision_model(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             state.update_ai_provider({"provider": "gemini", "model": "gemini-new-flash"})
-            self.assertEqual(state.ai_provider["gemini"]["vision_model"], "gemini-new-flash")
+            self.assertEqual(
+                AIProvider(state.ai_provider).public_config()["vision_model"],
+                "gemini-new-flash",
+            )
             state.update_ai_provider({"provider": "local", "model": "local-chat"})
-            self.assertEqual(state.ai_provider["gemini"]["vision_model"], "gemini-new-flash")
+            self.assertEqual(
+                AIProvider(state.ai_provider).public_config()["vision_model"],
+                "local-chat",
+            )
 
     def test_vision_catalog_uses_gemini_without_changing_chat_provider(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -676,7 +683,7 @@ class DesktopAppTests(unittest.TestCase):
             self.assertTrue(payload["has_api_key"])
             self.assertNotIn("sk-private", response.get_data(as_text=True))
 
-    def test_vision_model_is_saved_independently_of_chat_provider(self):
+    def test_legacy_gemini_vision_setting_does_not_override_local_chat(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             app = create_desktop_app(state=state, runtime=object())
@@ -692,7 +699,7 @@ class DesktopAppTests(unittest.TestCase):
 
             payload = response.get_json()["configuration"]
             self.assertEqual(payload["provider"], "local")
-            self.assertEqual(payload["vision_model"], "gemini-vision-test")
+            self.assertEqual(payload["vision_model"], "qwen")
             self.assertEqual(
                 state.ai_provider["gemini"]["vision_model"], "gemini-vision-test"
             )

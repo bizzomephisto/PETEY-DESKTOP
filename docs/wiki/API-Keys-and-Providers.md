@@ -15,10 +15,10 @@ PETEY supports OpenAI-compatible local servers such as LM Studio and Ollama.
 3. Enter the server URL. PETEY includes common LM Studio and Ollama presets.
 4. Load or enter a model, save the provider, and test the connection.
 
-Local chat and prompt enhancement use that endpoint. A local embedding endpoint can
-be configured separately for memory search, and Local Whisper can handle microphone
-transcription. Image inspection currently needs Gemini; spoken replies currently use
-deAPI, Gemini, or OpenAI and can remain disabled.
+Local chat, prompt enhancement, and image inspection use that endpoint. Image
+attachments require a vision-capable local model. A local embedding endpoint can be
+configured separately for memory search, and Local Whisper can handle microphone
+transcription. Spoken replies currently use deAPI, Gemini, or OpenAI and can remain disabled.
 
 ## Google Gemini
 
@@ -28,9 +28,8 @@ embeddings.
 - [Create or view a Gemini API key](https://aistudio.google.com/apikey)
 - [Official Gemini API-key guide](https://ai.google.dev/gemini-api/docs/api-key)
 
-When Gemini is the chat provider, image attachments follow the selected Gemini
-chat model. OpenAI and local chat still use the configured Gemini model to describe
-image attachments.
+When Gemini is the chat provider, image attachments follow the selected Gemini chat
+model. Local and OpenAI chat use their own selected models for image attachments.
 
 ## OpenAI
 

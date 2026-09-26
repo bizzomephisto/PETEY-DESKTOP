@@ -357,32 +357,56 @@ class AIProviderTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "private-key")
         self.assertNotIn("private-key", str(provider.public_config()))
 
-    def test_gemini_vision_uses_separate_model_with_local_chat_provider(self):
+    def test_local_vision_uses_the_active_openai_compatible_model(self):
         response = MagicMock()
         response.raise_for_status.return_value = None
         response.json.return_value = {
-            "candidates": [{"content": {"parts": [{"text": "A green robot."}]}}]
+            "choices": [{"message": {"content": "A green robot."}}]
         }
         provider = AIProvider({
             "provider": "local",
-            "gemini": {
-                "api_key": "vision-key",
-                "vision_model": "gemini-vision-test",
-            },
-            "local": {"model": "qwen", "base_url": "http://localhost:1234/v1"},
+            "gemini": {"api_key": "unused-gemini-key", "vision_model": "legacy-vision"},
+            "local": {"model": "qwen-vl", "base_url": "http://localhost:1234/v1"},
         })
 
         with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
             result = provider.describe_image(b"image-bytes", "image/png", "What is this?")
 
         self.assertEqual(result, "A green robot.")
-        self.assertIn("gemini-vision-test:generateContent", post.call_args.args[0])
-        parts = post.call_args.kwargs["json"]["contents"][0]["parts"]
+        self.assertEqual(post.call_args.args[0], "http://localhost:1234/v1/chat/completions")
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "qwen-vl")
+        parts = payload["messages"][0]["content"]
         self.assertIn("What is this?", parts[0]["text"])
-        self.assertEqual(parts[1]["inlineData"]["mimeType"], "image/png")
-        self.assertEqual(parts[1]["inlineData"]["data"], base64.b64encode(b"image-bytes").decode("ascii"))
-        self.assertEqual(provider.public_config()["vision_model"], "gemini-vision-test")
-        self.assertNotIn("vision-key", str(provider.public_config()))
+        self.assertEqual(parts[1]["type"], "image_url")
+        self.assertEqual(
+            parts[1]["image_url"]["url"],
+            "data:image/png;base64," + base64.b64encode(b"image-bytes").decode("ascii"),
+        )
+        self.assertEqual(provider.public_config()["vision_model"], "qwen-vl")
+        self.assertEqual(provider.public_config()["vision_provider"], "local")
+        self.assertTrue(provider.public_config()["vision_has_api_key"])
+        self.assertNotIn("unused-gemini-key", str(provider.public_config()))
+
+    def test_openai_vision_uses_the_active_openai_model_and_key(self):
+        response = MagicMock()
+        response.json.return_value = {
+            "choices": [{"message": {"content": "A blue diagram."}}]
+        }
+        provider = AIProvider({
+            "provider": "openai",
+            "openai": {"model": "gpt-vision-test", "api_key": "openai-key"},
+        })
+
+        with patch("petey.ai_provider.HTTP_SESSION.post", return_value=response) as post:
+            result = provider.describe_image(b"image", "image/jpeg")
+
+        self.assertEqual(result, "A blue diagram.")
+        self.assertEqual(post.call_args.args[0], "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer openai-key")
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "gpt-vision-test")
+        self.assertEqual(provider.public_config()["vision_provider"], "openai")
+        self.assertTrue(provider.public_config()["vision_has_api_key"])
 
     def test_openai_requires_an_api_key(self):
         provider = AIProvider({"provider": "openai", "openai": {"model": "gpt-test"}})

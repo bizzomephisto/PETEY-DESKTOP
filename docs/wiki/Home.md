@@ -17,7 +17,7 @@ local memory, voice, media creation, and optional integrations.
 
 - Keep separate conversations with local SQLite history and optional semantic memory.
 - Become a character, narrator, companion, game master, or writing partner.
-- Read image attachments with Gemini vision.
+- Read image attachments with the active local, Gemini, or OpenAI vision-capable model.
 - Speak replies and accept push-to-talk, continuous, or wake-name microphone input.
 - Open Quick PETEY at the pointer with Super+F1 for chat, screenshots, and push-to-talk.
 - Generate images, video, music, and speech with deAPI.

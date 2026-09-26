@@ -58,16 +58,18 @@ class AIProvider:
         return {
             "provider": self.provider,
             "providers": providers,
+            "vision_provider": self.provider,
             "vision_model": self._vision_model(),
-            "vision_has_api_key": providers["gemini"]["has_api_key"],
+            "vision_has_api_key": (
+                True if self.provider == "local" else providers[self.provider]["has_api_key"]
+            ),
             **providers[self.provider],
         }
 
     def _vision_model(self) -> str:
-        gemini = self.config.get("gemini") or {}
-        if self.provider == "gemini":
-            return str(gemini.get("model") or "gemini-2.5-flash").strip()
-        return str(gemini.get("vision_model") or gemini.get("model") or "gemini-2.5-flash").strip()
+        selected = self._selected()
+        default = "gemini-2.5-flash" if self.provider == "gemini" else ""
+        return str(selected.get("model") or default).strip()
 
     def complete(self, prompt: str, system_message: str, history: list[dict] | None = None) -> str:
         if self.provider == "gemini":
@@ -491,19 +493,13 @@ class AIProvider:
         content_type: str,
         user_request: str = "",
     ) -> str:
-        """Inspect an image with the selected Gemini model."""
-        gemini = dict(self.config.get("gemini") or {})
-        api_key = str(gemini.get("api_key") or os.getenv("GEMINI_API_KEY", "")).strip()
-        if not api_key:
-            raise AIProviderError(
-                "Image attachments need a Gemini API key. Save it under Models & API keys."
-            )
+        """Inspect an image with the active chat provider and model."""
         model = self._vision_model()
         if not model:
-            raise AIProviderError("Choose a Gemini chat model in Settings.")
+            raise AIProviderError("Choose a vision-capable chat model in Settings.")
         mime_type = str(content_type or "").split(";", 1)[0].strip().lower()
         if not mime_type.startswith("image/"):
-            raise AIProviderError("Gemini vision can only inspect image attachments.")
+            raise AIProviderError("Vision can only inspect image attachments.")
         if not image_data:
             raise AIProviderError("The attached image is empty.")
 
@@ -515,6 +511,51 @@ class AIProvider:
         )
         if request_context:
             instruction += f"\nThe user's request is: {request_context}"
+
+        if self.provider in {"openai", "local"}:
+            selected = self._selected()
+            api_key = self._api_key()
+            if self.provider == "openai" and not api_key:
+                raise AIProviderError("OpenAI vision needs an OpenAI API key in Settings.")
+            base_url = (
+                "https://api.openai.com/v1"
+                if self.provider == "openai"
+                else str(selected.get("base_url") or "http://localhost:1234/v1").rstrip("/")
+            )
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            data_url = (
+                f"data:{mime_type};base64,{base64.b64encode(image_data).decode('ascii')}"
+            )
+            try:
+                response = HTTP_SESSION.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": instruction},
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                            ],
+                        }],
+                    },
+                    timeout=120,
+                )
+            except requests.RequestException as exc:
+                if self.provider == "local":
+                    raise AIProviderError(self._local_connection_help(base_url, exc)) from exc
+                raise AIProviderError(f"Could not reach OpenAI vision: {exc}") from exc
+            label = "Local vision model" if self.provider == "local" else "OpenAI vision"
+            return self._response_text(response, label)
+
+        if self.provider != "gemini":
+            raise AIProviderError("Unsupported vision provider.")
+        api_key = self._api_key()
+        if not api_key:
+            raise AIProviderError("Gemini vision needs a Gemini API key in Settings.")
         try:
             response = HTTP_SESSION.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",

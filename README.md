@@ -11,7 +11,7 @@ model work runs instead of tying the companion to one cloud service.
 | Capability | Local-first route | Optional hosted route |
 | --- | --- | --- |
 | Chat and prompt enhancement | LM Studio, Ollama, or another OpenAI-compatible server | Gemini or OpenAI |
-| Vision for image attachments | The resulting description returns to your selected chat model | Gemini currently performs image inspection |
+| Vision for image attachments | The active local chat model, when it supports images | The active Gemini or OpenAI chat model |
 | Speech recognition (STT) | Local Whisper on this computer | deAPI or Gemini |
 | Spoken replies (TTS) | Leave speech disabled | deAPI, Gemini, or OpenAI |
 
@@ -76,7 +76,7 @@ speed, and hardware setup.
 - Real deAPI progress, provider status, live previews, balance, and a local gallery
 - Per-operation media prompt drafts that remain available across app restarts
 - Conversational image generation through modular model tools
-- Gemini image inspection using the selected Gemini chat model
+- Image inspection through the active local, Gemini, or OpenAI chat model
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Per-chat saved Petey profiles with visible header assignment, system-persona fallback, and jump-to-latest navigation
@@ -113,7 +113,7 @@ interface with your phone while PETEY is running.
 - Python 3.12 or newer
 - FFmpeg for browser-compatible generated-video previews
 - A local OpenAI-compatible model server, Gemini, or OpenAI for chat
-- A Gemini API key if you want image inspection, Gemini speech, or microphone transcription fallback
+- A Gemini API key only when you choose Gemini chat/vision, speech, or transcription fallback
 - A deAPI key if you want media generation or microphone transcription
 - Node.js with `npx` if you want to enable the Filesystem tool
 - OpenSSL if you want trusted HTTPS phone access and live phone microphone capture
@@ -311,8 +311,8 @@ temporary chat when a conversation should not be retained.
 When a hosted chat or embedding provider is selected, relevant prompts, selected
 file context, or memory text are sent to that provider. Local-provider
 mode keeps those model requests on the configured local endpoint. Chat image
-attachments are sent to the independently selected Gemini vision model, and its
-text description is passed to the active chat provider. Microphone activity and
+attachments follow the active chat provider and require a model with vision support.
+Microphone activity and
 the wake name are detected locally; completed recordings use the selected hosted
 or Local Whisper transcription path. Install the optional private
 engine with `.venv/bin/python -m pip install faster-whisper`, then explicitly

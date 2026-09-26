@@ -286,7 +286,7 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, "Got it")
         self.assertEqual(llm.call_args.args[2], temporary_history)
 
-    async def test_image_attachment_is_inspected_by_configured_gemini_vision(self):
+    async def test_image_attachment_is_inspected_by_the_active_chat_provider(self):
         service = AssistantService("You are Petey.")
         identity = AssistantIdentity("desktop-test", "main", "owner", "Pat")
         attachment = AssistantAttachment("robot.png", "image/png", b"image-data")

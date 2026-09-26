@@ -8,7 +8,7 @@ PETEY is a standalone desktop AI companion and assistant that brings conversatio
 
 The application runs on the user's computer and stores its settings, conversations, reference material, and generated gallery files locally. Users choose the services behind its AI capabilities: hosted providers such as Gemini and OpenAI, an OpenAI-compatible local model server, and deAPI for supported media operations.
 
-PETEY's local storage and desktop interface do not imply that every operation runs offline. Hosted chat, embeddings, image inspection, transcription, speech, and media generation send the context needed for those operations to their configured providers. Selecting a local chat model changes the chat path; other capabilities retain their own configuration.
+PETEY's local storage and desktop interface do not imply that every operation runs offline. Hosted chat, embeddings, image inspection, transcription, speech, and media generation send the context needed for those operations to their configured providers. Chat, prompt enhancement, and image inspection follow the active chat provider; local image inspection requires a vision-capable local model. Other capabilities retain their own configuration.
 
 Desktop and mobile access are two interfaces to the same running installation. Discord can participate through its own personality, room context, and explicitly selected memory policy. Optional add-ons extend PETEY into other applications and services.
 
@@ -130,7 +130,7 @@ PETEY separates the configuration of chat, vision, embeddings, speech, and trans
 | Capability | Configuration behavior |
 | --- | --- |
 | Chat | Gemini, OpenAI, or an OpenAI-compatible endpoint, including compatible LM Studio and Ollama setups. |
-| Vision | Gemini image inspection; when Gemini handles chat, vision follows the selected Gemini chat model. Other chat providers retain the configured Gemini vision path. |
+| Vision | Follows the active local, Gemini, or OpenAI chat model; the selected model must support image input. |
 | Memory search | Independently selected embedding provider and model. |
 | Speech | Profile-associated speech provider and voice, with speech model settings under Models & API keys. |
 | Transcription | Separate microphone transcription settings, with deAPI and Gemini paths. |

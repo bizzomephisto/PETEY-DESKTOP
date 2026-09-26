@@ -25,9 +25,10 @@ a hosted chat provider. Add the other services only when you want them.
 
 API keys, model choices, speech, transcription, and memory search are separate
 settings. A working chat connection does not automatically configure every other
-feature. Prompt enhancement uses the selected chat provider. Image inspection
-currently uses Gemini, microphone transcription can run locally with Local Whisper,
-and spoken replies are optional hosted services that can remain disabled.
+feature. Prompt enhancement and image inspection use the selected chat provider;
+local image inspection requires a vision-capable model. Microphone transcription
+can run locally with Local Whisper, and spoken replies are optional hosted services
+that can remain disabled.
 
 ## Quick PETEY on COSMIC
 
