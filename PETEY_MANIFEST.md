@@ -7,11 +7,11 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.19.1**
-- Current version: **v0.19.1**
+- Release: **v0.19.3**
+- Current version: **v0.19.3**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 353 tests
+- Test framework: `unittest`; current full suite contains 354 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
 - Built-in integration: Discord only
 

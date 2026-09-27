@@ -1,6 +1,6 @@
 # PETEY coding-agent context
 
-Scope: repository. Snapshot: 2026-09-25, current version v0.19.1; retained experimental preview v0.19.0-experimental.1.
+Scope: repository. Snapshot: 2026-09-27, current version v0.19.3; retained experimental preview v0.19.0-experimental.1.
 Start here; read only task-relevant implementation/tests. This is a navigation cache, not a substitute for checking code before edits. Source wins on factual drift; update this file when architecture, commands, contracts, or extension points change. Keep it compact; no session logs or copied source.
 Read `PETEY_MANIFEST.md` for durable product/runtime/release invariants and `ADDONS.md` plus `docs/addons.md` before changing the extension system.
 

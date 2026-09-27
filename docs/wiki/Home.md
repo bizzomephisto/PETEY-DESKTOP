@@ -42,7 +42,7 @@ local memory, voice, media creation, and optional integrations.
 - [Troubleshooting](Troubleshooting)
 - [Development](Development)
 
-PETEY's current version is **v0.19.1**. The earlier opt-in experimental preview,
+PETEY's current version is **v0.19.3**. The earlier opt-in experimental preview,
 **v0.19.0-experimental.1**, remains available. See the
 [repository](https://github.com/bizzomephisto/PETEY-DESKTOP) for source code and
 the latest changes.

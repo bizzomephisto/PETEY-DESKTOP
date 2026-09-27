@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.19.3 — 2026-09-27
+
+- Kept the Command Center hamburger in one fixed position. It toggles the
+  right-hand rail, or opens the core Controls menu when that rail is disabled.
+  The rail now resizes the workspace, and the expanded sidebar shows a larger
+  PETEY logo.
+- Let compatible add-ons own a remote voice session without simultaneous local
+  microphone capture or automatic local speech. Typed Discord `petey play` and
+  `petey queue` commands now go to the Discord Voice DJ without a duplicate
+  chat-model reply.
+- Routed image attachment inspection through the active chat provider and model,
+  including vision-capable local models, and clarified provider boundaries in
+  PETEY's local-first guidance.
+- Added the PETEY and optional add-on update manager, plus independent add-on
+  repository links and clearer instructions for add-ons without releases.
+- Includes the v0.19.1 changes below, which were committed but did not receive
+  a separate GitHub release.
+
 ## v0.19.1 — 2026-09-25
 
 - Removed the private PETEY GitHub repository link from the desktop sidebar footer.
