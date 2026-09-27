@@ -26,6 +26,9 @@ class State:
     discord_auto_connect = False
     discord_last_location = {}
 
+    def addon_enabled(self, addon_id):
+        return False
+
     def selected_model(self, operation):
         return {"txt2img": "image-model", "img2img": "edit-model"}.get(operation, "")
 
@@ -137,6 +140,26 @@ class DiscordBridgeTests(unittest.TestCase):
         self.assertEqual(status["phase"], "disconnected")
         self.assertNotIn("secret-token", str(status))
         self.assertEqual(self.state.discord_last_location["channel_id"], "333333333333333333")
+
+    def test_voice_addon_command_does_not_start_chat_reply(self):
+        self.state.addon_enabled = lambda addon_id: addon_id == "discord-voice"
+        self.transport.connect.return_value = {
+            "identity": {"id": "111111111111111111", "name": "PETEY"},
+            "channel_name": "general",
+        }
+        self.transport.poll.return_value = [
+            RoomMessage("1", "Guest", "petey play where is my mind", addressed=True),
+        ]
+        timer = threading.Timer(0.05, self.bridge.stop.set)
+        timer.start()
+        try:
+            self.bridge._run("secret-token", {"provider": "local"})
+        finally:
+            timer.cancel()
+        self.transport.typing.assert_not_called()
+        self.provider.complete.assert_not_called()
+        self.transport.send.assert_not_called()
+        self.assertFalse(any(event["kind"] == "received" for event in self.bridge.events))
 
     def test_room_only_does_not_read_or_write_shared_memory(self):
         self.run_turn(messages=[RoomMessage("1", "Guest", "PETEY, remember this", addressed=True)])

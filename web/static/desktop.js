@@ -1415,6 +1415,40 @@ async function toggleVoiceResponse() {
 
 voiceResponseButtons.forEach(button => button.addEventListener('click', toggleVoiceResponse));
 
+const commandScrollbarProbe = document.createElement('div');
+commandScrollbarProbe.style.cssText = 'position:absolute;visibility:hidden;width:40px;height:40px;overflow-x:hidden;overflow-y:scroll;scrollbar-width:thin';
+document.body.append(commandScrollbarProbe);
+document.documentElement.style.setProperty(
+    '--command-rail-scrollbar-width', `${Math.max(0, commandScrollbarProbe.offsetWidth - commandScrollbarProbe.clientWidth)}px`,
+);
+commandScrollbarProbe.remove();
+
+let commandControlsMenuOpen = false;
+function syncCommandMenu(railEnabled, railOpen) {
+    const rail = document.getElementById('command-rail');
+    const core = document.getElementById('command-core-controls');
+    const menu = document.getElementById('command-controls-menu');
+    const toggle = document.getElementById('command-menu-toggle');
+    if (railEnabled) {
+        commandControlsMenuOpen = false;
+        if (core.parentElement !== rail) {
+            rail.insertBefore(core, rail.querySelector('.command-session-card'));
+        }
+    } else if (core.parentElement !== menu) {
+        menu.append(core);
+    }
+    menu.hidden = railEnabled || !commandControlsMenuOpen;
+    toggle.setAttribute('aria-controls', railEnabled ? 'command-rail' : 'command-controls-menu');
+    toggle.setAttribute('aria-expanded', String(railEnabled ? railOpen : commandControlsMenuOpen));
+    if (railEnabled) toggle.removeAttribute('aria-haspopup');
+    else toggle.setAttribute('aria-haspopup', 'dialog');
+    const label = railEnabled
+        ? (railOpen ? 'Hide command sidebar' : 'Show command sidebar')
+        : (commandControlsMenuOpen ? 'Close controls' : 'Open controls');
+    toggle.setAttribute('aria-label', label);
+    toggle.title = label;
+}
+
 function applyPreferences() {
     const theme = preferences.theme || 'nebula';
     const defaultAccents = {
@@ -1432,7 +1466,7 @@ function applyPreferences() {
         detail: {settings: window.PETEY_ADDON_INTERFACE},
     }));
     document.getElementById('command-rail-enabled-setting').checked = railEnabled;
-    document.getElementById('command-rail-handle').setAttribute('aria-expanded', String(railOpen));
+    syncCommandMenu(railEnabled, railOpen);
     const railSections = {
         session: true, launch: true, addons: true, signals: true,
         ...(preferences.command_rail_sections || {}),
@@ -1507,11 +1541,26 @@ async function saveCommandRail(changes) {
     }
 }
 
-document.getElementById('command-rail-close').addEventListener('click', () => {
-    saveCommandRail({command_rail_open: false});
+document.getElementById('command-menu-toggle').addEventListener('click', () => {
+    if (preferences.command_rail_enabled !== false) {
+        saveCommandRail({command_rail_open: preferences.command_rail_open === false});
+    } else {
+        commandControlsMenuOpen = !commandControlsMenuOpen;
+        syncCommandMenu(false, false);
+    }
 });
-document.getElementById('command-rail-handle').addEventListener('click', () => {
-    saveCommandRail({command_rail_open: true});
+document.addEventListener('pointerdown', event => {
+    if (commandControlsMenuOpen && !document.querySelector('.command-menu-anchor').contains(event.target)) {
+        commandControlsMenuOpen = false;
+        syncCommandMenu(false, false);
+    }
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && commandControlsMenuOpen) {
+        commandControlsMenuOpen = false;
+        syncCommandMenu(false, false);
+        document.getElementById('command-menu-toggle').focus();
+    }
 });
 document.getElementById('command-core-collapse').addEventListener('click', () => {
     const collapsed = new Set(preferences.command_rail_collapsed || []);
@@ -6739,7 +6788,7 @@ function applyCommandPanelPreferences() {
     const collapsed = new Set(preferences.command_rail_collapsed || []);
     const core = document.getElementById('command-core-controls');
     const coreButton = document.getElementById('command-core-collapse');
-    const coreCollapsed = collapsed.has('controls');
+    const coreCollapsed = preferences.command_rail_enabled !== false && collapsed.has('controls');
     core.classList.toggle('collapsed', coreCollapsed);
     coreButton.textContent = coreCollapsed ? '›' : '⌄';
     coreButton.setAttribute('aria-expanded', String(!coreCollapsed));

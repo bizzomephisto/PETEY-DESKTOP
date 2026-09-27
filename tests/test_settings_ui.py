@@ -132,8 +132,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertEqual(radios, [])
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         for name in (
-            'command-center-settings', 'command-rail', 'command-rail-handle',
-            'command-rail-close', 'command-disable-rail', 'command-rail-enabled-setting',
+            'command-center-settings', 'command-rail', 'command-menu-toggle',
+            'command-controls-menu', 'command-disable-rail', 'command-rail-enabled-setting',
             'command-addon-actions', 'command-addon-notifications',
         ):
             self.assertIn(name, ids)
@@ -162,10 +162,17 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('grid-column: 3; grid-row: 1;', stylesheet)
         self.assertNotIn('.command-rail { position: fixed;', stylesheet)
         self.assertIn('.command-rail { display: none !important; }', stylesheet)
-        self.assertIn('[data-command-rail="closed"] .command-rail-handle', stylesheet)
-        self.assertIn('aria-label="Show command drawer"', template)
+        self.assertLess(template.index('class="command-menu-anchor"'), template.index('<aside class="sidebar">'))
+        self.assertIn('aria-controls="command-rail"', template)
+        self.assertIn('id="command-controls-menu" class="command-controls-menu"', template)
+        self.assertIn('menu.append(core);', javascript)
+        self.assertIn("rail.insertBefore(core, rail.querySelector('.command-session-card'));", javascript)
+        self.assertNotIn('id="command-rail-close"', template)
+        self.assertNotIn('id="command-rail-handle"', template)
         self.assertIn('<span aria-hidden="true">☰</span>', template)
-        self.assertIn('top: 22px; right: 22px;', stylesheet)
+        self.assertIn('top: 22px; right: calc(27px + var(--command-rail-scrollbar-width, 0px));', stylesheet)
+        self.assertIn('scrollbar-gutter: stable;', stylesheet)
+        self.assertNotIn('command-topbar', stylesheet)
         self.assertIn('.command-card-drag', stylesheet)
         self.assertNotIn('Companion</option>', template)
 

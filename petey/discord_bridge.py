@@ -13,6 +13,12 @@ from petey.room_chat import RoomActivity, RoomConversation
 from petey.discord_transport import DiscordError, DiscordTransport
 
 
+_VOICE_PLAY_COMMAND = re.compile(
+    r"^petey[,:]?\s+(?:please\s+)?(?:play|queue)\s+.+?(?:\s+on\s+youtube)?[.!]?\s*$",
+    re.I,
+)
+
+
 class DiscordBridge:
     def __init__(self, state, transport_factory=DiscordTransport, provider_factory=AIProvider,
                  typing_interval=8, media_jobs_getter=None, addon_tools_getter=None,
@@ -530,6 +536,9 @@ class DiscordBridge:
             def observe(messages):
                 now = time.monotonic()
                 for message in messages:
+                    if (self.state.addon_enabled("discord-voice")
+                            and _VOICE_PLAY_COMMAND.fullmatch(message.text)):
+                        continue
                     if not message.addressed and self._matches_watched_topic(message.text):
                         message = type(message)(
                             message.id, message.nickname, message.text, addressed=True

@@ -9,6 +9,10 @@
 </head>
 <body>
     <main class="app-shell">
+        <div class="command-menu-anchor">
+            <button id="command-menu-toggle" class="command-menu-toggle" type="button" aria-label="Hide command sidebar" title="Hide command sidebar" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">☰</span></button>
+            <div id="command-controls-menu" class="command-controls-menu" role="dialog" aria-label="Controls" hidden></div>
+        </div>
         <aside class="sidebar">
             <div class="brand">
                 <img src="{{ url_for('static', filename='petey_avatar.png') }}" alt="Petey">
@@ -266,7 +270,6 @@
                 <div><span class="command-kicker">PETEY COMMAND</span></div>
                 <div class="command-rail-header-tools">
                     <time id="command-clock">--:--</time>
-                    <button id="command-rail-close" class="command-rail-close" type="button" aria-label="Hide command drawer" title="Hide command drawer"><span aria-hidden="true">☰</span></button>
                 </div>
             </header>
             <section id="command-core-controls" class="command-core-controls" aria-label="PETEY controls">
@@ -325,7 +328,6 @@
                 </div>
             </details>
         </aside>
-        <button id="command-rail-handle" class="command-rail-handle" type="button" aria-label="Show command drawer" title="Show command drawer" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">☰</span></button>
     </main>
     <dialog id="image-browser-dialog" class="image-browser-dialog">
         <div class="image-browser-shell">
