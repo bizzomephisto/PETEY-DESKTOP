@@ -142,6 +142,11 @@ class DesktopStateTests(unittest.TestCase):
             self.assertTrue(status["surfaces"]["petey_desktop"])
             self.assertTrue(status["surfaces"]["mobile_petey"])
             self.assertFalse(status["surfaces"]["discord"])
+            self.assertNotIn("petey_life", status["surfaces"])
+            with self.assertRaisesRegex(ValueError, "valid surface permissions"):
+                state.update_petey_control(
+                    "deapi-media", {"surfaces": {"petey_life": True}}, capabilities
+                )
 
             state.authorize_petey_control(
                 "deapi-media", "generate_image", "petey_desktop",
@@ -162,7 +167,7 @@ class DesktopStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertEqual(state.preferences["theme"], "nebula")
-            for theme in ("nebula", "studio", "signal", "terminal", "ember"):
+            for theme in ("nebula", "cognitive", "signal", "terminal", "ember"):
                 state.update_preferences({"theme": theme})
                 self.assertEqual(DesktopState(directory).preferences["theme"], theme)
             with self.assertRaises(ValueError):
@@ -172,12 +177,12 @@ class DesktopStateTests(unittest.TestCase):
     def test_theme_accents_persist_independently(self):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
-            result = state.update_preferences({"theme": "studio", "theme_accent": "#AABBCC"})
-            self.assertEqual(result["theme_accents"]["studio"], "#aabbcc")
+            result = state.update_preferences({"theme": "cognitive", "theme_accent": "#AABBCC"})
+            self.assertEqual(result["theme_accents"]["cognitive"], "#aabbcc")
             self.assertEqual(result["theme_accents"]["nebula"], "#8b5cf6")
             self.assertEqual(result["theme_accents"]["terminal"], "#63ff8f")
             self.assertEqual(result["theme_accents"]["ember"], "#ff8a4c")
-            self.assertEqual(DesktopState(directory).preferences["theme_accents"]["studio"], "#aabbcc")
+            self.assertEqual(DesktopState(directory).preferences["theme_accents"]["cognitive"], "#aabbcc")
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "signal", "theme_accent": "red"})
 
@@ -208,17 +213,44 @@ class DesktopStateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 state.update_preferences({"command_rail_collapsed": ["session", "session"]})
 
+    def test_addon_sidebar_pin_persists_and_does_not_change_loading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            before = state.addon_enabled('sample-addon', False)
+            self.assertFalse(state.addon_interface('sample-addon')['sidebar'])
+            state.update_addon_interface('sample-addon', {'sidebar': True})
+            reloaded = DesktopState(directory)
+            self.assertTrue(reloaded.addon_interface('sample-addon')['sidebar'])
+            self.assertEqual(reloaded.addon_enabled('sample-addon', False), before)
+            self.assertTrue(reloaded.addon_interface('sample-addon')['badges'])
+            with self.assertRaises(ValueError): state.update_addon_interface('sample-addon', {'sidebar': 'yes'})
+            state.update_preferences({'command_rail_sections': {'media': False}})
+            self.assertFalse(DesktopState(directory).preferences['command_rail_sections']['media'])
+
     def test_legacy_themes_migrate_to_new_desktop_styles(self):
         import json
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             for old_theme, new_theme in {
-                "midnight": "nebula", "ocean": "nebula", "forest": "signal", "paper": "studio",
+                "midnight": "nebula", "ocean": "nebula", "forest": "signal",
+                "paper": "cognitive", "studio": "cognitive",
             }.items():
                 settings = json.loads(state.settings_path.read_text())
                 settings["preferences"]["theme"] = old_theme
                 state.settings_path.write_text(json.dumps(settings))
                 self.assertEqual(DesktopState(directory).preferences["theme"], new_theme)
+
+    def test_studio_theme_accent_migrates_to_cognitive_pulse(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            settings = json.loads(state.settings_path.read_text())
+            settings["preferences"]["theme"] = "studio"
+            settings["preferences"]["theme_accents"] = {"studio": "#aabbcc"}
+            state.settings_path.write_text(json.dumps(settings))
+            migrated = DesktopState(directory).preferences
+            self.assertEqual(migrated["theme"], "cognitive")
+            self.assertEqual(migrated["theme_accents"]["cognitive"], "#aabbcc")
 
     def test_old_or_invalid_theme_settings_load_with_default(self):
         import json
@@ -385,6 +417,8 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(reloaded.preferences["visual_style"], "aurora_flow")
             reloaded.update_preferences({"visual_style": "constellation_field"})
             self.assertEqual(reloaded.preferences["visual_style"], "constellation_field")
+            reloaded.update_preferences({"visual_style": "cognitive_pulse"})
+            self.assertEqual(reloaded.preferences["visual_style"], "cognitive_pulse")
             with self.assertRaises(ValueError):
                 state.update_preferences({"visual_style": "unknown"})
 

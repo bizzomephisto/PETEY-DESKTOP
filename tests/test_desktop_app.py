@@ -180,14 +180,14 @@ class DesktopAppTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             client = create_desktop_app(state=state, memory=MagicMock(), job_manager=MagicMock()).test_client()
-            response = client.put("/api/desktop/preferences", json={"theme": "studio", "theme_accent": "#cc5500"})
+            response = client.put("/api/desktop/preferences", json={"theme": "cognitive", "theme_accent": "#cc5500"})
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json["preferences"]["theme"], "studio")
-            self.assertEqual(response.json["preferences"]["theme_accents"]["studio"], "#cc5500")
+            self.assertEqual(response.json["preferences"]["theme"], "cognitive")
+            self.assertEqual(response.json["preferences"]["theme_accents"]["cognitive"], "#cc5500")
             html = client.get('/').get_data(as_text=True)
-            self.assertIn('data-theme="studio"', html)
+            self.assertIn('data-theme="cognitive"', html)
             self.assertIn('--theme-accent: #cc5500', html)
-            self.assertEqual(client.get('/api/desktop/bootstrap').json['preferences']['theme'], 'studio')
+            self.assertEqual(client.get('/api/desktop/bootstrap').json['preferences']['theme'], 'cognitive')
             self.assertEqual(client.put('/api/desktop/preferences', json={'theme': 'bad'}).status_code, 400)
             self.assertEqual(client.put('/api/desktop/preferences', json={'theme_accent': 'orange'}).status_code, 400)
 
@@ -414,7 +414,8 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn(f"v{__version__}", shell.get_data(as_text=True))
             self.assertIn(PROJECT_URL, shell.get_data(as_text=True))
             self.assertIn(MEDIA_PROVIDER_URL, shell.get_data(as_text=True))
-            self.assertNotIn("deAPI Media", shell.get_data(as_text=True))
+            self.assertNotIn("deAPI Media", shell.get_data(as_text=True).split(
+                '<dialog id="changelog-dialog"', 1)[0])
             self.assertIn('id="view-providers"', shell.get_data(as_text=True))
             self.assertIn('id="view-help"', shell.get_data(as_text=True))
             self.assertNotIn('id="view-plan"', shell.get_data(as_text=True))
@@ -787,6 +788,37 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(media.json["prompt"], "Enhanced: A local robot")
             self.assertEqual(persona.json["provider"], "local")
             self.assertEqual(media.json["provider"], "local")
+
+    def test_personality_wizard_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            app = create_desktop_app(state=state, runtime=object())
+            client = app.test_client()
+
+            response = client.post(
+                "/api/desktop/personality/wizard",
+                json={
+                    "archetype": "detective",
+                    "name": "Inspector Byte",
+                    "role_tag": "Code Detective",
+                    "concept": "Treats stack traces like crime scenes.",
+                    "traits": ["Analytical", "Methodical", "Witty"],
+                    "nuances": ["metaphors", "step_by_step"],
+                    "sliders": {"tone": 45, "verbosity": 55, "formality": 65, "empathy": 40},
+                    "vocal_vibe": "crisp",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertEqual(data["name"], "Inspector Byte")
+            self.assertEqual(data["role_tag"], "Code Detective")
+            self.assertIn("You are Inspector Byte", data["system_prompt"])
+            self.assertEqual(data["sliders"]["tone"], 45)
+            self.assertIn("Analytical", data["traits"])
+
+            invalid = client.post("/api/desktop/personality/wizard", data="invalid json", content_type="application/json")
+            self.assertEqual(invalid.status_code, 400)
+
 
     def test_personality_slots_can_be_saved_and_cleared(self):
         with tempfile.TemporaryDirectory() as directory:

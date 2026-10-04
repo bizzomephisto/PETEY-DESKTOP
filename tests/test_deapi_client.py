@@ -114,6 +114,23 @@ class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.post.call_args.kwargs["json"], {"model": "video-model", "width": 512, "height": 512, "steps": 1, "frames": 120, "fps": 30})
         self.assertTrue(session.post.call_args.args[0].endswith("/videos/animations/price"))
 
+    async def test_reference_video_quote_includes_reference_surcharges(self):
+        client = DeapiClient(api_key="test-key")
+        client.get_models = AsyncMock(return_value=[{
+            "slug": "MiniMaxH3_33B_Turbo_INT8",
+            "info": {"defaults": {"width": 1344, "height": 768, "frames": 124, "fps": 24}},
+        }])
+        session = MagicMock()
+        session.post.return_value = _FakeResponse({"data": {"price": 0.42}})
+        client.get_session = AsyncMock(return_value=session)
+        await client.estimate_price(
+            "ref2vid", "MiniMaxH3_33B_Turbo_INT8",
+            {"ref_images_count": 3, "ref_videos_count": 1},
+        )
+        quoted = session.post.call_args.kwargs["json"]
+        self.assertEqual(quoted["ref_images_count"], 3)
+        self.assertEqual(quoted["ref_videos_count"], 1)
+
     async def test_quotes_reject_unsupported_operations_and_invalid_prices(self):
         client = DeapiClient(api_key="test-key")
         client.get_models = AsyncMock(return_value=[{"slug": "model"}])
@@ -239,6 +256,23 @@ class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["fps"], 30)
         self.assertNotIn("guidance", params)
 
+    def test_video_dimensions_observe_model_grid_and_pixel_cap(self):
+        client = DeapiClient()
+        info = {
+            "limits": {
+                "min_width": 512, "max_width": 1344,
+                "min_height": 512, "max_height": 1344,
+                "dimension_multiple": 32, "max_pixels": 1032192,
+            },
+            "defaults": {"width": 1344, "height": 768, "frames": 124, "fps": 24},
+        }
+        params = client._video_parameters(
+            "MiniMaxH3_33B_Turbo_INT8", info["defaults"], info,
+            {"width": 1024, "height": 1024},
+        )
+        self.assertEqual((params["width"], params["height"]), (992, 992))
+        self.assertLessEqual(params["width"] * params["height"], 1032192)
+
     async def test_explicit_desktop_model_is_selected_without_guild_config(self):
         client = DeapiClient()
         session = _PostSession()
@@ -310,6 +344,55 @@ class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fields["instruct"], "Excited and celebratory")
         self.assertEqual(result["status"], "done")
         client.wait_for_v2_job.assert_awaited_once_with("speech-42")
+
+    async def test_h3_reference_video_posts_indexed_v2_reference_fields(self):
+        from petey.media_service import MediaInput
+        client = DeapiClient(api_key="test-key")
+        info = {
+            "limits": {"max_ref_images": 9, "max_ref_videos": 1, "max_ref_audios": 3, "max_ref_files": 12},
+            "defaults": {"width": 1344, "height": 768, "frames": 124, "fps": 24},
+        }
+        captured = {}
+
+        async def execute(endpoint, builder, inference_type, **kwargs):
+            captured.update(endpoint=endpoint, inference_type=inference_type, kwargs=kwargs)
+            captured["form"] = builder("MiniMaxH3_33B_Turbo_INT8", info["defaults"], info)
+            return "h3-job"
+
+        client._execute_with_fallback = AsyncMock(side_effect=execute)
+        client.wait_for_v2_job = AsyncMock(return_value={"result_url": "https://media.example/h3.mp4"})
+        references = [
+            MediaInput("face.png", "image/png", b"i" * 1024),
+            MediaInput("pose.jpg", "image/jpeg", b"j" * 1024),
+            MediaInput("move.mp4", "video/mp4", b"v" * 1024),
+            MediaInput("voice.wav", "audio/wav", b"a" * 1024),
+        ]
+
+        await client.generate_reference_to_video("Combine them", references)
+
+        self.assertEqual(captured["endpoint"], "/api/v2/videos/animations")
+        self.assertEqual(captured["inference_type"], "img2video")
+        self.assertTrue(captured["kwargs"]["strict_model"])
+        names = [headers["name"] for headers, _headers, _value in captured["form"]._fields]
+        self.assertIn("ref_images[0]", names)
+        self.assertIn("ref_images[1]", names)
+        self.assertIn("ref_videos[0]", names)
+        self.assertIn("ref_audios[0]", names)
+        client.wait_for_v2_job.assert_awaited_once_with("h3-job", timeout=900)
+
+    async def test_image_to_image_payload_does_not_depend_on_reference_inputs(self):
+        client = DeapiClient(api_key="test-key")
+        captured = {}
+
+        async def execute(_endpoint, builder, _inference_type, **_kwargs):
+            captured["form"] = builder("image-model", {}, {})
+            return "image-job"
+
+        client._execute_with_fallback = AsyncMock(side_effect=execute)
+        client.wait_for_job = AsyncMock(return_value={"result_url": "https://media.example/image.png"})
+        await client.generate_image_to_image("Restyle", b"image")
+        names = [headers["name"] for headers, _headers, _value in captured["form"]._fields]
+        self.assertIn("image", names)
 
 
 if __name__ == "__main__":

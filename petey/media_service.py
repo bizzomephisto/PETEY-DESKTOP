@@ -12,6 +12,7 @@ OPERATIONS = {
     "img2img": {"label": "Restyle image", "kind": "image", "file": "image"},
     "txt2video": {"label": "Generate video", "kind": "video", "file": None},
     "img2video": {"label": "Animate image", "kind": "video", "file": "image"},
+    "ref2vid": {"label": "Reference to video", "kind": "video", "file": "references"},
     "vid2video": {"label": "Restyle video", "kind": "video", "file": "video"},
     "txt2music": {"label": "Generate music", "kind": "audio", "file": "optional_audio"},
     "txt2audio": {"label": "Text to speech", "kind": "audio", "file": None},
@@ -37,7 +38,11 @@ class MediaService:
 
     async def models(self, operation: str) -> list[dict]:
         self._require_operation(operation)
-        return await self.client.get_models(operation)
+        inference_type = "img2video" if operation == "ref2vid" else operation
+        models = await self.client.get_models(inference_type)
+        if operation == "ref2vid":
+            return [item for item in models if item.get("slug") == "MiniMaxH3_33B_Turbo_INT8"]
+        return models
 
     async def balance(self) -> float:
         return await self.client.get_balance()
@@ -50,16 +55,21 @@ class MediaService:
         if not isinstance(parameters, dict):
             raise ValueError("Media parameters must be an object.")
         values = {}
-        if operation in {"txt2img", "img2img", "txt2video", "img2video"}:
+        if operation in {"txt2img", "img2img", "txt2video", "img2video", "ref2vid"}:
             values = {
                 "width": self._integer(parameters, "width", 1024, 128, 2048),
                 "height": self._integer(parameters, "height", 1024, 128, 2048),
                 "steps": self._integer(parameters, "steps", 20, 1, 100),
                 "guidance": self._number(parameters, "guidance", 3.5, 0, 30),
             }
-        if operation in {"txt2video", "img2video"}:
+        if operation in {"txt2video", "img2video", "ref2vid"}:
             values.update(frames=self._integer(parameters, "frames", 120, 1, 600),
                           fps=self._integer(parameters, "fps", 24, 1, 60))
+        if operation == "ref2vid":
+            values.update(
+                ref_images_count=self._integer(parameters, "ref_images_count", 0, 0, 9),
+                ref_videos_count=self._integer(parameters, "ref_videos_count", 0, 0, 1),
+            )
         if operation in {"img-rmbg", "img-upscale"}:
             self._validate_source("image", source)
             if len(source.data) > 10 * 1024 * 1024:
@@ -75,11 +85,15 @@ class MediaService:
         installation_id: str,
         model_slug: str = "",
         source: MediaInput | None = None,
+        references: list[MediaInput] | None = None,
         parameters: dict | None = None,
     ) -> dict:
         config = self._require_operation(operation)
         parameters = parameters or {}
         self._validate_source(config["file"], source)
+        references = list(references or [])
+        if operation == "ref2vid":
+            self._validate_references(references)
         prompt = (prompt or "").strip()
         if operation not in {"img-rmbg", "img-upscale"} and not prompt:
             raise ValueError("A prompt or text value is required.")
@@ -106,6 +120,8 @@ class MediaService:
             result = await self.client.generate_video(prompt, **video)
         elif operation == "img2video":
             result = await self.client.generate_image_to_video(prompt, source.data, **video)
+        elif operation == "ref2vid":
+            result = await self.client.generate_reference_to_video(prompt, references, **video)
         elif operation == "vid2video":
             result = await self.client.generate_video_to_video(prompt, source.data, **video)
         elif operation == "img-rmbg":
@@ -150,6 +166,8 @@ class MediaService:
 
     @staticmethod
     def _validate_source(requirement: str | None, source: MediaInput | None) -> None:
+        if requirement == "references":
+            return
         if requirement in {"image", "video"} and source is None:
             raise ValueError(f"This operation requires a source {requirement}.")
         if source is None:
@@ -166,6 +184,30 @@ class MediaService:
             or source.filename.lower().endswith((".mp3", ".wav", ".ogg", ".m4a", ".flac"))
         ):
             raise ValueError("The optional reference file must be audio.")
+
+    @staticmethod
+    def _validate_references(references: list[MediaInput]) -> None:
+        if not references:
+            raise ValueError("Reference to video requires at least one image or video reference.")
+        counts = {"image": 0, "video": 0, "audio": 0}
+        limits = {"image": (9, 10 * 1024 * 1024), "video": (1, None), "audio": (3, 15 * 1024 * 1024)}
+        if len(references) > 12:
+            raise ValueError("Reference to video accepts at most 12 files.")
+        for reference in references:
+            kind = reference.content_type.split("/", 1)[0]
+            if kind not in counts:
+                raise ValueError(f"Unsupported reference file: {reference.filename}.")
+            counts[kind] += 1
+            maximum_count, maximum_size = limits[kind]
+            if len(reference.data) < 1024:
+                raise ValueError(f"Reference file {reference.filename} must be at least 1 KB.")
+            if maximum_size is not None and len(reference.data) > maximum_size:
+                raise ValueError(f"Reference file {reference.filename} exceeds the {maximum_size // (1024 * 1024)} MB limit.")
+            if counts[kind] > maximum_count:
+                noun = {"image": "images", "video": "video", "audio": "audio files"}[kind]
+                raise ValueError(f"Reference to video accepts at most {maximum_count} {noun}.")
+        if not counts["image"] and not counts["video"]:
+            raise ValueError("Audio cannot be the only reference; add an image or video.")
 
     @staticmethod
     def _integer(values: dict, key: str, default: int, minimum: int, maximum: int) -> int:

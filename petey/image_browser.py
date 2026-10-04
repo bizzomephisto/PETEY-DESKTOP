@@ -1,8 +1,9 @@
-"""Token-scoped local image browsing for the desktop visual picker."""
+"""Token-scoped local media browsing for desktop visual and reference pickers."""
 
 from __future__ import annotations
 
 import io
+import mimetypes
 import threading
 import time
 import uuid
@@ -13,6 +14,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".avi", ".mpeg", ".mpg"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".flac"}
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 MAX_BROWSER_AGE = 60 * 60
 MAX_THUMBNAIL_SOURCE = 100 * 1024 * 1024
 MAX_CACHED_IMAGE_METADATA = 4096
@@ -59,9 +63,9 @@ class ImageBrowser:
         try:
             root = Path(str(folder or "")).expanduser().resolve(strict=True)
         except (OSError, RuntimeError) as exc:
-            raise ImageBrowserError("Choose an existing image folder.") from exc
+            raise ImageBrowserError("Choose an existing media folder.") from exc
         if not root.is_dir():
-            raise ImageBrowserError("Choose an existing image folder.")
+            raise ImageBrowserError("Choose an existing media folder.")
         token = uuid.uuid4().hex
         with self._lock:
             now = time.time()
@@ -75,7 +79,7 @@ class ImageBrowser:
         with self._lock:
             item = self._roots.get(str(token or ""))
         if item is None or time.time() - item[1] >= MAX_BROWSER_AGE:
-            raise ImageBrowserError("This image folder session expired. Choose the folder again.")
+            raise ImageBrowserError("This media folder session expired. Choose the folder again.")
         root = item[0]
         relative = str(relative or "").replace("\\", "/").lstrip("/")
         try:
@@ -91,11 +95,11 @@ class ImageBrowser:
         if not directory.is_dir():
             raise ImageBrowserError("That path is not a folder.")
         folders = []
-        images = []
+        media = []
         try:
             children = sorted(directory.iterdir(), key=lambda path: (not path.is_dir(), path.name.lower()))
         except OSError as exc:
-            raise ImageBrowserError(f"Could not read the image folder: {exc}") from exc
+            raise ImageBrowserError(f"Could not read the media folder: {exc}") from exc
         for child in children[:1500]:
             try:
                 resolved = child.resolve(strict=True)
@@ -104,20 +108,33 @@ class ImageBrowser:
                 relative_path = child.relative_to(root).as_posix()
                 if resolved.is_dir():
                     folders.append({"name": child.name, "path": relative_path})
-                elif resolved.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS:
-                    width, height = self._cached_metadata(resolved)
-                    images.append(
-                        {"name": child.name, "path": relative_path, "size": resolved.stat().st_size,
-                         "width": width, "height": height}
+                elif resolved.is_file() and child.suffix.lower() in MEDIA_EXTENSIONS:
+                    extension = child.suffix.lower()
+                    kind = "image" if extension in IMAGE_EXTENSIONS else (
+                        "video" if extension in VIDEO_EXTENSIONS else "audio"
                     )
+                    width, height = self._cached_metadata(resolved) if kind == "image" else (None, None)
+                    media.append({
+                        "name": child.name, "path": relative_path, "size": resolved.stat().st_size,
+                        "width": width, "height": height, "kind": kind,
+                        "type": mimetypes.guess_type(child.name)[0] or f"{kind}/unknown",
+                    })
             except OSError:
                 continue
+        images = [item for item in media if item["kind"] == "image"]
         return {
-            "path": directory.relative_to(root).as_posix(), "folders": folders, "images": images
+            "path": directory.relative_to(root).as_posix(), "folders": folders,
+            "images": images, "media": media,
         }
 
-    def image_file(self, token: str, relative: str) -> Path:
+    def media_file(self, token: str, relative: str) -> Path:
         _, path = self.resolve(token, relative)
+        if not path.is_file() or path.suffix.lower() not in MEDIA_EXTENSIONS:
+            raise ImageBrowserError("That path is not a supported media file.")
+        return path
+
+    def image_file(self, token: str, relative: str) -> Path:
+        path = self.media_file(token, relative)
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
             raise ImageBrowserError("That path is not a supported image.")
         return path

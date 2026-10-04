@@ -7,7 +7,7 @@ source of truth.
 
 ## What ships
 
-- Discord is PETEY's only built-in add-on and is enabled by default.
+- Discord and Tasks are built-in add-ons and are enabled by default. Tasks schedules ordered, reviewed actions from enabled external add-ons, including selected weekdays.
 - Home Assistant, Blender, and every other connector are external installations.
 - GitHub source releases contain no third-party or example add-ons. The packaging
   script rejects `examples/`, legacy add-on roots, external `petey-addon.json`
@@ -19,13 +19,10 @@ source of truth.
 
 - [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT) connects PETEY to Home Assistant's official Assist MCP endpoint.
 - [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE) provides an original editable pixel home driven by PETEY's active persona.
-- [Quick Actions](https://github.com/bizzomephisto/PETEY-QUICK-ACTIONS) adds saved commands and tasks to PETEY's controls.
-- [OpenCode](https://github.com/bizzomephisto/PETEY-OPENCODE) connects PETEY to local OpenCode sessions.
-- [Spotify](https://github.com/bizzomephisto/PETEY-SPOTIFY) adds playback controls and conversational music tools.
-- [Google Sheets Scorecards](https://github.com/bizzomephisto/PETEY-GOOGLE-SHEETS) reads and updates one configured sheet through a shared-key Apps Script web app.
 
-These projects use PETEY add-on API version `1`. Their source, releases when
-available, issues, and version histories stay in their own repositories.
+These projects use PETEY add-on API version `1` and publish their own installable
+archives. Their source, releases, issues, and version histories stay in their own
+repositories.
 
 ## Discord Voice and YouTube DJ
 

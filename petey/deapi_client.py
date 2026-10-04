@@ -20,6 +20,7 @@ class DeapiClient:
         "img2img": "/api/v2/images/edits/price",
         "txt2video": "/api/v2/videos/generations/price",
         "img2video": "/api/v2/videos/animations/price",
+        "ref2vid": "/api/v2/videos/animations/price",
         "img-rmbg": "/api/v2/images/background-removals/price",
         "img-upscale": "/api/v2/images/upscales/price",
     }
@@ -99,7 +100,10 @@ class DeapiClient:
         endpoint = self.PRICE_ENDPOINTS.get(operation)
         if not endpoint:
             raise ValueError("Price lookup is unavailable for this operation.")
-        models = await self.get_models(operation)
+        inference_type = "img2video" if operation == "ref2vid" else operation
+        models = await self.get_models(inference_type)
+        if operation == "ref2vid":
+            models = [item for item in models if item.get("slug") == "MiniMaxH3_33B_Turbo_INT8"]
         model = next((item for item in models if item.get("slug") == model_slug), None) if model_slug else next(iter(models), None)
         if not model:
             raise ValueError("Choose an available model to estimate its price.")
@@ -112,9 +116,12 @@ class DeapiClient:
             effective = self._image_parameters(defaults, info, {**parameters, "seed": 0})
             payload.update(effective)
             payload["prompt"] = prompt.strip() or "Image"
-        elif operation in {"txt2video", "img2video"}:
+        elif operation in {"txt2video", "img2video", "ref2vid"}:
             effective = self._video_parameters(slug, defaults, info, {**parameters, "seed": 0})
             payload.update({name: effective[name] for name in ("width", "height", "steps", "frames", "fps")})
+            if operation == "ref2vid":
+                payload["ref_images_count"] = int(parameters.get("ref_images_count", 0))
+                payload["ref_videos_count"] = int(parameters.get("ref_videos_count", 0))
         else:
             if source is None:
                 raise ValueError("Choose a source image to estimate its price.")
@@ -290,6 +297,16 @@ class DeapiClient:
             "seed": kwargs.get("seed", random.randint(0, 2**32 - 1)),
         }
 
+        multiple = int(limits.get("dimension_multiple") or 1)
+        if multiple > 1:
+            params["width"] = max(multiple, int(params["width"]) // multiple * multiple)
+            params["height"] = max(multiple, int(params["height"]) // multiple * multiple)
+        max_pixels = limits.get("max_pixels")
+        if max_pixels and params["width"] * params["height"] > int(max_pixels):
+            scale = math.sqrt(int(max_pixels) / (params["width"] * params["height"]))
+            params["width"] = max(multiple, int(params["width"] * scale) // multiple * multiple)
+            params["height"] = max(multiple, int(params["height"] * scale) // multiple * multiple)
+
         if features.get("supports_guidance") or "guidance" in kwargs:
             params["guidance"] = kwargs.get("guidance", defaults.get("guidance", 3.5))
         if features.get("supports_negative_prompt"):
@@ -417,6 +434,58 @@ class DeapiClient:
 
         req_id = await self._execute_with_fallback("/api/v1/client/img2video", build_payload, "img2video", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug)
         return await self.wait_for_job(req_id, interval=5, timeout=900)
+
+    async def generate_reference_to_video(self, prompt, references, **kwargs):
+        """Generate MiniMax H3 video from ordered image, video, and audio references."""
+        kwargs.pop("guild_id", None)
+        model_slug = kwargs.pop("model_slug", None) or "MiniMaxH3_33B_Turbo_INT8"
+
+        def build_payload(model, defaults, info):
+            counts = {"image": 0, "video": 0, "audio": 0}
+            for reference in references:
+                counts[reference.content_type.split("/", 1)[0]] += 1
+            limits = info.get("limits") or {}
+            advertised = {
+                "image": int(limits.get("max_ref_images", 9)),
+                "video": int(limits.get("max_ref_videos", 1)),
+                "audio": int(limits.get("max_ref_audios", 3)),
+            }
+            for kind, count in counts.items():
+                if count > advertised[kind]:
+                    raise DeapiError(
+                        f"{model} accepts at most {advertised[kind]} {kind} reference(s)."
+                    )
+            max_files = int(limits.get("max_ref_files", 12))
+            if len(references) > max_files:
+                raise DeapiError(f"{model} accepts at most {max_files} reference files.")
+            data = aiohttp.FormData()
+            data.add_field("prompt", prompt)
+            data.add_field("model", model)
+            for name, value in self._video_parameters(model, defaults, info, kwargs).items():
+                data.add_field(name, str(value))
+            indexes = {"image": 0, "video": 0, "audio": 0}
+            field_names = {"image": "ref_images", "video": "ref_videos", "audio": "ref_audios"}
+            for reference in references:
+                kind = reference.content_type.split("/", 1)[0]
+                field = f"{field_names[kind]}[{indexes[kind]}]"
+                indexes[kind] += 1
+                data.add_field(
+                    field,
+                    io.BytesIO(reference.data),
+                    filename=reference.filename,
+                    content_type=reference.content_type,
+                )
+            return data
+
+        req_id = await self._execute_with_fallback(
+            "/api/v2/videos/animations",
+            build_payload,
+            "img2video",
+            is_multipart=True,
+            selected_model_slug=model_slug,
+            strict_model=True,
+        )
+        return await self.wait_for_v2_job(req_id, timeout=900)
 
     async def generate_video_to_video(self, prompt, video_bytes, **kwargs):
         guild_id = kwargs.pop("guild_id", None)

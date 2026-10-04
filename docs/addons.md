@@ -13,14 +13,10 @@ integration. Third-party add-ons remain separate folders installed by the user.
 `scripts/package_release.py` enforces this boundary by rejecting `examples/`, known
 legacy add-on roots, external `petey-addon.json` files, `.env`, and symlinks.
 
-Official external add-ons are developed in separate repositories:
+Official external add-ons are released independently:
 
 - [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT)
 - [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE)
-- [Quick Actions](https://github.com/bizzomephisto/PETEY-QUICK-ACTIONS)
-- [OpenCode](https://github.com/bizzomephisto/PETEY-OPENCODE)
-- [Spotify](https://github.com/bizzomephisto/PETEY-SPOTIFY)
-- [Google Sheets Scorecards](https://github.com/bizzomephisto/PETEY-GOOGLE-SHEETS)
 
 Petey Life reads `DesktopState.system_prompt`, so its simulation always uses the
 system-default Petey profile and never the persona assigned to the active chat or
@@ -33,7 +29,7 @@ the next restart.
 
 Model commands contributed by an external add-on remain unavailable until the user
 turns on **Allow Petey to control**. The user can independently allow Desktop,
-Mobile, Discord, and Petey Life, disable individual capabilities, and set autonomous
+Mobile, and Discord, disable individual capabilities, and set autonomous
 daily limits for metered capabilities. These policy changes take effect immediately.
 The add-on remains responsible for its own approval or trust policy for consequential
 commands.
@@ -47,7 +43,11 @@ configuration values to that projection.
 
 1. Open **Add-ons** in PETEY and choose **Open add-ons folder**.
 2. Copy the add-on's whole folder into that directory. Each add-on gets one folder.
-3. Return to **Add-ons**, enable it, and restart PETEY.
+3. Return to **Addons**, enable it, and restart PETEY.
+4. Expand its manager row and use **Open add-on** to open its page. Turn on
+   **Show in left sidebar** to pin a shortcut; pinning applies immediately and
+   persists independently of loading, badges, and controls. Unpinned pages remain
+   available through the manager. Add-ons without a page cannot be pinned.
 
 Use **Restart PETEY** on the Add-ons screen to apply changes immediately in the
 native desktop app. In browser development mode, stop and rerun the launch command.
@@ -147,11 +147,46 @@ add-on ID. Core PETEY routes are registered first and must not be replaced.
 | `addon_dir` | Read-only-by-convention installed module folder |
 | `data_dir` | Dedicated writable data folder for the add-on |
 | `emit_event` | Queue an opt-in hidden event for PETEY to answer in chat |
+| `tasks` | Built-in Tasks service, or `None` when Tasks is disabled; register named schedulable actions |
 
 Do not hold provider keys longer than necessary or return them through an API. Use
 `context.state.ai_provider` only when the add-on explicitly needs configured provider
 access. Paid media work should go through `context.get_media_jobs()` so PETEY retains
 queue limits, isolated provider clients, progress, shutdown, and Gallery capture.
+
+### Scheduled actions
+
+Tasks is a built-in add-on. An enabled external add-on may register a specific
+action during `setup(context)`. The Task Manager shows registered actions
+as draggable add-on cards. Users arrange several steps, write an instruction
+beside each, select a date and time (including selected weekdays), review the
+resolved actions, and save. Steps run in order and stop at the first failure.
+Only the saved handlers run at the scheduled time; a task never silently grants
+model tools. Store the registration remover and call it from `close()`.
+
+```python
+if context.tasks is not None:
+    remove_task_action = context.tasks.register_action(
+        context.addon_id, "snapshot", "Capture a webcam snapshot",
+        [{"name": "camera_name", "label": "Armed camera name",
+          "type": "text", "max_length": 40}],
+        lambda values: {"message": f"Captured {values['camera_name']}"},
+        prepare=lambda instruction: [{"arguments": {"camera_name": instruction},
+                                      "summary": f"Capture {instruction}"}],
+        addon_name="PETEY Webcam",
+    )
+```
+
+`prepare(instruction)` resolves typed text into one or more exact steps with
+`arguments` and `summary`. It may offer `options` with `label` and `arguments`
+for exact-match selection. Fail clearly when the target cannot be resolved;
+revalidate saved arguments at run time. Without `prepare`, one-field actions
+receive the typed text as that field. Field types are `text`, `textarea`, and
+`select`; select fields have an `options` list. A handler may also return `metadata` with a durable `chat_image_url` and
+optional image alt/caption/link fields. PETEY queues a visible announcement of
+the result. The host must be running at the due time; tasks more than five
+minutes late are recorded as missed. Task schedules live in
+`scheduled-tasks.json` in the private PETEY data root.
 
 ### Hidden add-on events
 
@@ -207,6 +242,23 @@ with the add-on ID. Use `textContent` for external values and validate every API
 argument server-side.
 Asset URLs include a revision derived from the add-on's panel, script, and stylesheet
 modification times so browser and tunnel caches refresh after those files change.
+
+### Shared Media block
+
+All media add-ons use the same Command Center Media card. Register a player using
+`window.peteyInterface.registerMediaPlayer({...})`, or pass `kind: 'media'` to
+`registerPanel`. Use a stable `id`, the manifest `addonId`, a provider `title`, and
+`render(container)`. Render the player controls into that container and return
+cleanup for timers/listeners. PETEY supplies a provider selector when multiple
+players are registered and displays one at a time. Selecting another player does
+not pause or stop playback. Removing a registration runs its cleanup; hiding an
+add-on's interface controls hides its player without disabling the add-on.
+
+Media registrations queue before the main script is ready, share the section's
+visibility/collapse/order preferences, and use the same removal function as panels.
+Spotify and Discord Voice mark their existing players with `kind: 'media'`; other
+add-on panels continue to use their own rail cards. Older PETEY versions that only
+implement `registerPanel` ignore the new kind field and keep a separate player card.
 
 ### Command Center actions, panels, and notifications
 

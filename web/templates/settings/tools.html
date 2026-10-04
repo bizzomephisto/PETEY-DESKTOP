@@ -23,6 +23,20 @@
                     <p id="filesystem-tool-status" class="wide-status" role="status"></p>
                     <details class="tool-capabilities"><summary>Available capabilities <span id="filesystem-tool-count">Not connected</span></summary><div id="filesystem-tool-list" class="tool-capability-list"><p class="muted">Test or enable the connection to discover its tools.</p></div></details>
                 </section>
+<section id="general-mcp-settings" class="settings-card" data-settings-keywords="MCP servers bridge integrations tools mcp.so">
+    <h2>MCP servers</h2>
+    <p>Connect Petey directly to local or remote MCP servers. No add-on required.</p>
+    <details>
+        <summary>Import server configuration</summary>
+        <p class="hint">Paste the server's <code>mcpServers</code> JSON. Local servers use command, args, and optional env/cwd; remote servers use a Streamable HTTP url and optional headers. Importing leaves every server off. Test connection starts the local command or contacts the endpoint. Only import servers you trust.</p>
+        <label for="mcp-config-json">Server configuration</label>
+        <textarea id="mcp-config-json" rows="8" class="mcp-config-input" spellcheck="false" placeholder='{"mcpServers":{"my-server":{"command":"npx","args":["-y","package-name"]}}}'></textarea>
+        <button id="mcp-import" class="secondary-button" type="button">Import configuration</button>
+        <p class="hint">Memory stays managed by Petey locally. Server credentials are stored locally and hidden from this page after import. Reimport a server with the same name to change its command or credentials.</p>
+    </details>
+    <p id="mcp-status" class="wide-status" role="status"></p>
+    <div id="mcp-server-list"></div>
+</section>
                 <section id="addon-settings" class="settings-card">
     <h2>Add-on connections</h2>
     <p>Install and manage optional integrations, including Blender MCP.</p>

@@ -1,0 +1,35 @@
+<section id="view-tasks" class="tool-view app-view" aria-labelledby="tasks-title">
+    <header class="tool-header">
+        <div><span class="page-eyebrow">BUILT-IN ADD-ON</span><h1 id="tasks-title">Tasks</h1>
+            <p>Schedule reminders and actions from enabled add-ons. PETEY must be running when a task is due.</p></div>
+    </header>
+    <div class="tool-content tasks-content">
+        <section class="settings-card">
+            <div class="tasks-heading"><div><h2 id="tasks-form-title">New task</h2><p>Add an add-on, write what it should do, then review the exact actions before saving.</p></div></div>
+            <form id="tasks-form" class="tasks-form">
+                <label>Task name<input id="tasks-name" type="text" maxlength="80" required placeholder="Evening lights and music"></label>
+                <div class="tasks-builder">
+                    <div><h3>Available add-ons</h3><p>Drag an add-on into the task, or click it to add a step.</p><div id="tasks-palette" class="tasks-palette"></div></div>
+                    <div><h3>Steps, in order</h3><div id="tasks-steps" class="tasks-steps" aria-label="Task steps"></div><p class="tasks-help">You can add the same add-on more than once and drag steps to reorder them.</p></div>
+                </div>
+                <div class="tasks-schedule-grid">
+                    <label>Start date<input id="tasks-date" type="date" required></label>
+                    <label>Time<input id="tasks-time" type="time" required></label>
+                    <label>Repeat<select id="tasks-repeat"><option value="once">Once</option><option value="daily">Every day</option><option value="selected_days">Selected days</option><option value="monthly">Monthly</option></select></label>
+                </div>
+                <div id="tasks-weekdays" class="tasks-weekdays" hidden><span>Run on</span><div class="tasks-day-buttons">{% for name in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] %}<button type="button" data-task-weekday="{{ loop.index0 }}" aria-pressed="false">{{ name }}</button>{% endfor %}</div></div>
+                <p class="tasks-timezone">Times use your device’s time zone: <strong id="tasks-timezone-name"></strong></p>
+                <label class="tasks-enabled"><input id="tasks-enabled" type="checkbox" checked> Enabled</label>
+                <section id="tasks-review" class="tasks-review" hidden><h3>Review before saving</h3><p>These exact actions will run in order. If one fails, PETEY stops and reports what already happened.</p><div id="tasks-review-steps"></div><div id="tasks-next-runs" class="tasks-next-runs"></div></section>
+                <div class="tasks-form-actions"><button id="tasks-preview" class="secondary-button" type="button">Review actions</button><button id="tasks-save" class="primary-button" type="submit" disabled>Save task</button><button id="tasks-cancel" class="secondary-button" type="button" hidden>Cancel editing</button></div>
+            </form>
+            <p id="tasks-status" class="wide-status" role="status"></p>
+        </section>
+        <section class="settings-card">
+            <div class="tasks-heading"><div><h2>Task manager</h2><p>Pause, run now, edit, or remove a saved task.</p></div>
+                <label class="tasks-rail-setting"><input id="tasks-show-upcoming" type="checkbox"> Show upcoming tasks in the Command Center</label>
+            </div>
+            <div id="tasks-list" class="tasks-list"></div>
+        </section>
+    </div>
+</section>

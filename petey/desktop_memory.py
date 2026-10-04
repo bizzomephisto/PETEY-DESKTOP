@@ -7,6 +7,7 @@ import heapq
 import json
 import math
 import queue
+import re
 import sqlite3
 import threading
 from array import array
@@ -58,6 +59,39 @@ class _DaemonTaskPool:
 # a fast conversation. This pool preserves background indexing with backpressure.
 _EMBEDDING_EXECUTOR = _DaemonTaskPool()
 MAX_CACHED_VECTORS = 3000
+_SEARCH_STOP_WORDS = frozenset({
+    "a", "about", "all", "an", "and", "are", "as", "at", "be", "by", "can",
+    "did", "do", "does", "for", "from", "had", "has", "have", "how", "i",
+    "in", "is", "it", "me", "my", "of", "on", "or", "our", "that", "the",
+    "their", "them", "there", "these", "this", "to", "was", "we", "were",
+    "what", "when", "where", "which", "who", "why", "with", "you", "your",
+})
+
+
+MAX_MEMORY_CONTEXT_CHARS = 6000
+_BROAD_TIME_RECALL = re.compile(
+    r"\b(?:what happened|what did (?:we|i|you) do|recap|summari[sz]e)\b",
+    re.IGNORECASE,
+)
+
+
+def _recall_window(query: str, now: dt.datetime | None = None):
+    local_now = (now or dt.datetime.now().astimezone()).astimezone()
+    day = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    lowered = query.casefold()
+    if re.search(r"\blast night\b", lowered):
+        label = "last night"
+        start = day - dt.timedelta(days=1) + dt.timedelta(hours=18)
+        end = day + dt.timedelta(hours=6)
+    elif re.search(r"\byesterday\b", lowered):
+        label = "yesterday"
+        start, end = day - dt.timedelta(days=1), day
+    elif re.search(r"\btoday\b", lowered):
+        label = "today"
+        start, end = day, day + dt.timedelta(days=1)
+    else:
+        return None
+    return label, start.astimezone(dt.timezone.utc), end.astimezone(dt.timezone.utc)
 
 
 class DesktopMemory:
@@ -288,6 +322,40 @@ class DesktopMemory:
             self._discard_cached_vectors()
         return deleted
 
+    def move_conference_messages(self, installation_id: str, session_id: str, sink) -> int:
+        """Move legacy Conference events out of shared recall after saving their replies."""
+        if not re.fullmatch(r"[a-f0-9]{32}", str(session_id or "")):
+            return 0
+        with self._write_lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, user_id, content, metadata_json FROM memory_items
+                WHERE installation_id=? AND kind='message' AND metadata_json LIKE ?
+                ORDER BY id
+                """,
+                (str(installation_id), f"%{session_id}%"),
+            ).fetchall()
+            matched = [
+                row for row in rows
+                if (metadata := self._metadata(row["metadata_json"]))
+                and metadata.get("conference_session_id") == session_id
+                and metadata.get("addon_event_source") == "petey-conference"
+            ]
+            for row in matched:
+                if row["user_id"] == "PETEY":
+                    sink({"id": int(row["id"]), "message": row["content"]})
+            if matched:
+                connection.executemany(
+                    "DELETE FROM memory_items WHERE id=?",
+                    ((int(row["id"]),) for row in matched),
+                )
+                self._discard_cached_vectors(int(row["id"]) for row in matched)
+            return len(matched)
+
+    def delete_conference_messages(self, installation_id: str, session_id: str) -> int:
+        """Remove any remaining legacy Conference rows when their session is deleted."""
+        return self.move_conference_messages(installation_id, session_id, lambda _item: None)
+
     def get_conversation_messages(self, installation_id, conversation_id, limit=50) -> list[dict]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -383,17 +451,71 @@ class DesktopMemory:
                 for item_id in item_ids:
                     self._vector_cache.pop(int(item_id), None)
 
+    def _direct_timeline(self, installation_id: str, temporal, exclude_contents, query: str) -> str:
+        label, start, end = temporal
+        with self._connect() as connection:
+            surface_filter = "" if "discord" in query.casefold() else "AND source_surface<>'discord'"
+            rows = connection.execute(
+                f"""
+                SELECT content, created_at, source_surface, metadata_json
+                FROM memory_items
+                WHERE installation_id=? AND kind='message'
+                  AND user_id NOT IN ('PETEY', 'SYSTEM_DOC')
+                  AND user_id NOT LIKE 'ADDON:%'
+                  {surface_filter}
+                  AND created_at>=? AND created_at<?
+                ORDER BY created_at LIMIT 2000
+                """,
+                (str(installation_id), start.isoformat(), end.isoformat()),
+            ).fetchall()
+        excluded = set(exclude_contents)
+        rows = [
+            row for row in rows
+            if len(row["content"].strip()) >= 3
+            and row["content"] not in excluded
+            and not self._metadata(row["metadata_json"]).get("hidden_from_chat")
+        ]
+        if not rows:
+            return ""
+        if len(rows) > 24:
+            count = len(rows)
+            indices = set(range(6)) | set(range(count - 6, count))
+            indices.update(6 + round((count - 13) * index / 11) for index in range(12))
+            rows = [rows[index] for index in sorted(indices)]
+        lines = [
+            f"Time scope: {label}. Direct user statements from that period, oldest first. "
+            "A question, plan, or requested story does not prove an event happened."
+        ]
+        used = len(lines[0]) + 1
+        for row in rows:
+            try:
+                local_time = dt.datetime.fromisoformat(row["created_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
+            except ValueError:
+                local_time = row["created_at"]
+            content = re.sub(r"\s+", " ", row["content"]).strip()[:180]
+            entry = f"[User — {local_time} — {row['source_surface']}] {content}"
+            if used + len(entry) > MAX_MEMORY_CONTEXT_CHARS:
+                break
+            lines.append(entry)
+            used += len(entry) + 1
+        return "\n".join(lines)
+
     def search_memories(
         self, query: str, installation_id: str, limit=5,
         exclude_conversation_id: str | None = None,
         exclude_contents: list[str] | tuple[str, ...] = (),
+        *, include_assistant: bool = False,
     ) -> str:
         if not query or not query.strip():
             return ""
+        limit = max(1, min(int(limit), 20))
         excluded_content = [
             value for value in exclude_contents
             if isinstance(value, str) and value
         ][:40]
+        temporal = _recall_window(query)
+        if temporal and _BROAD_TIME_RECALL.search(query) and not include_assistant:
+            return self._direct_timeline(installation_id, temporal, excluded_content, query)
         with self._connect() as connection:
             if exclude_conversation_id is None:
                 available = connection.execute(
@@ -418,78 +540,126 @@ class DesktopMemory:
             print(f"[MEMORY] Query embedding unavailable; using text search: {exc}")
             query_result = None
 
+        # Keep exact-name and keyword matches in play even when embeddings work.
+        # Background indexing can lag, and an embedding alone can overlook an
+        # older fact whose wording is more precise than its semantic neighbors.
+        terms = list(dict.fromkeys(
+            word for word in re.findall(r"[^\W_]+", query.casefold())
+            if len(word) > 2 and word not in _SEARCH_STOP_WORDS
+        ))[:6]
+        candidates: dict[int, sqlite3.Row] = {}
+        semantic_scores: dict[int, float] = {}
         with self._connect() as connection:
+            conditions = ["installation_id=?"]
+            filters: list[object] = [str(installation_id)]
+            if not include_assistant:
+                conditions.append("user_id<>'PETEY'")
+            if exclude_conversation_id is not None:
+                conditions.append("(conversation_id IS NULL OR conversation_id<>?)")
+                filters.append(str(exclude_conversation_id))
+            if excluded_content:
+                conditions.append(
+                    "content NOT IN (" + ",".join("?" for _ in excluded_content) + ")"
+                )
+                filters.extend(excluded_content)
+            base_where = " AND ".join(conditions)
+            columns = (
+                "id, user_id, content, created_at, kind, source_name, "
+                "source_surface, conversation_id"
+            )
             if query_result:
-                conversation_clause = ""
-                parameters = [
-                    str(installation_id),
-                    query_result["provider"],
-                    query_result["model"],
-                    query_result["dimensions"],
-                ]
-                if exclude_conversation_id is not None:
-                    conversation_clause = "AND (conversation_id IS NULL OR conversation_id<>?)"
-                    parameters.append(str(exclude_conversation_id))
-                content_clause = ""
-                if excluded_content:
-                    content_clause = (
-                        "AND content NOT IN ("
-                        + ",".join("?" for _ in excluded_content)
-                        + ")"
-                    )
-                    parameters.extend(excluded_content)
                 rows = connection.execute(
                     f"""
-                    SELECT id, user_id, content, created_at, kind, source_name,
-                           source_surface
+                    SELECT {columns}
                     FROM memory_items
-                    WHERE installation_id=? AND embedding_provider=? AND embedding_model=?
+                    WHERE {base_where}
+                      AND embedding_provider=? AND embedding_model=?
                       AND embedding_dimensions=? AND embedding_json IS NOT NULL
-                      {conversation_clause} {content_clause}
                     ORDER BY id DESC LIMIT 3000
                     """,
-                    parameters,
+                    (*filters, query_result["provider"], query_result["model"],
+                     query_result["dimensions"]),
                 ).fetchall()
                 vectors = self._vectors_for_rows(connection, rows)
                 query_vector = tuple(float(value) for value in query_result["values"])
                 query_norm = math.sqrt(math.sumprod(query_vector, query_vector))
                 scored = heapq.nlargest(
-                    int(limit),
+                    max(20, limit * 4),
                     ((self._semantic_score(
                         query_vector, query_norm, vectors.get(int(row["id"]))
                     ), row) for row in rows),
                     key=lambda pair: pair[0],
                 )
-                selected = [row for score, row in scored if score > 0.15]
-            else:
-                words = [word for word in query.strip().split() if len(word) > 2][:5]
-                if not words:
-                    return ""
-                clauses = " OR ".join("content LIKE ?" for _ in words)
-                conversation_clause = ""
-                parameters = [str(installation_id), *(f"%{word}%" for word in words)]
-                if exclude_conversation_id is not None:
-                    conversation_clause = "AND (conversation_id IS NULL OR conversation_id<>?)"
-                    parameters.append(str(exclude_conversation_id))
-                content_clause = ""
-                if excluded_content:
-                    content_clause = (
-                        "AND content NOT IN ("
-                        + ",".join("?" for _ in excluded_content)
-                        + ")"
-                    )
-                    parameters.extend(excluded_content)
-                parameters.append(int(limit))
-                selected = connection.execute(
+                for score, row in scored:
+                    if score > 0.15:
+                        item_id = int(row["id"])
+                        candidates[item_id] = row
+                        semantic_scores[item_id] = score
+            # Search each term separately: a rare name in an old row must not be
+            # crowded out by recent rows that mention only a common term.
+            for term in terms:
+                for row in connection.execute(
                     f"""
-                    SELECT id, user_id, content, created_at, kind, source_name,
-                           source_surface
+                    SELECT {columns}
                     FROM memory_items
-                    WHERE installation_id=? AND ({clauses}) {conversation_clause} {content_clause}
-                    ORDER BY id DESC LIMIT ?
+                    WHERE {base_where} AND content LIKE ?
+                    ORDER BY id DESC LIMIT 100
                     """,
-                    parameters,
-                ).fetchall()
+                    (*filters, f"%{term}%"),
+                ):
+                    candidates[int(row["id"])] = row
+
+        content_terms = {
+            item_id: set(re.findall(r"[^\W_]+", row["content"].casefold()))
+            for item_id, row in candidates.items()
+        }
+        term_weights = {
+            term: 1.0 + math.log(
+                (len(candidates) + 1)
+                / (1 + sum(term in words for words in content_terms.values()))
+            )
+            for term in terms
+        }
+
+        def rank(row: sqlite3.Row) -> tuple[float, int]:
+            item_id = int(row["id"])
+            content = row["content"].casefold()
+            content_words = content_terms[item_id]
+            lexical = sum(
+                term_weights[term] * (
+                    1.0 if term in content_words else 0.6 if term in content else 0.0
+                )
+                for term in terms
+            ) / sum(term_weights.values()) if terms else 0.0
+            source_bonus = 0.12 if row["kind"] == "document" or row["user_id"] != "PETEY" else 0.0
+            return (
+                lexical + semantic_scores.get(item_id, 0.0) * 0.55
+                + source_bonus,
+                item_id,
+            )
+
+        ranked = sorted(candidates.values(), key=rank, reverse=True)
+        selected = []
+        source_counts: dict[str, int] = {}
+        for row in ranked:
+            source = (
+                f"document:{row['source_name']}"
+                if row["kind"] == "document" else
+                f"conversation:{row['conversation_id']}"
+            )
+            if source_counts.get(source, 0) >= 3:
+                continue
+            selected.append(row)
+            source_counts[source] = source_counts.get(source, 0) + 1
+            if len(selected) >= limit:
+                break
+        if len(selected) < limit:
+            selected_ids = {int(row["id"]) for row in selected}
+            selected.extend(
+                row for row in ranked
+                if int(row["id"]) not in selected_ids
+            )
+            selected = selected[:limit]
 
         # Present facts chronologically so a later direct correction has the final
         # word while older text remains available as an audit trail.

@@ -146,12 +146,19 @@ class AddonManagerTests(unittest.TestCase):
             self.assertEqual(interface.status_code, 200)
             self.assertEqual(
                 interface.json["addon"]["interface"],
-                {"badges": False, "controls": False},
+                {"sidebar": False, "badges": False, "controls": False},
             )
             self.assertEqual(
                 DesktopState(directory).addon_interface("sample-addon"),
-                {"badges": False, "controls": False},
+                {"sidebar": False, "badges": False, "controls": False},
             )
+
+            pinned = app.test_client().put('/api/desktop/addons/sample-addon', json={'interface': {'sidebar': True}})
+            self.assertEqual(pinned.status_code, 200)
+            self.assertTrue(pinned.json['addon']['interface']['sidebar'])
+            self.assertFalse(pinned.json['addon']['navigation']['available'])
+            self.assertEqual(pinned.json['addon']['navigation']['view'], 'addon-sample-addon')
+            self.assertTrue(DesktopState(directory).addon_interface('sample-addon')['sidebar'])
 
             control = app.test_client().put(
                 "/api/desktop/addons/deapi-media",
@@ -197,6 +204,25 @@ def setup(context): return Addon()
                 ["addon_sample_addon__forecast"],
             )
             manager.set_enabled("sample-addon", False)
+
+    def test_discord_voice_addon_player_and_panel_registration(self):
+        root = Path(__file__).parents[2] / "addons" / "discord-voice"
+        js = (root / "panel.js").read_text(encoding="utf-8")
+        css = (root / "panel.css").read_text(encoding="utf-8")
+        html = (root / "panel.html").read_text(encoding="utf-8")
+        self.assertIn("window.peteyInterface.registerPanel", js)
+        self.assertIn("discord-voice-now-playing", js)
+        self.assertIn("mountRailPlayer", js)
+        self.assertIn("discord-voice-command-art", css)
+        self.assertIn("discord-voice-command-playhead", css)
+        self.assertIn("discord-voice-command-controls", css)
+        self.assertIn("DJ Mode &amp; Personas", html)
+        self.assertIn("discord-voice-dj-active-persona", html)
+        self.assertIn("discord-voice-dj-post-youtube-link", html)
+        self.assertIn("discord-voice-dj-enhance-1", html)
+        self.assertIn("renderDjSettings", js)
+        self.assertIn("/enhance-dj-prompt", js)
+        self.assertIn("/dj-config", js)
 
 
 if __name__ == "__main__":

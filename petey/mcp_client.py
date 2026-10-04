@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -45,9 +46,12 @@ class MCPStdioClient:
     """Synchronous, single-flight MCP client for a local stdio server."""
 
     def __init__(self, argv: list[str], roots: list[Path], timeout: float = 60,
-                 env: dict[str, str] | None = None, cwd: str | Path | None = None):
+                 env: dict[str, str] | None = None, cwd: str | Path | None = None,
+                 supported_versions: set[str] | None = None, max_response_chars: int | None = None):
         self.argv = [str(part) for part in argv]
         self.roots = [Path(root).resolve() for root in roots]
+        self.supported_versions = supported_versions or {MCP_PROTOCOL_VERSION}
+        self.max_response_chars = max_response_chars
         self.timeout = timeout
         self.env = {
             **os.environ,
@@ -95,7 +99,7 @@ class MCPStdioClient:
                         "clientInfo": {"name": "petey-desktop", "version": __version__},
                     },
                 )
-                if result.get("protocolVersion") != MCP_PROTOCOL_VERSION:
+                if result.get("protocolVersion") not in self.supported_versions:
                     raise MCPError("The MCP server does not support Petey's protocol version.")
                 self.notify("notifications/initialized")
                 return result
@@ -107,7 +111,16 @@ class MCPStdioClient:
         process = self._process
         if process is None or process.stdout is None:
             return
-        for line in process.stdout:
+        while True:
+            try:
+                line = process.stdout.readline(self.max_response_chars + 1) if self.max_response_chars else process.stdout.readline()
+            except (ValueError, OSError):
+                break
+            if not isinstance(line, str) or not line:
+                break
+            if self.max_response_chars and len(line) > self.max_response_chars:
+                self._messages.put(None)
+                return
             line = line.strip()
             if not line:
                 continue
@@ -167,9 +180,13 @@ class MCPStdioClient:
             if params is not None:
                 payload["params"] = params
             self._write(payload)
+            deadline = time.monotonic() + self.timeout
             while True:
                 try:
-                    message = self._messages.get(timeout=self.timeout)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise queue.Empty
+                    message = self._messages.get(timeout=remaining)
                 except queue.Empty as exc:
                     raise MCPError(f"The MCP server did not answer {method} within {self.timeout:g} seconds.") from exc
                 if message is None:
@@ -193,8 +210,19 @@ class MCPStdioClient:
 
     def list_tools(self) -> list[dict]:
         self.start()
-        tools = self.request("tools/list").get("tools", [])
-        return [tool for tool in tools if isinstance(tool, dict)]
+        tools, cursor = [], None
+        for _ in range(10):
+            result = self.request("tools/list", {"cursor": cursor} if cursor else {})
+            page = result.get("tools", [])
+            if not isinstance(page, list):
+                raise MCPError("Invalid MCP tool listing.")
+            tools.extend(tool for tool in page if isinstance(tool, dict))
+            if len(tools) > 200:
+                raise MCPError("MCP tool listing exceeded the tool limit.")
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return tools
+        raise MCPError("MCP tool listing exceeded the page limit.")
 
     def call_tool(self, name: str, arguments: dict) -> dict:
         self.start()

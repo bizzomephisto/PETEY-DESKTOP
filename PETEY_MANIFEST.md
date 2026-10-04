@@ -7,13 +7,13 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.19.3**
-- Current version: **v0.19.3**
+- Release: **v0.21.0**
+- Current version: **v0.21.0**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
-- Test framework: `unittest`; current full suite contains 354 tests
+- Test framework: `unittest`; current full suite contains 353 tests
 - Packaging: reviewed source ZIP built by `scripts/package_release.py`
-- Built-in integration: Discord only
+- Built-in integrations: Discord and Tasks
 
 PETEY is a local-first personal AI companion. It combines chat, complete persona and
 voice profiles, SQLite memory/RAG, media generation, voice conversation, visual
@@ -121,6 +121,7 @@ directory. Important contents include:
 - `addon-data/<id>/`: external add-on state and credentials
 - `voice-cues/<voice>/`: user-replaceable wake acknowledgements
 - `lan-tls/`: reusable local CA and LAN certificates
+- `mcp-servers.json`: private direct-MCP launch/auth configuration, tool allowlists, surfaces, keywords, and cached discovery
 - `remote-access.json`: durable private Cloudflare pairing secret, hostname, and origin port
 - `desktop-window.json`: last normal native desktop width and height
 - `wake-word/`: downloaded local keyword model
@@ -163,11 +164,25 @@ The built-in Filesystem MCP is read-only and receives only folders approved unde
 Settings → Tools. Never expose upstream write, move, delete, or arbitrary command
 tools through that connector.
 
+Direct MCP servers are configured independently under Settings → Tools & integrations.
+Imports are disabled with no selected tools. Testing starts the local command or
+contacts the remote endpoint; saved tool selection and explicit enablement grant
+model access. Keywords and per-surface permissions apply at schema and dispatch.
+Local stdio processes have the OS access of PETEY, unlike the approved-folder
+Filesystem connector. PETEY retains local memory management. See `docs/mcp.md`.
+
 External add-ons are trusted process-level Python but remain explicit and
 restart-gated. Disabled code is never imported. Their routes live under
 `/api/addons/<id>/`, assets stay within the installed folder, writable state goes to
 `addon-data/<id>`, and cleanup runs at shutdown. Read `ADDONS.md` and
 `docs/addons.md` before extension work.
+
+Tasks is a built-in, restart-gated add-on. Its persisted schedules live in the
+private data root, and external add-ons may register named task actions through
+`context.tasks`. A schedule can contain ordered, reviewed actions from multiple enabled add-ons
+and recur on selected weekdays. It invokes only those saved handlers; it does
+not grant model tools or run arbitrary prompt text. PETEY must be running for due
+actions, and schedules more than five minutes late are marked missed.
 
 Update checks run only on explicit user action. PETEY core accepts only a clean
 fast-forward from its official Git origin. Add-on updates require a manifest-declared
@@ -191,11 +206,13 @@ fresh-frame requests. Remote audio/video originals remain separate, with a
 best-effort FFmpeg combined recording and explicit disconnects instead of camera
 fallback.
 
-Conference v0.3 runs the local wake detector while it owns the microphone and ends
+Conference v0.4.3 runs the local wake detector while it owns the microphone and ends
 live transcription segments after speech followed by silence. Direct wake-name
 requests respond immediately. Topic-triggered contributions first play a short
-permission cue, wait for a common affirmative or negative reply, and open a
-three-second follow-up window after PETEY speaks. Permission clips resolve from
+permission cue and wait for a common affirmative or negative reply. After speaking,
+PETEY returns to wake-name listening. Conference dialogue stays in the session
+database until deletion, while PETEY can recall regular memories during a meeting.
+Permission clips resolve from
 `voice-cues/<voice>/conference/permission/` with the `default` voice fallback,
 randomize across every supported clip, derive transcript text from filenames, and
 obey PETEY's persisted speaker mute.
@@ -260,3 +277,16 @@ Keep release artifacts under ignored `dist/`. A clean final status should show l
 4. Preserve user data and secrets. Use temporary roots for tests and smoke servers.
 5. Finish the requested behavior, validate it, update durable documentation, and
    report only checks actually run.
+
+## Native Android companion
+
+The optional sibling `petey-android-companion/` owns Android microphone, wake-name
+inference, audio routing, foreground-service lifecycle, and Keystore storage.
+Desktop owns transcription, conversations, memory, model/tool policy, and speech.
+Its narrow `/api/companion/v1` bearer API exchanges the existing remote private-link
+secret for a one-year device credential, stores only credential hashes, and permits
+self-revocation. Rotating mobile access revokes all companion credentials as well.
+The Android client requires HTTPS, validates certificates, refuses redirects, and
+never uploads idle wake-detection audio. Android microphone recovery after process
+kill/reboot requires a visible user start; Bluetooth/Android Auto compatibility
+must be validated on hardware and does not imply a projected car dashboard app.

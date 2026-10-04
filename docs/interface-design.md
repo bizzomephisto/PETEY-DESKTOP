@@ -54,11 +54,11 @@ layouts. Use temporary data and mocked provider catalogs, never real keys or mem
 
 ## Appearance
 
-Use the semantic CSS tokens in `desktop.css` for surfaces, text, borders, accent, success, and danger. The desktop offers five complete styles: Nebula uses layered dark glass, Studio is a warm editorial workspace, Signal is a compact technical command deck, Terminal recreates a phosphor CRT with scan lines and a blinking composer cursor, and Ember uses smoked glass with a warm glow. Each style stores its own user-selected accent color. Media artwork and the visual-mode canvas retain their own colors.
+Use the semantic CSS tokens in `desktop.css` for surfaces, text, borders, accent, success, and danger. The desktop offers five complete styles: Nebula uses layered dark glass, Command Console uses amber CRT and tactile instrument panels, Signal is a compact technical command deck, Terminal recreates a phosphor CRT with scan lines and a blinking composer cursor, and Ember uses smoked glass with a warm glow. Each style stores its own user-selected accent color. Media artwork and the visual-mode canvas retain their own colors.
 
 Theme previews are native radio inputs with visible selection and keyboard focus. Theme and color changes preview immediately, persist through `/preferences`, and revert on failure. Server-render the saved theme and accent to prevent a flash of the defaults. At widths up to 760px, pin the established mobile palette and layout regardless of the selected desktop style. Other settings show explicit save controls; window preferences apply immediately.
 
-The desktop Command Center keeps one hamburger at the same top-right position. It toggles the right rail; when the rail is disabled, it opens a Controls dropdown. The fixed Controls block contains profile, chat selection, style/accent, visual mode, microphone mode, temporary chat, and restart controls. Add-on and overview cards follow it in the rail and may be collapsed or reordered. Compact add-on activity badges sit outside the composer beside the text box and remain hidden while idle. Standard desktop visual mode provides a direct Back to chat button on the canvas; fullscreen visual mode keeps that button hidden to preserve the presentation view.
+The desktop Command Center occupies a separate right-hand grid column and can be collapsed to give the main workspace more room. Its first Controls card stays fixed and exposes style/accent, visual mode, microphone mode, temporary chat, and restart controls. The active profile is in the chat header; CHAT in the sidebar opens the saved chat picker. Add-on and overview cards follow it and may be collapsed or reordered. Compact add-on activity badges sit outside the composer beside the text box and remain hidden while idle. Standard desktop visual mode provides a direct Back to chat button on the canvas; fullscreen visual mode keeps that button hidden to preserve the presentation view.
 
 Use clear focus indicators, native form controls, descriptive labels, and reduced-motion support. At narrow widths, settings categories become horizontally scrollable and the main app navigation remains available. Validate layouts at desktop and compact widths, including light-theme text contrast.
 
@@ -67,3 +67,15 @@ Use clear focus indicators, native form controls, descriptive labels, and reduce
 - [Apple: Settings](https://developer.apple.com/design/human-interface-guidelines/settings) — organize app-wide preferences and avoid unnecessary choices.
 - [GOV.UK: Accordion](https://design-system.service.gov.uk/components/accordion/) — use clear structure first; do not hide everything by default.
 - [W3C: Radio group pattern](https://www.w3.org/WAI/ARIA/apg/patterns/radio/) — single-choice semantics and keyboard behavior for the theme selector.
+
+
+## Sidebar and shared workspace
+
+Addons opens the manager directly. Every loaded add-on page can be opened there;
+Show in left sidebar pins an optional shortcut without changing loading permissions.
+CHAT expands the saved chat list and collapses after selection or creation. The
+existing composer sits below the main desktop view, so the user can message PETEY
+while managing add-ons; submitting returns to the active chat. Mobile keeps the
+composer inside chat. Core Controls stays fixed in the right rail. Media add-ons
+share one Media block with a provider selector and their existing player controls.
+Theme picker icon, color, and caption rows stay aligned even with a two-line label.

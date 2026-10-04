@@ -6,7 +6,7 @@
                 </details>
 
                 <details id="character-settings" class="settings-card settings-section" open>
-                    <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div></div></summary>
+                    <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div><button id="open-personality-wizard" class="secondary-button wizard-trigger-btn" type="button">🧙 Personality Wizard</button></div></summary>
                     <div class="settings-section-body">
                         <div class="field-grid two-column">
                             <label><span>Preset</span><select id="persona-preset"><option value="">Custom</option></select></label>
@@ -15,7 +15,7 @@
                             <label><span>Tagline</span><input id="persona-tagline" type="text" maxlength="160"></label>
                         </div>
                         <label class="full-field"><span>Instructions for Petey</span><textarea id="persona-prompt" rows="10" placeholder="You are Petey…"></textarea></label>
-                        <div class="inline-actions"><button id="rewrite-persona" class="secondary-button" type="button">✦ Improve with chat model</button><span class="hint">Uses the selected chat provider and does not save automatically.</span></div>
+                        <div class="inline-actions"><button id="rewrite-persona" class="secondary-button" type="button">✦ Improve with chat model</button><button id="open-personality-wizard-inline" class="secondary-button" type="button">🧙 Build with Wizard</button><span class="hint">Uses the selected chat provider and does not save automatically.</span></div>
                         <label class="full-field"><span>Traits <small>comma separated</small></span><input id="persona-traits" type="text" placeholder="Supportive, Witty, Direct"></label>
 
                     </div>
@@ -64,5 +64,210 @@
         <p>Choose where to save the complete profile. Selecting an occupied slot replaces it.</p>
         <div id="profile-slot-choices" class="profile-slot-choices"></div>
         <button id="profile-slot-dialog-cancel" class="text-button" type="button">Cancel</button>
+    </div>
+</div>
+
+<!-- Personality Creation Wizard Dialog -->
+<div id="personality-wizard-dialog" class="new-chat-dialog wizard-dialog" role="dialog" aria-modal="true" aria-labelledby="wizard-dialog-title" hidden>
+    <div class="new-chat-card wizard-card">
+        <div class="new-chat-heading">
+            <div>
+                <span class="page-eyebrow">PERSONALITY CREATION WIZARD</span>
+                <h2 id="wizard-dialog-title">Craft a Nuanced Petey Profile</h2>
+            </div>
+            <button id="wizard-close-btn" class="new-chat-close" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div class="wizard-steps-bar">
+            <button type="button" class="wizard-step-tab active" data-step="1"><span>1</span> Archetype</button>
+            <button type="button" class="wizard-step-tab" data-step="2"><span>2</span> Traits & Nuances</button>
+            <button type="button" class="wizard-step-tab" data-step="3"><span>3</span> Style & Voice</button>
+            <button type="button" class="wizard-step-tab" data-step="4"><span>4</span> Review & Apply</button>
+        </div>
+
+        <div class="wizard-fast-bar">
+            <label><span>⚡ Quick AI Generator <small>Describe any character concept in 1 sentence</small></span>
+                <div class="wizard-fast-input-row">
+                    <input id="wizard-fast-prompt" type="text" placeholder="e.g. A Victorian detective who solves modern Python bugs with dramatic flair">
+                    <button id="wizard-fast-generate-btn" class="secondary-button" type="button">✦ Generate</button>
+                </div>
+            </label>
+        </div>
+
+        <!-- Step 1: Archetype & Core Identity -->
+        <div id="wizard-step-1" class="wizard-step-panel">
+            <label class="wizard-section-label">Select Archetype</label>
+            <div class="archetype-grid">
+                <button type="button" class="archetype-card active" data-archetype="scholar">
+                    <span class="archetype-icon">🧙</span>
+                    <strong>Arcane Scholar</strong>
+                    <small>Knowledgeable, mystical, dramatic flair</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="detective">
+                    <span class="archetype-icon">🕵️</span>
+                    <strong>Code Detective</strong>
+                    <small>Analytical, inquisitive, sharp observation</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="hacker">
+                    <span class="archetype-icon">🤖</span>
+                    <strong>Cyberpunk Specialist</strong>
+                    <small>Fast-paced, direct, technical savvy</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="zen">
+                    <span class="archetype-icon">🧘</span>
+                    <strong>Zen Guide</strong>
+                    <small>Calm, empathetic, patient, mindful</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="comedian">
+                    <span class="archetype-icon">🎭</span>
+                    <strong>Witty Comedian</strong>
+                    <small>Punchy humor, dry wit, playful banter</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="mentor">
+                    <span class="archetype-icon">🧓</span>
+                    <strong>Tough Love Coach</strong>
+                    <small>Blunt, high standards, empowering</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="scifi">
+                    <span class="archetype-icon">🌌</span>
+                    <strong>Sci-Fi Ship AI</strong>
+                    <small>Formal, precise, objective, articulate</small>
+                </button>
+                <button type="button" class="archetype-card" data-archetype="custom">
+                    <span class="archetype-icon">⚡</span>
+                    <strong>Custom Persona</strong>
+                    <small>Build from scratch with your unique idea</small>
+                </button>
+            </div>
+
+            <div class="field-grid two-column" style="margin-top: 14px;">
+                <label><span>Character Name</span><input id="wizard-name" type="text" placeholder="e.g. Inspector Byte"></label>
+                <label><span>Role / Domain</span><input id="wizard-role" type="text" placeholder="e.g. Senior Code Detective"></label>
+            </div>
+            <label class="full-field" style="margin-top: 10px;"><span>Core Concept & Backstory <small>optional context</small></span>
+                <textarea id="wizard-concept" rows="2" placeholder="e.g. Treats every stack trace like a crime scene and uses dramatic deductions."></textarea>
+            </label>
+        </div>
+
+        <!-- Step 2: Traits & Behavioral Nuances -->
+        <div id="wizard-step-2" class="wizard-step-panel" hidden>
+            <label class="wizard-section-label">Select Personality Traits</label>
+            <div id="wizard-traits-cloud" class="trait-chips-cloud">
+                <button type="button" class="trait-chip active" data-trait="Analytical">Analytical</button>
+                <button type="button" class="trait-chip active" data-trait="Methodical">Methodical</button>
+                <button type="button" class="trait-chip active" data-trait="Witty">Witty</button>
+                <button type="button" class="trait-chip" data-trait="Sarcastic">Sarcastic</button>
+                <button type="button" class="trait-chip" data-trait="Encouraging">Encouraging</button>
+                <button type="button" class="trait-chip" data-trait="Philosophical">Philosophical</button>
+                <button type="button" class="trait-chip" data-trait="Blunt">Blunt</button>
+                <button type="button" class="trait-chip" data-trait="Paternal">Paternal</button>
+                <button type="button" class="trait-chip" data-trait="Quirky">Quirky</button>
+                <button type="button" class="trait-chip" data-trait="Direct">Direct</button>
+                <button type="button" class="trait-chip" data-trait="Patient">Patient</button>
+                <button type="button" class="trait-chip" data-trait="Whimsical">Whimsical</button>
+            </div>
+            <div class="wizard-custom-trait-row">
+                <input id="wizard-custom-trait-input" type="text" placeholder="Add custom trait (e.g. Socratic)">
+                <button id="wizard-add-trait-btn" class="secondary-button" type="button">+ Add</button>
+            </div>
+
+            <label class="wizard-section-label" style="margin-top: 16px;">Behavioral Nuances & Habits</label>
+            <div class="nuances-grid">
+                <label class="nuance-checkbox-card">
+                    <input type="checkbox" class="wizard-nuance-check" value="metaphors" checked>
+                    <div><strong>Real-world Metaphors</strong><small>Explains complex concepts with vivid analogies</small></div>
+                </label>
+                <label class="nuance-checkbox-card">
+                    <input type="checkbox" class="wizard-nuance-check" value="step_by_step" checked>
+                    <div><strong>Structured Guidance</strong><small>Uses clean bullet points and step-by-step solutions</small></div>
+                </label>
+                <label class="nuance-checkbox-card">
+                    <input type="checkbox" class="wizard-nuance-check" value="dry_wit">
+                    <div><strong>Dry Wit & Humor</strong><small>Peppers replies with clever banter</small></div>
+                </label>
+                <label class="nuance-checkbox-card">
+                    <input type="checkbox" class="wizard-nuance-check" value="no_fluff">
+                    <div><strong>Zero Fluff</strong><small>Gets straight to the point without filler</small></div>
+                </label>
+                <label class="nuance-checkbox-card">
+                    <input type="checkbox" class="wizard-nuance-check" value="warm_validation">
+                    <div><strong>Warm Encouragement</strong><small>Validates user efforts and celebrates small wins</small></div>
+                </label>
+                <label class="nuance-checkbox-card">
+                    <input type="checkbox" class="wizard-nuance-check" value="followup_questions">
+                    <div><strong>Socratic Follow-ups</strong><small>Asks thought-provoking questions at the end</small></div>
+                </label>
+            </div>
+        </div>
+
+        <!-- Step 3: Communication Style & Voice Matching -->
+        <div id="wizard-step-3" class="wizard-step-panel" hidden>
+            <label class="wizard-section-label">Fine-Tune Communication Sliders</label>
+            <div class="wizard-slider-presets">
+                <span>Presets:</span>
+                <button type="button" class="preset-chip-btn" data-preset="exec">Executive Assistant</button>
+                <button type="button" class="preset-chip-btn" data-preset="creative">Creative Thinker</button>
+                <button type="button" class="preset-chip-btn" data-preset="guru">Tech Guru</button>
+                <button type="button" class="preset-chip-btn" data-preset="mentor">Supportive Mentor</button>
+            </div>
+
+            <div class="slider-grid" style="margin-top: 12px;">
+                <label><span>Tone <output id="wiz-tone-val">50</output> <small>(Serious ↔ Playful)</small></span><input id="wiz-tone" type="range" min="0" max="100" value="50"></label>
+                <label><span>Verbosity <output id="wiz-verb-val">50</output> <small>(Concise ↔ Detailed)</small></span><input id="wiz-verbosity" type="range" min="0" max="100" value="50"></label>
+                <label><span>Formality <output id="wiz-form-val">50</output> <small>(Casual ↔ Formal)</small></span><input id="wiz-formality" type="range" min="0" max="100" value="50"></label>
+                <label><span>Empathy <output id="wiz-empa-val">50</output> <small>(Detached ↔ Empathetic)</small></span><input id="wiz-empathy" type="range" min="0" max="100" value="50"></label>
+            </div>
+
+            <label class="wizard-section-label" style="margin-top: 18px;">Voice & Delivery Matching</label>
+            <div class="vibe-chips-grid">
+                <button type="button" class="vibe-chip active" data-vibe="warm">Warm & Conversational</button>
+                <button type="button" class="vibe-chip" data-vibe="crisp">Crisp & Professional</button>
+                <button type="button" class="vibe-chip" data-vibe="energetic">Upbeat & Energetic</button>
+                <button type="button" class="vibe-chip" data-vibe="calm">Deep & Calm</button>
+                <button type="button" class="vibe-chip" data-vibe="dramatic">Dramatic & Expressive</button>
+            </div>
+        </div>
+
+        <!-- Step 4: Review & Apply -->
+        <div id="wizard-step-4" class="wizard-step-panel" hidden>
+            <div class="wizard-preview-header">
+                <div>
+                    <h3 id="preview-name">Inspector Byte</h3>
+                    <p id="preview-role-tagline">Code Detective · <em>"Elementary deductions for complex problems."</em></p>
+                </div>
+                <button id="wizard-synthesize-btn" class="secondary-button" type="button">✦ Synthesize with AI</button>
+            </div>
+
+            <div class="wizard-preview-card">
+                <div class="preview-meta-row">
+                    <div class="preview-badge-group">
+                        <strong>Traits:</strong> <span id="preview-traits-list">Analytical, Methodical, Witty</span>
+                    </div>
+                    <div class="preview-badge-group">
+                        <strong>Sliders:</strong> <span id="preview-sliders-summary">Tone 50 · Verbosity 50 · Formality 50 · Empathy 50</span>
+                    </div>
+                </div>
+
+                <div class="preview-prompt-box">
+                    <strong>Generated Instructions for Petey:</strong>
+                    <pre id="preview-system-prompt">You are Inspector Byte...</pre>
+                </div>
+
+                <div class="preview-speech-box">
+                    <strong>Speech & Delivery Directions:</strong>
+                    <p id="preview-speech-summary">Automatic (Voice: Kore) — Warm, conversational delivery with a balanced pace.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Wizard Actions / Footer -->
+        <div class="wizard-footer-actions">
+            <button id="wizard-prev-btn" class="text-button" type="button" hidden>← Back</button>
+            <span id="wizard-status" class="save-status"></span>
+            <div class="wizard-right-actions">
+                <button id="wizard-next-btn" class="secondary-button" type="button">Next: Traits →</button>
+                <button id="wizard-apply-btn" class="primary-button" type="button" hidden>🚀 Apply to Form & Sliders</button>
+            </div>
+        </div>
     </div>
 </div>

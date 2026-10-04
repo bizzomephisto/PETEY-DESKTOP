@@ -56,6 +56,7 @@ class DiscordGateway:
                     "d": {
                         "token": self.token,
                         "intents": 0,
+                        "shard": [0, 2],
                         "properties": {
                             "os": platform.system().lower(),
                             "browser": "petey-desktop",

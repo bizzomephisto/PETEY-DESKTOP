@@ -242,6 +242,7 @@ class MediaJobManager:
         model_slug: str,
         source: MediaInput | None,
         parameters: dict,
+        references: list[MediaInput] | None = None,
         speech_settings: dict | None = None,
         ai_config: dict | None = None,
         save_to_gallery: bool = True,
@@ -257,6 +258,9 @@ class MediaJobManager:
         # Validate immediately so a malformed request does not occupy a queue slot.
         config = MediaService._require_operation(operation)
         MediaService._validate_source(config["file"], source)
+        references = list(references or [])
+        if operation == "ref2vid":
+            MediaService._validate_references(references)
         if operation not in {"img-rmbg", "img-upscale"} and not (prompt or "").strip():
             raise ValueError("A prompt or text value is required.")
         speech_settings = dict(speech_settings or {})
@@ -279,10 +283,12 @@ class MediaJobManager:
             "prompt": (prompt or "").strip(),
             "model_slug": model_slug or "",
             "source_name": source.filename if source else "",
+            "reference_names": [item.filename for item in references],
             "result": None,
             "error": "",
             "_installation_id": installation_id,
             "_source": source,
+            "_references": references,
             "_parameters": dict(parameters),
             "_speech_settings": speech_settings,
             "_ai_config": dict(ai_config or {}),
@@ -337,6 +343,7 @@ class MediaJobManager:
                     job["result"] = {**public_result, "gallery_item": gallery_item}
                     job["completed_at"] = _now()
                     job["_source"] = None
+                    job["_references"] = []
                     job["_ai_config"] = {}
             except Exception as exc:
                 print(f"[MEDIA JOB] {job_id} failed: {exc}")
@@ -346,6 +353,7 @@ class MediaJobManager:
                     job["error"] = str(exc)
                     job["completed_at"] = _now()
                     job["_source"] = None
+                    job["_references"] = []
                     job["_ai_config"] = {}
 
     async def _execute(self, job: dict) -> tuple[dict, dict]:
@@ -364,6 +372,7 @@ class MediaJobManager:
                 installation_id=job["_installation_id"],
                 model_slug=job["model_slug"],
                 source=job["_source"],
+                references=job.get("_references") or [],
                 parameters=job["_parameters"],
             )
             gallery_item = None

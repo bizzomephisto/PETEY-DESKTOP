@@ -77,3 +77,9 @@ web/static/chode_avatar.png
 web/static/flow_builder.js
 web/static/style.css
 web/static/wizard.css
+
+# Local editing backups and private session artifacts
+*.orig
+/thebagga.mp4
+/transcript.md
+/transcripttes1.md

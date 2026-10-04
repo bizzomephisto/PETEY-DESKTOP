@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PETEY · Three.js Neural Lab</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; background: #03070d; color: #e8f1ff; }
+    button, input, select { font: inherit; }
+    button, select { color: inherit; }
+    .lab { min-height: 620px; height: 100dvh; display: grid; grid-template-rows: auto minmax(300px, 1fr) auto auto; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 22px; border-bottom: 1px solid #263240; background: #09111a; }
+    .brand { display: flex; align-items: baseline; gap: 13px; flex-wrap: wrap; }
+    .brand strong { color: #ff9d35; font-size: 20px; letter-spacing: .12em; }
+    .brand span { color: #91a4b8; font-size: 11px; letter-spacing: .13em; text-transform: uppercase; }
+    header a { color: #ffba73; text-decoration: none; border: 1px solid #58402a; padding: 8px 11px; border-radius: 6px; font-size: 12px; }
+    header a:hover, header a:focus-visible { background: #3b291b; }
+    .stage { position: relative; min-height: 360px; overflow: hidden; background: radial-gradient(circle at 50% 50%, #10263d 0, #07111d 38%, #02050a 75%); }
+    .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .25; background: repeating-linear-gradient(0deg, transparent 0 3px, #000 4px 5px); }
+    .readout { position: absolute; top: 20px; left: 22px; z-index: 1; pointer-events: none; }
+    .readout h1 { margin: 0 0 6px; color: #ffae57; font-size: clamp(17px, 2.4vw, 27px); letter-spacing: .18em; text-transform: uppercase; text-shadow: 0 0 22px #ff8d35aa; }
+    .readout p { margin: 0; color: #8aa5bf; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+    .readout .pattern-name { margin-bottom: 7px; color: #d8e7f6; font-weight: 700; }
+    .readout .pattern-description { max-width: 330px; line-height: 1.5; letter-spacing: .04em; text-transform: none; }
+    .metrics { position: absolute; top: 20px; right: 22px; z-index: 1; display: grid; gap: 4px; text-align: right; color: #91a4b8; font-size: 11px; pointer-events: none; }
+    .metrics strong { color: #dce9f7; }
+    .hint { position: absolute; bottom: 18px; left: 22px; z-index: 1; color: #8298ae; font-size: 11px; pointer-events: none; }
+    .error { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 24px; background: #07111df0; color: #ffb98c; text-align: center; }
+    .error[hidden] { display: none; }
+    .pattern-bar { display: flex; gap: 8px; overflow-x: auto; padding: 11px 22px; border-top: 1px solid #263240; background: #07101a; scrollbar-color: #38506b #07101a; }
+    .pattern-bar button { flex: 1 0 155px; min-width: 0; display: grid; gap: 5px; padding: 10px 12px; text-align: left; color: #b7c9dc; border: 1px solid #26394c; border-radius: 7px; background: #0d1a28; cursor: pointer; }
+    .pattern-bar button:hover, .pattern-bar button:focus-visible { border-color: #ff9d35; outline: none; }
+    .pattern-bar button[aria-pressed="true"] { color: #fff3e5; border-color: #ff9d35; background: linear-gradient(130deg, #342112, #172435); box-shadow: inset 0 0 22px #ff8d3526; }
+    .pattern-bar small { color: #8199b0; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
+    .pattern-bar strong { font-size: 13px; }
+    .controls { display: grid; grid-template-columns: minmax(220px, 1.6fr) minmax(170px, 1fr) minmax(130px, .55fr) auto; align-items: end; gap: 18px; padding: 18px 22px 22px; border-top: 1px solid #263240; background: #0a121c; }
+    .controls fieldset { display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; margin: 0; padding: 0; border: 0; }
+    .controls legend, .controls label > span { display: block; margin-bottom: 8px; color: #8ca2b7; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+    .controls button, .controls select { min-height: 36px; border: 1px solid #33475c; border-radius: 6px; background: #101d2c; cursor: pointer; }
+    .controls button { padding: 7px 10px; }
+    .controls button:hover, .controls select:hover { border-color: #ff9d35; }
+    .controls button[aria-pressed="true"] { background: #663915; border-color: #ff9d35; color: #fff3e5; box-shadow: inset 0 0 14px #ff8d3555; }
+    .controls label { min-width: 0; }
+    .controls input[type="range"] { display: block; width: 100%; margin: 12px 0 8px; accent-color: #ff9d35; }
+    .controls select { width: 100%; padding: 6px 9px; }
+    .controls .extra { display: flex; gap: 8px; }
+    .controls .extra button { white-space: nowrap; }
+    @media (max-width: 850px) { .controls { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 540px) { .lab { grid-template-rows: auto minmax(300px, 1fr) auto auto; } .controls { grid-template-columns: 1fr; } header { padding: 12px; } .brand span { display: none; } .stage { min-height: 300px; } .metrics { right: 12px; } .readout { left: 12px; } .pattern-bar { padding: 9px 12px; } }
+  </style>
+</head>
+<body>
+  <div class="lab">
+    <header>
+      <div class="brand"><strong>PETEY</strong><span>Three.js neural lab · experimental</span></div>
+      <a href="/" aria-label="Return to PETEY">← Back to PETEY</a>
+    </header>
+    <main class="stage" id="stage">
+      <canvas id="scene" aria-label="Interactive three-dimensional PETEY neural activity visualization"></canvas>
+      <div class="readout"><p class="pattern-name" id="pattern-name">01 / Cortex Mesh</p><h1 id="state-label">Present</h1><p class="pattern-description" id="pattern-description">Dual hemispheres and a glowing midline bridge</p></div>
+      <div class="metrics"><span>FPS <strong id="fps">—</strong></span><span>DRAW CALLS <strong id="draw-calls">—</strong></span><span>NODES <strong id="node-count">—</strong></span><span>LINKS <strong id="link-count">—</strong></span></div>
+      <div class="hint">Drag to rotate · scroll to zoom · demo states only · no conversation data</div>
+      <div class="error" id="error" role="alert" hidden></div>
+    </main>
+    <nav class="pattern-bar" id="patterns" aria-label="Neural pattern demos">
+      <button type="button" data-pattern="cortex" aria-pressed="true"><small>01 / Connectome</small><strong>Cortex Mesh</strong></button>
+      <button type="button" data-pattern="lattice" aria-pressed="false"><small>02 / Processing</small><strong>Synapse Field</strong></button>
+      <button type="button" data-pattern="dendrites" aria-pressed="false"><small>03 / Branching</small><strong>Dendrite Grove</strong></button>
+      <button type="button" data-pattern="constellation" aria-pressed="false"><small>04 / Clusters</small><strong>Memory Constellation</strong></button>
+      <button type="button" data-pattern="stream" aria-pressed="false"><small>05 / Transmission</small><strong>Axon Stream</strong></button>
+    </nav>
+    <section class="controls" aria-label="Visualization controls">
+      <fieldset id="states"><legend>Activity</legend>
+        <button type="button" data-state="idle" aria-pressed="true">Present</button>
+        <button type="button" data-state="listening" aria-pressed="false">Listen</button>
+        <button type="button" data-state="thinking" aria-pressed="false">Think</button>
+        <button type="button" data-state="speaking" aria-pressed="false">Speak</button>
+        <button type="button" data-state="muted" aria-pressed="false">Muted</button>
+      </fieldset>
+      <label><span>Activity strength <output id="energy-value">50%</output></span><input id="energy" type="range" min="0" max="100" value="50"></label>
+      <label><span>Particle count</span><select id="quality"><option value="160">160 · light</option><option value="320" selected>320 · standard</option><option value="640">640 · dense</option></select></label>
+      <div class="extra"><button id="cycle" type="button" aria-pressed="false">Cycle demos</button><button id="mic" type="button" aria-pressed="false">Use mic</button></div>
+    </section>
+  </div>
+  <script type="module" src="./neural-three.js"></script>
+</body>
+</html>

@@ -19,21 +19,22 @@ from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 
 PERSONA_SLOT_COUNT = 5
 DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
-PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord", "petey_life"}
-DESKTOP_THEMES = {"nebula", "studio", "signal", "terminal", "ember"}
-COMMAND_RAIL_SECTIONS = {"session", "launch", "addons", "signals"}
+PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord"}
+DESKTOP_THEMES = {"nebula", "cognitive", "signal", "terminal", "ember"}
+COMMAND_RAIL_SECTIONS = {"media", "session", "launch", "addons", "signals", "tasks"}
 DEFAULT_COMMAND_RAIL_SECTIONS = {section: True for section in COMMAND_RAIL_SECTIONS}
-DEFAULT_COMMAND_RAIL_ORDER = ["session", "launch", "addons", "signals"]
+DEFAULT_COMMAND_RAIL_ORDER = ["media", "session", "launch", "tasks", "addons", "signals"]
 COMMAND_PANEL_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 DEFAULT_THEME_ACCENTS = {
     "nebula": "#8b5cf6",
-    "studio": "#d65f36",
+    "cognitive": "#ff9d32",
     "signal": "#31d7a5",
     "terminal": "#63ff8f",
     "ember": "#ff8a4c",
 }
 LEGACY_THEME_MIGRATION = {
-    "midnight": "nebula", "ocean": "nebula", "forest": "signal", "paper": "studio",
+    "midnight": "nebula", "ocean": "nebula", "forest": "signal",
+    "paper": "cognitive", "studio": "cognitive",
 }
 HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 PETEY_CONTROL_ID = re.compile(r"[a-z][a-z0-9_-]{1,63}")
@@ -155,7 +156,7 @@ class DesktopState:
             "sidebar_collapsed": False,
             "ui_scale": 1.0,
             "visual_mode": False,
-            "visual_style": "neural_core",
+            "visual_style": "synapse_network",
             "command_rail_enabled": True,
             "command_rail_open": True,
             "command_rail_sections": copy.deepcopy(DEFAULT_COMMAND_RAIL_SECTIONS),
@@ -197,6 +198,8 @@ class DesktopState:
             changed = True
         saved_rail_order = settings["preferences"].get("command_rail_order")
         normalized_rail_order = self._normalized_command_panel_ids(saved_rail_order)
+        if "media" not in normalized_rail_order:
+            normalized_rail_order.insert(0, "media")
         for panel_id in DEFAULT_COMMAND_RAIL_ORDER:
             if panel_id not in normalized_rail_order:
                 normalized_rail_order.append(panel_id)
@@ -216,6 +219,7 @@ class DesktopState:
                 if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id) or not isinstance(raw, dict):
                     continue
                 normalized_addon_interface[addon_id] = {
+                    "sidebar": raw.get("sidebar") is True,
                     "badges": raw.get("badges") is not False,
                     "controls": raw.get("controls") is not False,
                 }
@@ -229,6 +233,13 @@ class DesktopState:
                 color = str(saved_accents.get(theme) or "")
                 if HEX_COLOR.fullmatch(color):
                     normalized_accents[theme] = color.lower()
+            legacy_studio_accent = str(saved_accents.get("studio") or "")
+            if not HEX_COLOR.fullmatch(str(saved_accents.get("cognitive") or "")) and HEX_COLOR.fullmatch(legacy_studio_accent):
+                normalized_accents["cognitive"] = legacy_studio_accent.lower()
+            elif str(saved_accents.get("cognitive") or "").lower() == "#8b5cf6":
+                # Cognitive Pulse's violet default became Command Console amber.
+                # Preserve every custom color while migrating the old stock value.
+                normalized_accents["cognitive"] = DEFAULT_THEME_ACCENTS["cognitive"]
         if saved_accents != normalized_accents:
             settings["preferences"]["theme_accents"] = normalized_accents
             changed = True
@@ -517,6 +528,15 @@ class DesktopState:
         return str(self.identity["installation_id"])
 
     @property
+    def changelog_seen_version(self) -> str:
+        return str(self.identity.get("changelog_seen_version") or "")
+
+    def mark_changelog_seen(self, version: str) -> None:
+        with self._lock:
+            self.identity["changelog_seen_version"] = version
+            self._write_json(self.identity_path, self.identity)
+
+    @property
     def person_id(self) -> str:
         return str(self.identity.get("person_id", "owner"))
 
@@ -757,10 +777,10 @@ class DesktopState:
         if "visual_mode" in changes:
             preferences["visual_mode"] = bool(changes["visual_mode"])
         if "visual_style" in changes:
-            style = str(changes.get("visual_style") or "neural_core")
+            style = str(changes.get("visual_style") or "synapse_network")
             if style not in {
                 "neural_core", "synapse_drift", "orbital_mind", "signal_bloom",
-                "aurora_flow", "constellation_field",
+                "aurora_flow", "constellation_field", "cognitive_pulse", "synapse_network",
             }:
                 raise ValueError("Choose a supported visual style.")
             preferences["visual_style"] = style
@@ -1050,6 +1070,7 @@ class DesktopState:
     def addon_interface(self, addon_id: str) -> dict:
         saved = self.preferences.get("addon_interface", {}).get(str(addon_id), {})
         return {
+            "sidebar": saved.get("sidebar", addon_id == "tasks") is True,
             "badges": saved.get("badges") is not False,
             "controls": saved.get("controls") is not False,
         }
@@ -1059,7 +1080,7 @@ class DesktopState:
         if not re.fullmatch(r"[a-z][a-z0-9_-]{1,48}", addon_id):
             raise ValueError("Choose a valid add-on.")
         if not isinstance(changes, dict) or any(
-            key not in {"badges", "controls"} or not isinstance(value, bool)
+            key not in {"sidebar", "badges", "controls"} or not isinstance(value, bool)
             for key, value in changes.items()
         ):
             raise ValueError("Choose valid add-on interface settings.")
@@ -1157,7 +1178,6 @@ class DesktopState:
                 "petey_desktop": surfaces.get("petey_desktop", True) is True,
                 "mobile_petey": surfaces.get("mobile_petey", True) is True,
                 "discord": surfaces.get("discord") is True,
-                "petey_life": surfaces.get("petey_life") is True,
             },
             "capabilities": [{
                 **definition,
@@ -1188,7 +1208,7 @@ class DesktopState:
                     "enabled": False,
                     "surfaces": {
                         "petey_desktop": True, "mobile_petey": True,
-                        "discord": False, "petey_life": False,
+                        "discord": False,
                     },
                     "capabilities": {}, "usage": {},
                 }

@@ -32,6 +32,7 @@ class AddonContext:
     addon_dir: Path
     data_dir: Path
     emit_event: object
+    tasks: object | None = None
 
 
 class AddonManager:
@@ -42,10 +43,18 @@ class AddonManager:
         self.user_dir = Path(user_dir) if user_dir else state.data_dir / "addons"
         self.user_dir.mkdir(parents=True, exist_ok=True)
         self._event_broker = None
+        self._task_service = None
         self._records = {
             "discord": {
                 "id": "discord", "name": "Discord", "version": "1.0",
                 "description": "Connect PETEY to Discord chat and media slash commands.",
+                "source": "built-in", "default_enabled": True, "loaded": False,
+                "error": "", "path": None, "manifest": {}, "instance": None,
+                "configurable_enabled": True, "control_capabilities": [],
+            },
+            "tasks": {
+                "id": "tasks", "name": "Tasks", "version": "1.0",
+                "description": "Schedule PETEY reminders and registered add-on actions.",
                 "source": "built-in", "default_enabled": True, "loaded": False,
                 "error": "", "path": None, "manifest": {}, "instance": None,
                 "configurable_enabled": True, "control_capabilities": [],
@@ -142,9 +151,11 @@ class AddonManager:
         )
 
     def activate_external(
-        self, *, app, memory, gallery, runtime, get_media_jobs, event_broker=None
+        self, *, app, memory, gallery, runtime, get_media_jobs, event_broker=None,
+        task_service=None,
     ):
         self._event_broker = event_broker
+        self._task_service = task_service
         for record in self._records.values():
             if record["source"] != "user" or not self.enabled(record["id"]) or record["error"]:
                 continue
@@ -184,16 +195,25 @@ class AddonManager:
                     app=app, state=self.state, memory=memory, gallery=gallery,
                     runtime=runtime, get_media_jobs=get_media_jobs,
                     addon_id=record["id"], addon_dir=record["path"], data_dir=data_dir,
-                    emit_event=emit_event,
+                    emit_event=emit_event, tasks=task_service,
                 ))
                 record["loaded"] = True
             except Exception as exc:
                 record["error"] = f"{type(exc).__name__}: {exc}"[:500]
                 sys.modules.pop(f"petey_user_addon_{record['id'].replace('-', '_')}", None)
+        if task_service is not None:
+            task_service.start()
 
     def mark_builtin_loaded(self, addon_id: str, loaded: bool):
         if addon_id in self._records:
             self._records[addon_id]["loaded"] = bool(loaded)
+
+    def record_event_reply(self, addon_id: str, session_id: str, text: str) -> bool:
+        record = self._records.get(addon_id)
+        if not record or not record.get("loaded"):
+            return False
+        receiver = getattr(record.get("instance"), "record_event_reply", None)
+        return bool(receiver(session_id, text)) if callable(receiver) else False
 
     def set_enabled(self, addon_id: str, enabled) -> dict:
         if addon_id not in self._records:
@@ -253,6 +273,20 @@ class AddonManager:
         self.state.update_petey_control(addon_id, changes, capabilities)
         return self.public_record(record)
 
+    @staticmethod
+    def navigation_for(record: dict) -> dict | None:
+        builtins = {"discord": ("discord", "Discord", "◉"), "tasks": ("tasks", "Tasks", "◷")}
+        if record["id"] in builtins:
+            view, label, icon = builtins[record["id"]]
+        else:
+            manifest = record.get("manifest") or {}
+            navigation = manifest.get("navigation") or {}
+            if not manifest.get("panel") or not navigation.get("label"):
+                return None
+            view, label, icon = f"addon-{record['id']}", str(navigation["label"])[:40], str(navigation.get("icon") or "◇")[:4]
+        return {"view": view, "label": label, "icon": icon,
+                "available": bool(record["loaded"] and not record["error"])}
+
     def public_record(self, record: dict) -> dict:
         desired = self.enabled(record["id"])
         capabilities = self._control_capabilities(record)
@@ -263,6 +297,7 @@ class AddonManager:
             "enabled": desired, "loaded": record["loaded"], "error": record["error"],
             "configurable_enabled": record.get("configurable_enabled", True),
             "interface": self.state.addon_interface(record["id"]),
+            "navigation": self.navigation_for(record),
             "has_model_tools": bool(
                 capabilities
             ),
@@ -406,6 +441,9 @@ class AddonManager:
         return result
 
     def close(self):
+        if self._task_service is not None:
+            self._task_service.close()
+            self._task_service = None
         for record in reversed(list(self._records.values())):
             instance = record.get("instance")
             close = getattr(instance, "close", None)

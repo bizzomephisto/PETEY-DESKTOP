@@ -1,6 +1,6 @@
 # PETEY
 
-Current version: **v0.19.3** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
+Current version: **v0.21.0** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
@@ -128,6 +128,10 @@ Connected capabilities are managed under **Settings → Tools**. Filesystem uses
 pinned release of the official MCP server and receives only folders you add there.
 Petey exposes its read, list, metadata, and search tools;
 filesystem writes, moves, and deletes remain unavailable.
+
+The **MCP servers** section connects directly to local stdio or remote Streamable
+HTTP servers without a per-server add-on. Import `mcpServers` JSON, test, select
+tools, choose chat keywords, and enable. See [MCP setup](docs/mcp.md).
 
 ## Install and run
 

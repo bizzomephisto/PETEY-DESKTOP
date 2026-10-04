@@ -1,0 +1,7 @@
+/* The standalone controls stay in the document for map.js, but PETEY owns the UI. */
+html.petey-embed, html.petey-embed body { width: 100%; height: 100%; background: #000; }
+html.petey-embed header, html.petey-embed .map-heading,
+html.petey-embed #controls-toggle, html.petey-embed #controls,
+html.petey-embed .canvas-tools, html.petey-embed .probe,
+html.petey-embed .bottom, html.petey-embed .scale-label { display: none !important; }
+html.petey-embed #map, html.petey-embed #connections-canvas { inset: 0; }

@@ -18,6 +18,8 @@ from flask import Flask, Response, jsonify, render_template, request, send_file,
 from petey.assistant import AssistantAttachment, AssistantIdentity, AssistantService, PETEY_USER_ID
 from petey.addons import AddonManager
 from petey.addon_events import AddonEventBroker
+from petey.changelog import load_changelog
+from petey.scheduled_tasks import ScheduledTaskError, ScheduledTaskService
 from web.settings_pages import SETTINGS_GROUPS, SETTINGS_PAGES
 from petey.ai_provider import AIProvider, AIProviderError
 from petey.discord_bridge import DiscordBridge
@@ -35,6 +37,7 @@ from petey.local_whisper import (
 from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
+from petey.general_mcp import GeneralMCPManager
 from petey.mcp_client import FilesystemMCPManager, MCPError
 from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.voice_cues import VoiceCueLibrary
@@ -46,7 +49,37 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 
 MAX_MEDIA_SOURCE_BYTES = 25 * 1024 * 1024
+MAX_REFERENCE_UPLOAD_BYTES = 200 * 1024 * 1024
 
+
+def _synthesize_wizard_persona_fallback(data: dict) -> dict:
+    """Build a usable wizard draft when the configured chat provider is unavailable."""
+    name = str(data.get("name") or "Petey Profile").strip()[:80]
+    role = str(data.get("role_tag") or "AI Companion").strip()[:80]
+    concept = str(data.get("concept") or data.get("fast_prompt") or "A helpful companion").strip()[:1000]
+    raw_traits = data.get("traits")
+    traits = [str(item).strip()[:50] for item in raw_traits[:6] if str(item).strip()] if isinstance(raw_traits, list) else []
+    raw_nuances = data.get("nuances")
+    nuances = [str(item).strip()[:80] for item in raw_nuances[:8] if str(item).strip()] if isinstance(raw_nuances, list) else []
+    raw_sliders = data.get("sliders") if isinstance(data.get("sliders"), dict) else {}
+    sliders = {}
+    for key in ("tone", "verbosity", "formality", "empathy"):
+        try:
+            sliders[key] = max(0, min(100, int(raw_sliders.get(key, 50))))
+        except (TypeError, ValueError):
+            sliders[key] = 50
+    details = [f"You are {name}, {role}.", concept]
+    if traits:
+        details.append("Key traits: " + ", ".join(traits) + ".")
+    if nuances:
+        details.append("Communication preferences: " + ", ".join(nuances) + ".")
+    details.append("Respond consistently with this identity while being truthful about what you know.")
+    return {
+        "name": name, "role_tag": role, "tagline": concept[:100],
+        "system_prompt": " ".join(details), "traits": traits, "sliders": sliders,
+        "speech_style": str(data.get("vocal_vibe") or "warm")[:80],
+        "recommended_provider": "automatic", "recommended_voice": "",
+    }
 
 def _public_media_error(exc: Exception) -> str:
     return (
@@ -88,9 +121,11 @@ def create_desktop_app(
     addon_manager: AddonManager | None = None,
     wake_detector: LocalWakeDetector | None = None,
     updater: PeteyUpdater | None = None,
+    general_mcp_manager: GeneralMCPManager | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
-    core_assets = ("desktop.css", "desktop.js", "settings.js", "discord.js")
+    changelog = load_changelog(Path(__file__).resolve().parents[1] / "CHANGELOG.md")
+    core_assets = ("desktop.css", "desktop.js", "mcp.js", "settings.js", "discord.js", "tasks.css", "tasks.js", "synapse/index.html", "synapse/map.js", "synapse/map.css", "synapse/connection-renderer.js", "synapse/petey-embed.css")
     app.config["PETEY_ASSET_REVISION"] = str(max(
         (Path(app.static_folder) / name).stat().st_mtime_ns for name in core_assets
     ))
@@ -139,7 +174,9 @@ def create_desktop_app(
                 for path in catalog["interrupt_clips"]
             ],
         }
-    app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+    # H3 full-reference requests can contain several media files. Individual
+    # reference limits are enforced by MediaService before the job is queued.
+    app.config["MAX_CONTENT_LENGTH"] = MAX_REFERENCE_UPLOAD_BYTES
     app.config["PETEY_STATE"] = state or DesktopState()
     app.config["PETEY_RUNTIME"] = runtime or AsyncRuntime()
     app.config["PETEY_GALLERY"] = gallery or MediaGallery(
@@ -149,6 +186,7 @@ def create_desktop_app(
     app.config["PETEY_MCP"] = mcp_manager or FilesystemMCPManager(
         app.config["PETEY_STATE"]
     )
+    app.config["PETEY_GENERAL_MCP"] = general_mcp_manager or GeneralMCPManager(app.config["PETEY_STATE"])
     app.config["PETEY_IMAGE_BROWSER"] = ImageBrowser()
     app.config["PETEY_VOICE_CUES"] = VoiceCueLibrary(app.config["PETEY_STATE"].data_dir)
     app.config["PETEY_WAKE_DETECTOR"] = wake_detector or LocalWakeDetector(
@@ -157,6 +195,8 @@ def create_desktop_app(
     app.config["PETEY_ADDONS"] = addon_manager or AddonManager(app.config["PETEY_STATE"])
     app.config["PETEY_UPDATER"] = updater or PeteyUpdater(app.config["PETEY_ADDONS"])
     app.config["PETEY_DISCORD"] = discord_bridge
+    from web.companion_api import register_companion_api
+    register_companion_api(app)
 
     def create_embedding(text: str):
         current: DesktopState = app.config["PETEY_STATE"]
@@ -191,6 +231,7 @@ def create_desktop_app(
                     app.config["PETEY_MEMORY"], surface="discord",
                 )
                 + app.config["PETEY_ADDONS"].tool_specs(surface="discord")
+                + app.config["PETEY_GENERAL_MCP"].tool_specs(surface="discord")
             ),
             memory_getter=lambda: app.config["PETEY_MEMORY"],
         )
@@ -231,6 +272,9 @@ def create_desktop_app(
         if conversation_id not in {str(item.get("id")) for item in current.conversations}:
             raise ValueError("The target conversation no longer exists.")
         addon_id = str(event["addon_id"])
+        event_metadata = event.get("metadata") or {}
+        conference_session_id = str(event_metadata.get("conference_session_id") or "")
+        conference_event = addon_id == "petey-conference" and bool(conference_session_id)
         user_initiated = bool(event.get("user_initiated"))
         if user_initiated:
             prompt = str(event["message"])
@@ -255,6 +299,7 @@ def create_desktop_app(
                 get_media_jobs,
                 app.config["PETEY_MEMORY"],
                 mcp_manager=app.config["PETEY_MCP"],
+                general_mcp_manager=app.config["PETEY_GENERAL_MCP"],
                 addon_manager=app.config["PETEY_ADDONS"],
                 surface=identity.surface,
             )
@@ -267,6 +312,13 @@ def create_desktop_app(
         reply = app.config["PETEY_RUNTIME"].call(service.respond(
             prompt,
             identity,
+            temporary=False,
+            persist=not conference_event,
+            use_conversation_history=not conference_event,
+            memory_query=(
+                str(event_metadata.get("conference_memory_query") or "")[:500]
+                if conference_event else None
+            ),
             user_metadata={
                 **event.get("metadata", {}),
                 "hidden_from_chat": True,
@@ -279,9 +331,35 @@ def create_desktop_app(
                 "auto_speak": bool(event["speak"]),
             },
         ))
+        if conference_event and not app.config["PETEY_ADDONS"].record_event_reply(
+            addon_id, conference_session_id, reply.text
+        ):
+            raise ValueError("The conference session is no longer available.")
         return {"text": reply.text, "tool_events": list(reply.tool_events)}
 
     app.config["PETEY_ADDON_EVENTS"] = AddonEventBroker(handle_addon_event)
+    task_service = None
+    if app.config["PETEY_ADDONS"].enabled("tasks"):
+        def announce_task(message, *, metadata):
+            return app.config["PETEY_ADDON_EVENTS"].emit(
+                "tasks", message,
+                conversation_id=app.config["PETEY_STATE"].conversation_id,
+                surface="petey_desktop", speak=True, metadata=metadata,
+                user_initiated=False,
+            )
+
+        task_service = ScheduledTaskService(
+            app.config["PETEY_STATE"].data_dir / "scheduled-tasks.json",
+            announce_task,
+        )
+        task_service.register_action(
+            "petey", "reminder", "Announce a reminder",
+            [{"name": "message", "label": "What should PETEY remind you about?",
+              "type": "textarea", "max_length": 500}],
+            lambda arguments: {"message": f"Reminder due: {arguments['message']}"},
+        )
+    app.config["PETEY_TASKS"] = task_service
+    app.config["PETEY_ADDONS"].mark_builtin_loaded("tasks", task_service is not None)
     app.config["PETEY_ADDONS"].mark_builtin_loaded(
         "discord", app.config["PETEY_DISCORD"] is not None
     )
@@ -295,6 +373,7 @@ def create_desktop_app(
         return render_template(
             "desktop.html",
             app_version=__version__,
+            changelog_releases=changelog,
             asset_revision=app.config["PETEY_ASSET_REVISION"],
             theme=preferences.get("theme", "nebula"),
             theme_accents=preferences.get("theme_accents", {}),
@@ -302,6 +381,7 @@ def create_desktop_app(
             project_url=PROJECT_URL,
             media_provider_url=MEDIA_PROVIDER_URL,
             discord_enabled=app.config["PETEY_DISCORD"] is not None,
+            tasks_enabled=app.config["PETEY_TASKS"] is not None,
             addon_views=addon_views,
             addon_view_ids=[view["id"] for view in addon_views],
             settings_pages=SETTINGS_PAGES,
@@ -316,6 +396,7 @@ def create_desktop_app(
             {
                 "name": "Petey",
                 "version": __version__,
+                "changelog_unread": current.changelog_seen_version != __version__,
                 "project_url": PROJECT_URL,
                 "person_name": current.display_name,
                 "conversation_id": current.conversation_id,
@@ -333,9 +414,78 @@ def create_desktop_app(
             }
         )
 
+    @app.post("/api/desktop/changelog/seen")
+    def desktop_changelog_seen():
+        app.config["PETEY_STATE"].mark_changelog_seen(__version__)
+        return jsonify({"version": __version__, "seen": True})
+
     @app.get("/api/desktop/addons")
     def desktop_addons():
         return jsonify(app.config["PETEY_ADDONS"].public_status())
+
+    def current_tasks():
+        service = app.config["PETEY_TASKS"]
+        if service is None:
+            raise ScheduledTaskError("Enable the built-in Tasks add-on and restart PETEY.")
+        return service
+
+    @app.get("/api/desktop/tasks")
+    def desktop_tasks():
+        try:
+            return jsonify(current_tasks().public_state())
+        except ScheduledTaskError as exc:
+            return jsonify({"error": str(exc)}), 503
+
+    @app.post("/api/desktop/tasks")
+    def desktop_task_create():
+        try:
+            return jsonify({"task": current_tasks().save_task(request.get_json(silent=True))}), 201
+        except ScheduledTaskError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/desktop/tasks/preview")
+    def desktop_task_preview():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Expected a task draft."}), 400
+        try:
+            service = current_tasks()
+            steps = service.preview_steps(payload.get("steps"))
+            schedule = {**payload, "steps": steps}
+            return jsonify({"steps": steps, "next_runs": service.preview_schedule(schedule)})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.put("/api/desktop/tasks/<task_id>")
+    def desktop_task_update(task_id):
+        try:
+            return jsonify({"task": current_tasks().save_task(request.get_json(silent=True), task_id)})
+        except ScheduledTaskError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.delete("/api/desktop/tasks/<task_id>")
+    def desktop_task_delete(task_id):
+        try:
+            current_tasks().delete_task(task_id)
+            return jsonify({"status": "deleted"})
+        except ScheduledTaskError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/desktop/tasks/<task_id>/run")
+    def desktop_task_run(task_id):
+        try:
+            result = current_tasks().run_now(task_id)
+            return jsonify(result), 502 if result["status"].startswith("Failed") else 200
+        except ScheduledTaskError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.put("/api/desktop/tasks/settings")
+    def desktop_task_settings():
+        payload = request.get_json(silent=True) or {}
+        try:
+            return jsonify(current_tasks().set_show_upcoming(payload.get("show_upcoming_in_rail")))
+        except ScheduledTaskError as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.get("/api/desktop/updates")
     def desktop_updates():
@@ -524,6 +674,37 @@ def create_desktop_app(
     def desktop_tools():
         return jsonify({"filesystem": app.config["PETEY_MCP"].public_status()})
 
+    @app.get("/api/desktop/mcp/servers")
+    def desktop_mcp_servers():
+        return jsonify(app.config["PETEY_GENERAL_MCP"].public_status())
+
+    def mcp_action(action):
+        manager = app.config["PETEY_GENERAL_MCP"]
+        try:
+            return jsonify(action(manager))
+        except (ValueError, MCPError) as exc:
+            # Manager validation and connection errors use fixed, credential-free messages.
+            return jsonify({"error": str(exc), **manager.public_status()}), 400
+        except OSError:
+            return jsonify({"error": "Could not save MCP settings in PETEY's data directory.",
+                            **manager.public_status()}), 400
+
+    @app.post("/api/desktop/mcp/servers/import")
+    def desktop_mcp_import():
+        return mcp_action(lambda manager: manager.import_config(request.get_json(silent=True)))
+
+    @app.put("/api/desktop/mcp/servers/<server_id>")
+    def desktop_mcp_update(server_id):
+        return mcp_action(lambda manager: manager.update(server_id, request.get_json(silent=True)))
+
+    @app.delete("/api/desktop/mcp/servers/<server_id>")
+    def desktop_mcp_remove(server_id):
+        return mcp_action(lambda manager: manager.remove(server_id))
+
+    @app.post("/api/desktop/mcp/servers/<server_id>/test")
+    def desktop_mcp_test(server_id):
+        return mcp_action(lambda manager: manager.test(server_id))
+
     @app.put("/api/desktop/tools/filesystem")
     def desktop_filesystem_tool():
         payload = request.get_json(silent=True) or {}
@@ -623,10 +804,10 @@ def create_desktop_app(
     @app.get("/api/desktop/image-browser/file")
     def desktop_image_browser_file():
         try:
-            path = app.config["PETEY_IMAGE_BROWSER"].image_file(
+            path = app.config["PETEY_IMAGE_BROWSER"].media_file(
                 request.args.get("token", ""), request.args.get("path", "")
             )
-            return send_file(path, as_attachment=False, download_name=path.name)
+            return send_file(path, as_attachment=False, download_name=path.name, conditional=True)
         except ImageBrowserError as exc:
             return jsonify({"error": str(exc)}), 400
     @app.post("/api/desktop/chat")
@@ -661,6 +842,7 @@ def create_desktop_app(
             app.config["PETEY_MEMORY"],
             temporary=temporary,
             mcp_manager=app.config["PETEY_MCP"],
+            general_mcp_manager=app.config["PETEY_GENERAL_MCP"],
             addon_manager=app.config["PETEY_ADDONS"],
             surface=identity.surface,
         )
@@ -1317,6 +1499,68 @@ def create_desktop_app(
         except AIProviderError as exc:
             return jsonify({"error": str(exc)}), 502
 
+    @app.post("/api/desktop/personality/wizard")
+    def desktop_personality_wizard():
+        current: DesktopState = app.config["PETEY_STATE"]
+        raw = request.get_json(silent=True)
+        if raw is None or not isinstance(raw, dict):
+            return jsonify({"error": "Wizard input must be an object."}), 400
+        data = raw
+
+        fast_prompt = str(data.get("fast_prompt", "")).strip()
+        concept = str(data.get("concept", "")).strip() or fast_prompt
+        archetype = str(data.get("archetype", "custom")).strip()
+
+        # If fast_prompt or detailed parameters supplied, attempt AI generation first
+        system_message = (
+            "You are an expert character designer for conversational AI assistants. "
+            "Given the user's personality specifications, generate a complete, highly nuanced AI persona. "
+            "You must return ONLY a raw JSON object with no markdown formatting or commentary. "
+            "The JSON object must contain these exact keys:\n"
+            "- 'name': string (character name)\n"
+            "- 'role_tag': string (short role description)\n"
+            "- 'tagline': string (catchphrase or motto)\n"
+            "- 'system_prompt': string (detailed system prompt beginning with 'You are...', specifying background, demeanor, boundaries, and communication style)\n"
+            "- 'traits': array of strings (3 to 6 trait keywords)\n"
+            "- 'sliders': object with integer values (0 to 100) for 'tone', 'verbosity', 'formality', 'empathy'\n"
+            "- 'speech_style': string (vocal delivery instructions for speech synthesis)\n"
+            "- 'recommended_provider': string ('automatic', 'gemini', 'openai', or 'deapi')\n"
+            "- 'recommended_voice': string (suggested speaker voice name)\n"
+        )
+        user_prompt = (
+            f"Archetype: {archetype}\n"
+            f"Name suggestion: {data.get('name', '')}\n"
+            f"Role suggestion: {data.get('role_tag', '')}\n"
+            f"Tagline suggestion: {data.get('tagline', '')}\n"
+            f"Core Concept / Fast Prompt: {concept}\n"
+            f"Traits: {', '.join(data.get('traits', []))}\n"
+            f"Nuances: {', '.join(data.get('nuances', []))}\n"
+            f"Target Sliders: {data.get('sliders', {})}\n"
+            f"Vocal Vibe: {data.get('vocal_vibe', 'warm')}\n"
+        )
+
+        try:
+            provider = AIProvider(current.ai_provider)
+            raw_response = provider.complete(user_prompt, system_message, []).strip()
+            # Clean possible markdown block
+            if raw_response.startswith("```"):
+                lines = raw_response.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                raw_response = "\n".join(lines).strip()
+            import json
+            parsed = json.loads(raw_response)
+            if isinstance(parsed, dict) and "system_prompt" in parsed and "sliders" in parsed:
+                return jsonify(parsed)
+        except Exception:
+            pass
+
+        fallback = _synthesize_wizard_persona_fallback(data)
+        return jsonify(fallback)
+
+
     @app.route("/api/desktop/knowledge", methods=["GET", "POST"])
     def desktop_knowledge():
         current: DesktopState = app.config["PETEY_STATE"]
@@ -1516,6 +1760,11 @@ def create_desktop_app(
             "Preserve their subject and intent, add useful style, composition, lighting, mood, "
             "and motion details where relevant. Return only the enhanced prompt under 500 characters."
         )
+        if operation == "ref2vid":
+            system_message += (
+                " Preserve every reference token such as <Picture 1>, <Video 1>, and <Audio 1> "
+                "exactly; never invent a reference token that was not in the user's prompt."
+            )
         try:
             provider = AIProvider(current.ai_provider)
             enhanced = provider.complete(prompt, system_message, [])
@@ -1574,6 +1823,7 @@ def create_desktop_app(
 
         uploaded = request.files.get("source")
         source = None
+        references = []
         try:
             if uploaded and uploaded.filename:
                 source = MediaInput(
@@ -1593,6 +1843,30 @@ def create_desktop_app(
                     content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                     data=path.read_bytes(),
                 )
+            if operation == "ref2vid":
+                for upload in request.files.getlist("references"):
+                    if not upload.filename:
+                        continue
+                    filename = PurePath(upload.filename.replace("\\", "/")).name
+                    content_type = upload.mimetype
+                    if not content_type or content_type == "application/octet-stream":
+                        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                    references.append(MediaInput(
+                        filename=filename,
+                        content_type=content_type,
+                        data=upload.read(),
+                    ))
+                browser_tokens = request.form.getlist("reference_browser_token")
+                browser_paths = request.form.getlist("reference_browser_path")
+                if len(browser_tokens) != len(browser_paths):
+                    raise ValueError("Reference media selections are invalid.")
+                for token, relative_path in zip(browser_tokens, browser_paths):
+                    path = app.config["PETEY_IMAGE_BROWSER"].media_file(token, relative_path)
+                    references.append(MediaInput(
+                        filename=path.name,
+                        content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                        data=path.read_bytes(),
+                    ))
             tts_provider = str(parameters.get("tts_provider") or "deapi")
             if operation == "txt2audio" and tts_provider not in {"deapi", "gemini"}:
                 raise ValueError("Choose deAPI or Gemini for media speech.")
@@ -1609,6 +1883,7 @@ def create_desktop_app(
                 installation_id=current.installation_id,
                 model_slug=model_slug,
                 source=source,
+                references=references,
                 parameters=parameters,
                 speech_settings=speech_settings,
                 ai_config={
@@ -1700,6 +1975,7 @@ def create_desktop_app(
         runtime=app.config["PETEY_RUNTIME"],
         get_media_jobs=get_media_jobs,
         event_broker=app.config["PETEY_ADDON_EVENTS"],
+        task_service=task_service,
     )
 
     return app

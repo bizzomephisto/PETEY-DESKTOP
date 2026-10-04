@@ -55,6 +55,51 @@ class MediaServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(generate.await_args.kwargs["reference_audio"], b"audio")
         self.assertEqual(generate.await_args.kwargs["duration"], 45)
 
+    async def test_minimax_h3_reference_video_dispatches_ordered_mixed_files(self):
+        service = MediaService()
+        references = [
+            MediaInput("person.png", "image/png", b"i" * 1024),
+            MediaInput("motion.mp4", "video/mp4", b"v" * 1024),
+            MediaInput("voice.wav", "audio/wav", b"a" * 1024),
+        ]
+        with patch(
+            "petey.media_service.deapi.generate_reference_to_video",
+            new=AsyncMock(return_value={"result_url": "https://media.example/h3.mp4"}),
+        ) as generate:
+            result = await service.generate(
+                "ref2vid", "<Picture 1> follows <Video 1>", "desktop-test",
+                model_slug="MiniMaxH3_33B_Turbo_INT8", references=references,
+            )
+
+        self.assertEqual(result["kind"], "video")
+        self.assertEqual(generate.await_args.args[1], references)
+        self.assertEqual(generate.await_args.kwargs["model_slug"], "MiniMaxH3_33B_Turbo_INT8")
+
+    async def test_reference_video_rejects_audio_only_and_excess_video(self):
+        service = MediaService()
+        with self.assertRaisesRegex(ValueError, "Audio cannot be the only"):
+            await service.generate(
+                "ref2vid", "Use the sound", "desktop-test",
+                references=[MediaInput("voice.wav", "audio/wav", b"a" * 1024)],
+            )
+        with self.assertRaisesRegex(ValueError, "at most 1 video"):
+            await service.generate(
+                "ref2vid", "Use both", "desktop-test", references=[
+                    MediaInput("one.mp4", "video/mp4", b"1" * 1024),
+                    MediaInput("two.mp4", "video/mp4", b"2" * 1024),
+                ],
+            )
+
+    async def test_reference_video_catalog_contains_only_minimax_h3(self):
+        client = AsyncMock()
+        client.get_models.return_value = [
+            {"slug": "other-img2video"},
+            {"slug": "MiniMaxH3_33B_Turbo_INT8"},
+        ]
+        models = await MediaService(client).models("ref2vid")
+        client.get_models.assert_awaited_once_with("img2video")
+        self.assertEqual([item["slug"] for item in models], ["MiniMaxH3_33B_Turbo_INT8"])
+
 
 if __name__ == "__main__":
     unittest.main()

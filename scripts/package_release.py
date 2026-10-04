@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a reviewed PETEY source ZIP from Git's non-ignored file set."""
+"""Build a reviewed PETEY source ZIP from Git's tracked file set."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ RELEASE_TIMESTAMP = (2026, 9, 23, 0, 0, 0)
 
 
 def release_files() -> list[Path]:
-    """Return the tracked and non-ignored files eligible for the release."""
+    """Return the tracked files eligible for the release."""
     result = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        ["git", "ls-files", "--cached", "-z"],
         cwd=ROOT,
         check=True,
         capture_output=True,

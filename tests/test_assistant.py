@@ -10,6 +10,7 @@ from petey.assistant import (
     PETEY_USER_ID,
 )
 from petey.desktop_memory import DesktopMemory
+from petey.tools.registry import ToolRegistry, ToolSpec
 
 
 class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -117,6 +118,36 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
             {"addon_event_source": "spotify", "auto_speak": True},
         )
 
+    async def test_background_dj_events_do_not_spill_into_normal_user_chat(self):
+        memory = MagicMock()
+        memory.get_conversation_messages.return_value = [
+            {
+                "id": 1,
+                "user_id": "ADDON:spotify",
+                "message": "Blend current profile with Classic DJ persona to announce Miles Davis",
+                "timestamp": "2026-01-01T00:00:00",
+                "metadata": {"hidden_from_chat": True, "addon_event_source": "spotify"},
+            },
+            {
+                "id": 2,
+                "user_id": "PETEY",
+                "message": "Yo yo yo listeners! Now playing Miles Davis!",
+                "timestamp": "2026-01-01T00:00:01",
+                "metadata": {"addon_event_source": "spotify"},
+            },
+        ]
+        memory.search_memories.return_value = ""
+        memory.store_memory_deferred.return_value = None
+        service = AssistantService("You are Petey.", memory=memory)
+        with patch("petey.assistant.AIProvider.complete", return_value="Paris is the capital of France.") as llm:
+            await service.respond(
+                "What is the capital of France?",
+                AssistantIdentity("desktop-test", "main", "owner", "Pat"),
+            )
+        # History sent to LLM should omit the background DJ prompt and assistant reply
+        self.assertEqual(llm.call_args.args[2], [])
+        self.assertIn("User Pat said: What is the capital of France?", llm.call_args.args[0])
+
     async def test_empty_message_is_rejected(self):
         service = AssistantService("You are Petey.")
         identity = AssistantIdentity("desktop-test", "main", "owner")
@@ -197,6 +228,7 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_request_uses_registered_model_tools(self):
         registry = MagicMock()
         registry.schemas_for.return_value = [{"type": "function", "function": {"name": "generate_image"}}]
+        registry.requires_tool.return_value = True
         service = AssistantService("You are Petey.", tool_registry=registry)
         identity = AssistantIdentity("desktop-test", "main", "owner")
         event = {"name": "generate_image", "result": {"status": "queued"}}
@@ -226,6 +258,57 @@ class AssistantServiceTests(unittest.IsolatedAsyncioTestCase):
         registry.execute.assert_called_once_with(
             "generate_image", {"prompt": "moon base"}, "Generate an image of a moon base"
         )
+
+    async def test_social_turns_do_not_offer_autonomous_tools(self):
+        handler = MagicMock()
+        registry = ToolRegistry([ToolSpec(
+            name="generate_image", description="An authorized optional tool",
+            parameters={"type": "object", "properties": {}}, handler=handler,
+        )])
+        service = AssistantService("You are Petey.", tool_registry=registry)
+        for message in ("heye", "very cool", "ok thanks", "Thanks, man!"):
+            with (
+                patch("petey.assistant.AIProvider.complete", return_value="No worries.") as complete,
+                patch("petey.assistant.AIProvider.complete_with_tools") as tools,
+            ):
+                await service.respond(message, AssistantIdentity("test", "chat", "owner"))
+            tools.assert_not_called()
+            self.assertIn(message, complete.call_args.args[0])
+            self.assertNotIn("A connected tool can perform this request", complete.call_args.args[0])
+        handler.assert_not_called()
+
+    async def test_optional_tools_do_not_turn_a_correction_into_an_action(self):
+        registry = ToolRegistry([ToolSpec(
+            name="status", description="Optional status",
+            parameters={"type": "object", "properties": {}}, handler=MagicMock(),
+        )])
+        memory = MagicMock()
+        memory.get_conversation_messages.return_value = [
+            {"user_id": "owner", "message": "very cool"},
+            {"user_id": PETEY_USER_ID, "message": "You sent a thumbs-up emoji."},
+        ]
+        memory.search_memories.return_value = ""
+        service = AssistantService("You are Petey.", memory=memory, tool_registry=registry)
+        with patch("petey.assistant.AIProvider.complete_with_tools", return_value=("My mistake.", [])) as complete:
+            await service.respond("i didnt send an emoji", AssistantIdentity("test", "chat", "owner"))
+        self.assertFalse(complete.call_args.kwargs["require_tool"])
+        self.assertNotIn("A connected tool can perform this request", complete.call_args.args[0])
+        self.assertIn("i didnt send an emoji", complete.call_args.args[0])
+        self.assertEqual(complete.call_args.args[2][0]["content"], "User User said through Petey Desktop: very cool")
+        self.assertIn("Your previous answer is not proof", complete.call_args.args[1])
+
+    async def test_thanks_with_an_action_keeps_required_tool_dispatch(self):
+        registry = ToolRegistry([ToolSpec(
+            name="play", description="Play a playlist",
+            parameters={"type": "object", "properties": {}}, handler=MagicMock(),
+            available_when=lambda text: "play" in text,
+            required_when=lambda text: "play" in text,
+        )])
+        service = AssistantService("You are Petey.", tool_registry=registry)
+        with patch("petey.assistant.AIProvider.complete_with_tools", return_value=("Playing.", [])) as complete:
+            await service.respond("Thanks, play my playlist", AssistantIdentity("test", "chat", "owner"))
+        self.assertTrue(complete.call_args.kwargs["require_tool"])
+        self.assertIn("A connected tool can perform this request", complete.call_args.args[0])
 
     async def test_tool_artifact_links_are_preserved_in_reply(self):
         registry = MagicMock()

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hmac
 import importlib.util
 import ipaddress
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -462,6 +464,82 @@ class DesktopBridge:
                     self.restart_modes[str(name)] = tuple(str(item) for item in arguments)
         self.fullscreen = False
         self._restart_started = False
+
+    def _with_qt_clipboard(self, operation):
+        """Run clipboard work on Qt's GUI thread, where QClipboard belongs."""
+        if self.window is None or not hasattr(getattr(self.window, "native", None), "webview"):
+            return None
+        try:
+            from qtpy.QtCore import QThread, QTimer
+            from qtpy.QtGui import QGuiApplication
+
+            app = QGuiApplication.instance()
+            if app is None:
+                return None
+            clipboard = app.clipboard()
+            if QThread.currentThread() == clipboard.thread():
+                return operation(clipboard)
+            finished = threading.Event()
+            result = {}
+
+            def invoke():
+                try:
+                    result["value"] = operation(clipboard)
+                except Exception as exc:
+                    result["error"] = exc
+                finally:
+                    finished.set()
+
+            QTimer.singleShot(0, clipboard, invoke)
+            if not finished.wait(3) or "error" in result:
+                return None
+            return result.get("value")
+        except (ImportError, RuntimeError, AttributeError, TypeError):
+            return None
+
+    def copy_text(self, text):
+        value = str(text or "")
+        if not value or len(value) > 200_000:
+            return {"ok": False}
+        copied = self._with_qt_clipboard(lambda clipboard: clipboard.setText(value) or True)
+        return {"ok": copied is True}
+
+    def read_clipboard_attachment(self):
+        """Read one user-pasted local file or image; never expose clipboard text."""
+        limit = 20 * 1024 * 1024
+
+        def read(clipboard):
+            mime = clipboard.mimeData()
+            if mime is None:
+                return None
+            if mime.hasUrls():
+                for url in mime.urls():
+                    if not url.isLocalFile():
+                        continue
+                    path = Path(url.toLocalFile())
+                    if not path.is_file() or path.stat().st_size > limit:
+                        continue
+                    return path.name, mimetypes.guess_type(path.name)[0] or "application/octet-stream", path.read_bytes()
+            if mime.hasImage():
+                from qtpy.QtCore import QBuffer, QByteArray, QIODevice
+
+                data = QByteArray()
+                buffer = QBuffer(data)
+                if buffer.open(QIODevice.OpenModeFlag.WriteOnly) and clipboard.image().save(buffer, "PNG"):
+                    return "pasted-image.png", "image/png", bytes(data)
+            return None
+
+        try:
+            result = self._with_qt_clipboard(read)
+            if not result:
+                return {"ok": False}
+            filename, content_type, data = result
+            if not data or len(data) > limit:
+                return {"ok": False, "error": "The clipboard file is too large (20 MB limit)."}
+            return {"ok": True, "filename": filename, "content_type": content_type,
+                    "data_base64": base64.b64encode(data).decode("ascii")}
+        except (OSError, ValueError):
+            return {"ok": False}
 
     def set_always_on_top(self, enabled):
         if self.window is None:
@@ -929,9 +1007,13 @@ def protect_lan_app(
 ):
     """Require a secret URL once, then retain access in a strict browser cookie."""
     cookie_name = "petey_lan_session"
+    app.config["PETEY_COMPANION_PAIRING_SECRET"] = access_token
 
     @app.before_request
     def require_lan_session():
+        # Companion routes enforce their own scoped bearer authentication.
+        if request.path.startswith("/api/companion/v1/"):
+            return None
         supplied = request.args.get("access_token", "")
         if supplied and hmac.compare_digest(supplied, access_token):
             response = redirect(request.path or "/")
@@ -1041,6 +1123,9 @@ class LocalServer:
         if jobs is not None:
             jobs.close()
         self.app.config["PETEY_MCP"].close()
+        general_mcp = self.app.config.get("PETEY_GENERAL_MCP")
+        if general_mcp is not None:
+            general_mcp.close()
         self.app.config["PETEY_RUNTIME"].close()
 
 

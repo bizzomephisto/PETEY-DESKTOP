@@ -5,9 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>PETEY</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='desktop.css', v=asset_revision) }}">
+    {% if tasks_enabled %}<link rel="stylesheet" href="{{ url_for('static', filename='tasks.css', v=asset_revision) }}">{% endif %}
     {% for addon in addon_views %}{% if addon.stylesheet %}<link rel="stylesheet" href="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.stylesheet, v=addon.asset_revision) }}">{% endif %}{% endfor %}
 </head>
 <body>
+    <svg class="command-icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <symbol id="ci-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.5a2 2 0 0 0 1.4-3.4 1.6 1.6 0 0 1 1.1-2.7H18a3 3 0 0 0 3-3A9 9 0 0 0 12 3Z"/><circle cx="7.5" cy="11" r=".8"/><circle cx="10" cy="7.5" r=".8"/><circle cx="15" cy="7.5" r=".8"/><circle cx="18" cy="11" r=".8"/></symbol>
+        <symbol id="ci-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+        <symbol id="ci-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></symbol>
+        <symbol id="ci-mic-off" viewBox="0 0 24 24"><path d="M9 9V5a3 3 0 0 1 5.7-1.3M15 10v2a3 3 0 0 1-.2 1M5 10v2a7 7 0 0 0 11.9 5M19 10v2a7 7 0 0 1-.4 2.3M12 19v3M8 22h8M3 3l18 18"/></symbol>
+        <symbol id="ci-temporary" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-8 8H4l2.2-3A8 8 0 1 1 20 11.5Z"/><path d="M9 11.5h6M12 8.5v6"/></symbol>
+        <symbol id="ci-restart" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.8 9a7 7 0 0 1 12.5-1.4L20 12M4 12l1.7 4.4A7 7 0 0 0 18.2 15"/></symbol>
+        <symbol id="ci-nebula" viewBox="0 0 24 24"><path d="m12 2 1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6L12 2ZM19 17l.5 1.5L21 19l-1.5.5L19 21l-.5-1.5L17 19l1.5-.5L19 17Z"/></symbol>
+        <symbol id="ci-cognitive" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="7" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/><circle cx="5" cy="18" r="1.5"/><path d="m7 8 2.7 2.2M14.4 9.9 17.5 7M14.5 14l3.2 2.7M9.7 14.2 6.3 17"/></symbol>
+        <symbol id="ci-signal" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.5 4.5a10.6 10.6 0 0 0 0 15M19.5 4.5a10.6 10.6 0 0 1 0 15"/></symbol>
+        <symbol id="ci-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></symbol>
+        <symbol id="ci-ember" viewBox="0 0 24 24"><path d="M12 22c4.3 0 7-3 7-7 0-3-1.7-5.1-4-7-.1 2-1 3.1-2.1 3.7C13.4 7.7 11 5 9 3c.2 3-1.4 5-2.8 6.9A8.2 8.2 0 0 0 5 15c0 4 2.7 7 7 7Z"/><path d="M12 22c2.1 0 3.5-1.5 3.5-3.5 0-1.4-.8-2.6-2.5-3.8-.1 1.2-.7 2-1.6 2.5-.4-1.3-1.1-2.1-2.1-2.8.1 1.5-1.8 3-1.8 4.1C7.5 20.5 9.4 22 12 22Z"/></symbol>
+        <symbol id="ci-wake" viewBox="0 0 24 24"><path d="M13 19c0 1.7-1 3-2.6 3S8 20.8 8 19c0-2.2 3-3.3 3-5.8V9a4 4 0 0 0-8 0M5 12a2 2 0 0 0 2 2M16 7a5 5 0 0 1 0 10M19 4a9 9 0 0 1 0 16"/></symbol>
+        <symbol id="ci-always" viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 3v18M16 6v12M20 10v4"/></symbol>
+        <symbol id="ci-ptt" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="3"/><path d="M8 10h8M8 14h4"/></symbol>
+        <symbol id="ci-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></symbol>
+        <symbol id="ci-cloud-desktop" viewBox="0 0 24 24"><path d="M7 15H5a3 3 0 0 1-.4-6 5 5 0 0 1 9.5-1.7A4 4 0 0 1 19 11"/><rect x="9" y="12" width="12" height="8" rx="1"/><path d="M13 22h4M15 20v2"/></symbol>
+        <symbol id="ci-browser" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M6 6.5h.01M9 6.5h.01"/></symbol>
+        <symbol id="ci-fullscreen" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></symbol>
+    </svg>
     <main class="app-shell">
         <div class="command-menu-anchor">
             <button id="command-menu-toggle" class="command-menu-toggle" type="button" aria-label="Hide command sidebar" title="Hide command sidebar" aria-controls="command-rail" aria-expanded="true"><span aria-hidden="true">☰</span></button>
@@ -20,28 +41,26 @@
                 <button id="collapse-sidebar" class="collapse-button" type="button" title="Collapse sidebar">‹</button>
             </div>
             <nav class="desktop-nav" aria-label="Petey sections">
-                <span class="nav-section-heading">Chats</span>
-                <button class="nav-button active" data-view="chat" type="button"><span class="nav-icon">●</span><span class="nav-label">Chat</span></button>
-                <div class="chat-tools">
+                <button id="sidebar-chat-toggle" class="nav-button active" data-view="chat" type="button" aria-expanded="false" aria-controls="sidebar-chats"><span class="nav-icon">●</span><span class="nav-label">Chat</span><span class="nav-disclosure" aria-hidden="true">⌄</span></button>
+                <div id="sidebar-chats" class="chat-tools" hidden>
                     <button id="new-chat" class="new-chat-button" type="button">＋ New chat</button>
                     <div id="conversation-list" class="conversation-list" aria-label="Saved chats"></div>
                 </div>
-                <span class="nav-section-heading">Create</span>
-                <button class="nav-button" data-view="media" type="button"><span class="nav-icon">◆</span><span class="nav-label">Media</span></button>
+                <button class="nav-button" data-view="media" type="button"><span class="nav-icon">◆</span><span class="nav-label">Create</span></button>
                 <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon">▦</span><span class="nav-label">Gallery</span></button>
-                <details class="nav-integrations">
-                    <summary><span class="nav-icon">◇</span><span class="nav-label">Integrations</span><span class="nav-disclosure">⌄</span></summary>
-                    <div class="nav-integrations-list">
-                        <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">▧</span><span class="nav-label">Manage add-ons</span></button>
-                        {% if discord_enabled %}<button class="nav-button" data-view="discord" type="button"><span class="nav-icon">◉</span><span class="nav-label">Discord</span></button>{% endif %}
-                        {% for addon in addon_views %}<button class="nav-button" data-view="{{ addon.id }}" type="button"><span class="nav-icon">{{ addon.icon }}</span><span class="nav-label">{{ addon.label }}</span></button>{% endfor %}
-                    </div>
-                </details>
-                <button class="nav-button" data-view="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
-                <button class="nav-button" data-view="help" type="button"><span class="nav-icon">?</span><span class="nav-label">Help</span></button>
+                {% if tasks_enabled %}<button class="nav-button" data-view="tasks" data-sidebar-addon="tasks" type="button"><span class="nav-icon">◷</span><span class="nav-label">Tasks</span></button>{% endif %}
+                <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">◇</span><span class="nav-label">Addons</span></button>
+                <div id="sidebar-addon-shortcuts" class="sidebar-addon-shortcuts">
+                    {% if discord_enabled %}<button class="nav-button" data-view="discord" data-sidebar-addon="discord" type="button" hidden><span class="nav-icon">◉</span><span class="nav-label">Discord</span></button>{% endif %}
+                    {% for addon in addon_views %}<button class="nav-button" data-view="{{ addon.id }}" data-sidebar-addon="{{ addon.addon_id }}" type="button" hidden><span class="nav-icon">{{ addon.icon }}</span><span class="nav-label">{{ addon.label }}</span></button>{% endfor %}
+                </div>
             </nav>
             <div class="coming-next">
-                <span class="sidebar-version">PETEY v{{ app_version }}</span>
+                <div class="sidebar-footer-actions">
+                    <button class="nav-button" data-view="settings" type="button" aria-label="Settings" title="Settings"><span class="nav-icon" aria-hidden="true">⚙</span></button>
+                    <button class="nav-button" data-view="help" type="button" aria-label="Help" title="Help"><span class="nav-icon" aria-hidden="true">?</span></button>
+                </div>
+                <button id="open-changelog" class="sidebar-version" type="button" aria-haspopup="dialog" aria-controls="changelog-dialog" title="Read PETEY changelog">PETEY v{{ app_version }} · What’s new</button>
             </div>
         </aside>
 
@@ -52,7 +71,9 @@
                         <img class="mobile-brand-logo" src="{{ url_for('static', filename='petey_avatar.png') }}" alt="">
                         <h1 id="chat-name">New chat</h1>
                     </div>
+                    <label class="chat-profile-field"><span class="sr-only">Profile for this chat</span><select id="chat-persona" aria-label="Profile for this chat"><option value="system">System persona</option></select></label>
                     <p><span id="status" class="chat-runtime-status">Starting up…</span></p>
+                    <details id="voice-latency" class="voice-latency" hidden><summary>Voice timing</summary><span id="voice-latency-values"></span><button id="copy-voice-latency" type="button">Copy timing</button></details>
                 </div>
                 <div class="mobile-chat-actions" aria-label="Mobile chat controls">
                     <button id="mobile-visual-mode" type="button" title="Open visual mode">Visual</button>
@@ -90,8 +111,10 @@
 
             <div id="visual-chat" class="visual-chat" hidden>
                 <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
+                <iframe id="synapse-frame" title="PETEY Synapse visualizer" data-src="{{ url_for('static', filename='synapse/index.html', v=asset_revision) }}" hidden></iframe>
                 <button id="desktop-visual-back" class="desktop-visual-back" type="button"><span aria-hidden="true">←</span> Back to chat</button>
                 <div id="visual-state-heading" class="visual-state-heading" aria-hidden="true">PRESENT</div>
+                <div id="visual-activity-detail" class="visual-activity-detail" aria-hidden="true">READY</div>
                 <div id="mobile-visual-actions" class="mobile-visual-actions" hidden>
                     <button id="mobile-show-chat" type="button"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v10H9l-4 3v-13Z"/></svg><span>Chat</span></button>
                     <button id="mobile-visual-fullscreen" type="button" aria-label="Enter fullscreen" title="Enter fullscreen"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg></button>
@@ -127,7 +150,7 @@
                 <div id="mobile-settings-advanced" class="mobile-settings-advanced" hidden>
                     <label><span>Petey profile</span><select id="mobile-persona"><option value="current">Loading profiles…</option></select></label>
                     <label><span>Voice</span><select id="mobile-voice"><option value="">Loading voices…</option></select></label>
-                    <label><span>Animation</span><select id="mobile-animation"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
+                    <label><span>Animation</span><select id="mobile-animation"><option value="synapse_network">Synapse Network</option><option value="cognitive_pulse">Cognitive Pulse</option><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
                     <nav class="mobile-settings-links" aria-label="All settings">
                         {% for page in settings_pages %}<button type="button" data-mobile-settings-view="{{ page.id }}"><span aria-hidden="true">{{ page.icon }}</span>{{ page.title }}</button>{% endfor %}
                     </nav>
@@ -167,9 +190,12 @@
             </form>
         </section>
 
+        <div id="workspace-composer" class="workspace-composer"></div>
+
         {% include "desktop_help.html" %}
         {% if discord_enabled %}{% include "desktop_discord.html" %}{% endif %}
         {% include "desktop_addons.html" %}
+        {% if tasks_enabled %}{% include "desktop_tasks.html" %}{% endif %}
         {% for addon in addon_views %}<section id="view-{{ addon.id }}" class="tool-view app-view addon-view" data-addon-id="{{ addon.addon_id }}">{{ addon.html|safe }}</section>{% endfor %}
 
         <section id="view-media" class="tool-view app-view">
@@ -183,6 +209,7 @@
                                 <option value="img2img">Restyle image</option>
                                 <option value="txt2video">Generate video</option>
                                 <option value="img2video">Animate image</option>
+                                <option value="ref2vid">Reference to video · MiniMax H3</option>
                                 <option value="vid2video">Restyle video</option>
                                 <option value="txt2music">Generate music</option>
                                 <option value="txt2audio">Text to speech</option>
@@ -204,6 +231,19 @@
                         </div>
                         <input id="media-nonimage-source" type="file" hidden>
                         <div id="media-image-selection" class="image-selection" hidden><img id="media-image-selection-preview" alt="Selected source"><span id="media-image-selection-name"></span></div>
+                    </div>
+
+                    <div id="media-reference-field" class="full-field" hidden>
+                        <span>H3 references</span>
+                        <p id="media-reference-hint" class="hint">Choose up to 3 reference files for MiniMax H3. Audio needs an image or video. Use the displayed tags in your prompt.</p>
+                        <div class="image-source-controls">
+                            <label class="secondary-button media-file-button" for="media-reference-files">Choose reference files</label>
+                            <button id="browse-media-reference-images" class="secondary-button" type="button">Browse reference thumbnails</button>
+                            <button id="clear-media-references" class="text-button" type="button" hidden>Clear all</button>
+                        </div>
+                        <input id="media-reference-files" type="file" accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.mp4,.mov,.webm,.avi,.mpeg,.mpg,.mp3,.wav,.ogg,.m4a,.flac" multiple hidden>
+                        <label id="media-reference-video-audio-field" class="hint" hidden><input id="media-reference-video-audio" type="checkbox"> The reference video has sound and reserves <code>&lt;Audio 1&gt;</code></label>
+                        <div id="media-reference-list" class="media-reference-list" aria-live="polite"></div>
                     </div>
 
                     <div id="media-visual-fields" class="media-parameter-group field-grid two-column">
@@ -274,18 +314,36 @@
             </header>
             <section id="command-core-controls" class="command-core-controls" aria-label="PETEY controls">
                 <div class="command-core-controls-heading"><span>Controls</span><span class="command-core-fixed-tools"><button id="command-core-collapse" class="command-card-collapse" type="button" aria-expanded="true" aria-label="Collapse controls" title="Collapse controls">⌄</button></span></div>
-                <label class="chat-header-menu-field" title="Persona assigned to this chat"><span>Profile</span><select id="chat-persona" aria-label="Persona assigned to this chat"><option value="system">System persona</option></select></label>
-                <label class="chat-header-menu-field"><span>Chat</span><select id="command-chat-select" aria-label="Select chat"></select></label>
-                <label class="chat-header-menu-field chat-theme-field"><span>Theme / color</span><span class="chat-theme-controls"><select id="chat-theme-select" aria-label="Desktop style"><option value="nebula">Nebula</option><option value="studio">Studio</option><option value="signal">Signal</option><option value="terminal">Terminal</option><option value="ember">Ember</option></select><input id="chat-theme-accent" type="color" aria-label="Accent color for selected desktop style"></span></label>
-                <div class="command-core-control-row">
-                    <button id="visual-mode-toggle" class="visual-mode-toggle" type="button">Visual mode</button>
-                    <button id="visual-fullscreen" class="visual-mode-toggle" type="button" title="Full screen (F11)" hidden>⛶ Full screen</button>
+                <div class="command-icon-toolbar" role="group" aria-label="PETEY quick controls">
+                    <button id="command-theme-toggle" class="command-icon-button" type="button" aria-label="Themes and colors" title="Themes and colors" aria-controls="command-theme-panel" aria-expanded="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-palette"/></svg></button>
+                    <button id="visual-mode-toggle" class="command-icon-button" type="button" aria-label="Open visual mode" title="Open visual mode" aria-pressed="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-eye"/></svg></button>
+                    <button id="command-microphone-toggle" class="command-icon-button" type="button" aria-label="Microphone mode: Off" title="Microphone mode: Off" aria-controls="command-microphone-panel" aria-expanded="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-mic-off"/></svg></button>
+                    <label class="command-icon-button temporary-toggle" title="Temporary chat: off. This chat is not saved when enabled."><input id="temporary-mode" type="checkbox" aria-label="Temporary chat"><svg class="command-icon" aria-hidden="true"><use href="#ci-temporary"/></svg></label>
+                    <button id="command-restart-toggle" class="command-icon-button" type="button" aria-label="Restart PETEY" title="Restart PETEY" aria-controls="command-restart-panel" aria-expanded="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-restart"/></svg></button>
                 </div>
-                <label id="visual-style-field" class="chat-header-menu-field" hidden><span>Animation</span><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
-                <label class="chat-header-menu-field"><span>Microphone mode</span><select id="command-microphone-mode" aria-label="Microphone mode"><option value="disabled">Off</option><option value="push_to_talk">Push to talk</option><option value="always_on">Always on</option><option value="wake_word">Wake name</option></select></label>
-                <label class="temporary-toggle" title="Temporary chats stay only in this window and do not use RAG or saved memory."><input id="temporary-mode" type="checkbox"><span>Temporary chat</span></label>
-                <label class="chat-header-menu-field"><span>Restart mode</span><select id="chat-restart-mode" aria-label="PETEY restart mode"><option value="current">Keep current launch mode</option><option value="desktop">Desktop window</option><option value="cloudflare">Cloudflare + desktop</option><option value="browser">Browser</option></select></label>
-                <button id="chat-restart-petey" class="chat-menu-restart" type="button">↻ Restart PETEY</button>
+                <div id="command-theme-panel" class="command-icon-panel" hidden><span class="command-icon-panel-title">Theme and color</span><div class="command-theme-grid">
+                    {% for theme, icon, label in [('nebula', 'nebula', 'Nebula'), ('cognitive', 'cognitive', 'Command Console'), ('signal', 'signal', 'Signal'), ('terminal', 'terminal', 'Terminal'), ('ember', 'ember', 'Ember')] %}
+                    <div class="command-theme-choice"><button type="button" class="command-choice-icon" data-command-theme="{{ theme }}" aria-label="{{ label }} theme" title="{{ label }} theme" aria-pressed="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-{{ icon }}"/></svg></button><input type="color" data-command-theme-accent="{{ theme }}" aria-label="{{ label }} accent color" title="{{ label }} accent color"><span>{{ label }}</span></div>
+                    {% endfor %}
+                </div></div>
+                <div id="command-microphone-panel" class="command-icon-panel" hidden><span class="command-icon-panel-title">Microphone mode</span><div class="command-option-grid">
+                    <button type="button" class="command-option" data-command-microphone="wake_word" aria-pressed="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-wake"/></svg><span>Wake name</span></button>
+                    <button type="button" class="command-option" data-command-microphone="always_on" aria-pressed="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-always"/></svg><span>Always on</span></button>
+                    <button type="button" class="command-option" data-command-microphone="push_to_talk" aria-pressed="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-ptt"/></svg><span>Push to talk</span></button>
+                </div><button class="command-option-off" type="button" data-command-microphone="disabled">Turn microphone off</button><select id="command-microphone-mode" hidden aria-label="Microphone mode"><option value="disabled">Off</option><option value="push_to_talk">Push to talk</option><option value="always_on">Always on</option><option value="wake_word">Wake name</option></select></div>
+                <div id="command-restart-panel" class="command-icon-panel" hidden><span class="command-icon-panel-title">Restart PETEY in</span><div class="command-option-grid">
+                    <button type="button" class="command-option" data-command-restart="desktop"><svg class="command-icon" aria-hidden="true"><use href="#ci-monitor"/></svg><span>Desktop</span></button>
+                    <button type="button" class="command-option" data-command-restart="cloudflare"><svg class="command-icon" aria-hidden="true"><use href="#ci-cloud-desktop"/></svg><span>Cloudflare + desktop</span></button>
+                    <button type="button" class="command-option" data-command-restart="browser"><svg class="command-icon" aria-hidden="true"><use href="#ci-browser"/></svg><span>Browser</span></button>
+                </div></div>
+                <div id="visual-style-field" class="command-visual-style" hidden><label for="visual-style-select">Animation</label><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="synapse_network">Synapse Network</option><option value="cognitive_pulse">Cognitive Pulse</option><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select><a class="command-choice-icon visual-lab-link" href="/static/experiments/neural-three.html" title="Try the experimental Three.js visualizer" aria-label="Try the experimental Three.js visualizer">3D</a><button id="visual-fullscreen" class="command-choice-icon" type="button" title="Full screen (F11)" aria-label="Full screen (F11)"><svg class="command-icon" aria-hidden="true"><use href="#ci-fullscreen"/></svg></button></div>
+            </section>
+            <section id="command-media-card" class="command-card command-media-card" data-command-section="media" data-command-panel="media">
+                <div class="command-card-heading"><span>Media</span></div>
+                <label class="sr-only" for="command-media-provider">Media provider</label>
+                <select id="command-media-provider" aria-label="Media provider" hidden></select>
+                <div id="command-media-players"></div>
+                <p id="command-media-empty" class="command-empty">Media add-ons show their player here.</p>
             </section>
             <section class="command-card command-session-card" data-command-section="session" data-command-panel="session">
                 <div class="command-card-heading"><span>Live session</span><i id="command-status-dot" aria-hidden="true"></i></div>
@@ -317,34 +375,62 @@
                 <div id="command-addon-notifications" class="command-addon-notifications" aria-live="polite"></div>
                 <p id="command-notifications-empty" class="command-empty">No add-on notifications.</p>
             </section>
+            {% if tasks_enabled %}<section class="command-card command-tasks-card" data-command-section="tasks" data-command-panel="tasks">
+                <div class="command-card-heading"><span>Tasks</span><small id="tasks-rail-count">0</small></div>
+                <button class="tasks-manager-link" type="button" data-command-view="tasks">◷ Open task manager</button>
+                <div id="tasks-upcoming" class="tasks-upcoming" hidden></div>
+            </section>{% endif %}
             <details class="command-rail-config">
                 <summary><span>Customize rail</span><span aria-hidden="true">⚙</span></summary>
                 <div>
+                    <label><input type="checkbox" data-command-section-setting="media"> Media</label>
                     <label><input type="checkbox" data-command-section-setting="session"> Live session</label>
                     <label><input type="checkbox" data-command-section-setting="launch"> Quick launch</label>
                     <label><input type="checkbox" data-command-section-setting="addons"> Add-on controls</label>
                     <label><input type="checkbox" data-command-section-setting="signals"> Signals</label>
+                    {% if tasks_enabled %}<label><input type="checkbox" data-command-section-setting="tasks"> Tasks</label>{% endif %}
                     <button id="command-disable-rail" type="button">Disable rail</button>
                 </div>
             </details>
         </aside>
     </main>
+    <dialog id="changelog-dialog" class="changelog-dialog" aria-labelledby="changelog-title">
+        <div class="changelog-shell">
+            <header class="changelog-header"><div><span class="page-eyebrow">RELEASE NOTES</span><h2 id="changelog-title">What’s new in v{{ app_version }}</h2></div><button id="changelog-close-x" class="new-chat-close" type="button" aria-label="Close changelog">×</button></header>
+            <div class="changelog-releases">
+                {% for release in changelog_releases %}
+                <details class="changelog-release" {% if loop.first %}open{% endif %}>
+                    <summary>{{ release.version }}{% if release.date %}<span>{{ release.date }}</span>{% endif %}</summary>
+                    <div class="changelog-blocks">
+                        {% for block in release.blocks %}
+                        {% if block.type == 'heading' %}<h3>{{ block.text }}</h3>
+                        {% elif block.type == 'bullet' %}<p class="changelog-bullet">{{ block.text }}</p>
+                        {% else %}<p>{{ block.text }}</p>{% endif %}
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endfor %}
+            </div>
+            <footer class="changelog-footer"><button id="changelog-done" class="primary-button" type="button">Done</button></footer>
+        </div>
+    </dialog>
     <dialog id="image-browser-dialog" class="image-browser-dialog">
         <div class="image-browser-shell">
             <header class="image-browser-header">
-                <div><h2>Choose an image</h2><p id="image-browser-root">Select a folder to view thumbnails.</p></div>
+                <div><h2 id="image-browser-title">Choose an image</h2><p id="image-browser-root">Select a folder to view media previews.</p></div>
                 <button id="close-image-browser" class="icon-button" type="button" aria-label="Close">×</button>
             </header>
             <div class="image-browser-toolbar">
-                <button id="choose-image-folder" class="primary-button" type="button">Choose image folder</button>
+                <button id="choose-image-folder" class="primary-button" type="button">Choose media folder</button>
                 <button id="image-browser-up" class="secondary-button" type="button">↑ Up</button>
                 <span id="image-browser-path">/</span>
+                <button id="add-reference-images" class="primary-button image-browser-add-selected" type="button" disabled hidden>Add selected references</button>
             </div>
             <div id="image-browser-manual" class="image-browser-manual" hidden>
-                <input id="image-browser-folder-path" type="text" placeholder="/absolute/path/to/images">
+                <input id="image-browser-folder-path" type="text" placeholder="/absolute/path/to/media">
                 <button id="open-image-browser-path" class="primary-button" type="button">Open folder</button>
             </div>
-            <div id="image-browser-grid" class="image-browser-grid"><p class="muted">Choose a folder to get thumbnail previews.</p></div>
+            <div id="image-browser-grid" class="image-browser-grid"><p class="muted">Choose a folder to view image, video, and audio files.</p></div>
             <footer><span id="image-browser-status" class="wide-status"></span><button id="cancel-image-browser" class="secondary-button" type="button">Cancel</button></footer>
         </div>
     </dialog>
@@ -377,6 +463,7 @@
                 this._queue.push(['panel', value]);
                 return () => this.removePanel(value.id);
             },
+            registerMediaPlayer(panel) { return this.registerPanel({...panel, kind: 'media'}); },
             removePanel(id) { this._queue.push(['removePanel', id]); },
             notify(notification) {
                 const value = {...(notification || {})};
@@ -388,8 +475,10 @@
         };
     </script>
     {% if discord_enabled %}<script src="{{ url_for('static', filename='discord.js', v=asset_revision) }}"></script>{% endif %}
+    {% if tasks_enabled %}<script src="{{ url_for('static', filename='tasks.js', v=asset_revision) }}"></script>{% endif %}
     {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=addon.asset_revision) }}"></script>{% endif %}{% endfor %}
     <script src="{{ url_for('static', filename='settings.js', v=asset_revision) }}"></script>
     <script src="{{ url_for('static', filename='desktop.js', v=asset_revision) }}"></script>
+    <script src="{{ url_for('static', filename='mcp.js', v=asset_revision) }}"></script>
 </body>
 </html>

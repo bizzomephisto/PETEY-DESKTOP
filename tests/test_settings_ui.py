@@ -114,7 +114,7 @@ class SettingsUITests(unittest.TestCase):
                   if tag == 'input' and attrs.get('name') == 'interface-theme']
         colors = [attrs for tag, attrs in self.markup.elements
                   if tag == 'input' and attrs.get('data-theme-accent')]
-        themes = {'nebula', 'studio', 'signal', 'terminal', 'ember'}
+        themes = {'nebula', 'cognitive', 'signal', 'terminal', 'ember'}
         self.assertEqual({item.get('value') for item in radios}, themes)
         self.assertEqual({item.get('data-theme-accent') for item in colors}, themes)
         self.assertEqual(len(radios), 5)
@@ -125,6 +125,10 @@ class SettingsUITests(unittest.TestCase):
         stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(encoding='utf-8')
         self.assertIn('[data-theme="terminal"] body::after', stylesheet)
         self.assertIn('animation: terminal-cursor-blink', stylesheet)
+        appearance = (Path(__file__).parents[1] / 'web/templates/settings/appearance.html').read_text(encoding='utf-8')
+        template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        self.assertIn('Command Console', appearance)
+        self.assertIn('id="ci-cognitive"', template)
 
     def test_command_center_rail_and_addon_hooks_render(self):
         radios = [attrs for tag, attrs in self.markup.elements
@@ -150,7 +154,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('id="command-core-controls"', template)
         self.assertIn('id="command-core-collapse"', template)
         self.assertNotIn('id="command-core-controls" class="command-core-controls" data-command-panel=', template)
-        self.assertIn('id="command-chat-select"', template)
+        self.assertNotIn('id="command-chat-select"', template)
         self.assertIn('id="command-microphone-mode"', template)
         self.assertIn('command_rail_collapsed', javascript)
         self.assertIn("collapsed.has('controls')", javascript)
@@ -173,7 +177,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('top: 22px; right: calc(27px + var(--command-rail-scrollbar-width, 0px));', stylesheet)
         self.assertIn('scrollbar-gutter: stable;', stylesheet)
         self.assertNotIn('command-topbar', stylesheet)
-        self.assertIn('.command-card-drag', stylesheet)
+        self.assertIn('.command-card-heading:hover', stylesheet)
         self.assertNotIn('Companion</option>', template)
 
     def test_local_first_provider_copy_and_provider_neutral_prompt_tools(self):
@@ -194,6 +198,25 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('function chatProviderLabel(', javascript)
         self.assertNotIn('Gemini is rewriting the prompt', javascript)
         self.assertNotIn('Gemini is enhancing the prompt', javascript)
+
+    def test_personality_wizard_ui_elements(self):
+        root = Path(__file__).parents[1]
+        personality = (root / 'web/templates/settings/personality.html').read_text(encoding='utf-8')
+        javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
+        css = (root / 'web/static/desktop.css').read_text(encoding='utf-8')
+
+        self.assertIn('id="open-personality-wizard"', personality)
+        self.assertIn('id="personality-wizard-dialog"', personality)
+        self.assertIn('class="wizard-steps-bar"', personality)
+        self.assertIn('data-archetype="scholar"', personality)
+        self.assertIn('data-archetype="detective"', personality)
+        self.assertIn('id="wizard-apply-btn"', personality)
+
+        self.assertIn('openPersonalityWizard', javascript)
+        self.assertIn("apiJson('/api/desktop/personality/wizard'", javascript)
+        self.assertIn('applyWizardToForm', javascript)
+        self.assertIn('.wizard-card', css)
+
 
     def test_mobile_shell_keeps_essentials_first_with_full_settings_access(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
@@ -225,8 +248,13 @@ class SettingsUITests(unittest.TestCase):
     def test_desktop_chat_controls_live_in_fixed_command_panel(self):
         ids = {attrs.get('id'): (tag, attrs) for tag, attrs in self.markup.elements if 'id' in attrs}
         self.assertEqual(ids['command-core-controls'][0], 'section')
-        self.assertEqual(ids['command-chat-select'][0], 'select')
+        self.assertNotIn('command-chat-select', ids)
+        self.assertEqual(ids['chat-persona'][0], 'select')
+        self.assertLess(self.html.index('id="chat-name"'), self.html.index('id="chat-persona"'))
+        self.assertLess(self.html.index('id="chat-persona"'), self.html.index('id="messages"'))
+        self.assertLess(self.html.index('id="chat-persona"'), self.html.index('id="command-core-controls"'))
         self.assertEqual(ids['command-microphone-mode'][0], 'select')
+        self.assertIn('hidden', ids['command-microphone-mode'][1])
         self.assertIn('chat-utility-dock', ids)
         self.assertIn('visual-style-field', ids)
         self.assertIn('hidden', ids['visual-style-field'][1])
@@ -238,23 +266,32 @@ class SettingsUITests(unittest.TestCase):
         )
         self.assertNotIn('id="chat-header-menu"', self.html)
         self.assertNotIn('aria-label="Open chat controls"', self.html)
-        self.assertIn("commandChatSelect.addEventListener('change'", javascript)
         self.assertIn("commandMicrophoneModeSelect.addEventListener('change'", javascript)
         self.assertIn("document.getElementById('visual-style-field').hidden = !visualMode;", javascript)
-        self.assertIn('chat-restart-petey', ids)
-        self.assertEqual(ids['chat-restart-mode'][0], 'select')
-        self.assertIn('<option value="current">Keep current launch mode</option>', self.html)
-        self.assertEqual(ids['chat-theme-select'][0], 'select')
-        self.assertEqual(ids['chat-theme-accent'][1].get('type'), 'color')
+        self.assertIn('command-theme-toggle', ids)
+        self.assertIn('command-microphone-toggle', ids)
+        self.assertIn('command-restart-toggle', ids)
+        self.assertNotIn('chat-restart-mode', ids)
+        self.assertNotIn('chat-theme-select', ids)
+        self.assertNotIn('chat-theme-accent', ids)
+        themes = [attrs for _, attrs in self.markup.elements if 'data-command-theme' in attrs]
+        accents = [attrs for _, attrs in self.markup.elements if 'data-command-theme-accent' in attrs]
+        microphones = [attrs['data-command-microphone'] for _, attrs in self.markup.elements
+                       if 'data-command-microphone' in attrs]
+        restarts = [attrs['data-command-restart'] for _, attrs in self.markup.elements
+                    if 'data-command-restart' in attrs]
+        self.assertEqual(len(themes), 5)
+        self.assertEqual(len(accents), 5)
+        self.assertEqual(microphones, ['wake_word', 'always_on', 'push_to_talk', 'disabled'])
+        self.assertEqual(restarts, ['desktop', 'cloudflare', 'browser'])
         self.assertEqual(ids['desktop-visual-back'][0], 'button')
         menu = self.html[self.html.index('<section id="command-core-controls"'):]
         menu = menu[:menu.index('</section>')]
-        self.assertLess(menu.index('id="temporary-mode"'), menu.index('id="chat-restart-petey"'))
-        self.assertLess(menu.index('id="chat-restart-mode"'), menu.index('id="chat-restart-petey"'))
+        self.assertLess(menu.index('id="temporary-mode"'), menu.index('id="command-restart-toggle"'))
         self.assertIn('Restart PETEY in ${label}?', javascript)
         self.assertIn('Enter the Cloudflare hostname for this PETEY computer:', javascript)
-        self.assertIn('restartPetey(event.currentTarget, statusText, mode.value);', javascript)
-        self.assertIn("document.getElementById('chat-theme-select').addEventListener('change'", javascript)
+        self.assertIn('restartPetey(button, statusText, mode);', javascript)
+        self.assertIn("document.querySelectorAll('[data-command-theme]')", javascript)
         self.assertIn("document.getElementById('desktop-visual-back').addEventListener('click'", javascript)
         self.assertIn('savePreferences({visual_mode: false});', javascript)
         self.assertIn('.command-core-controls {', stylesheet)
@@ -321,6 +358,16 @@ class SettingsUITests(unittest.TestCase):
         self.assertNotIn('.composer .attach-button, .composer > small { display: none !important; }', stylesheet)
         self.assertIn('.composer .attach-button, .composer .mic-button, .composer .voice-response-button', stylesheet)
 
+    def test_android_mobile_push_to_talk_avoids_bluetooth_call_audio_route(self):
+        javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn("/Android/i.test(navigator.userAgent || '')", javascript)
+        self.assertIn('microphoneContext.createMediaStreamDestination()', javascript)
+        self.assertIn('primeSpeechPlayback({carSafe: androidCarSafeCapture});', javascript)
+        self.assertIn('if (carSafe) return;', javascript)
+        self.assertIn('bluetooth|hands[- ]?free|headset|android auto|car audio', javascript)
+
     def test_pending_attachment_can_be_removed_on_desktop_and_mobile(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
             encoding='utf-8'
@@ -332,8 +379,9 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("attachmentInput.value = '';", javascript)
         self.assertIn("remove.className = 'attachment-remove'", javascript)
         self.assertIn("remove.addEventListener('click', clearSelectedAttachment)", javascript)
-        self.assertIn("messageInput.addEventListener('paste', event =>", javascript)
-        self.assertIn("item.kind === 'file' && item.type.startsWith('image/')", javascript)
+        self.assertIn("messageInput.addEventListener('paste', async event =>", javascript)
+        self.assertIn("item.kind === 'file'", javascript)
+        self.assertIn("window.pywebview.api.read_clipboard_attachment()", javascript)
         self.assertIn('selectAttachment(file);', javascript)
         self.assertIn('const file = selectedAttachmentFile || attachmentInput.files[0];', javascript)
         self.assertNotIn('.composer > small, .attachment-chip { display: none', stylesheet)
@@ -413,19 +461,14 @@ class SettingsUITests(unittest.TestCase):
         self.assertNotIn('disclosure.open = true', javascript)
         self.assertIn('.addon-settings-disclosure[open]', stylesheet)
 
-    def test_manage_addons_is_first_in_the_integrations_list(self):
-        template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(
-            encoding='utf-8'
-        )
-        integrations = template[template.index('class="nav-integrations-list"'):]
-        self.assertLess(
-            integrations.index('data-view="addons"'),
-            integrations.index('data-view="discord"'),
-        )
-        self.assertLess(
-            integrations.index('data-view="addons"'),
-            integrations.index('{% for addon in addon_views %}'),
-        )
+    def test_addons_manager_has_a_direct_sidebar_entry_and_optional_shortcuts(self):
+        template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(encoding='utf-8')
+        navigation = template[template.index('<nav class="desktop-nav"'):template.index('</nav>')]
+        self.assertNotIn('nav-integrations', navigation)
+        self.assertIn('<span class="nav-label">Addons</span>', navigation)
+        self.assertLess(navigation.index('data-view="addons"'), navigation.index('id="sidebar-addon-shortcuts"'))
+        self.assertIn('data-sidebar-addon="{{ addon.addon_id }}"', navigation)
+        self.assertIn('aria-controls="sidebar-chats"', navigation)
 
     def test_voice_response_mute_persists_on_desktop_and_mobile(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
@@ -472,8 +515,8 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('.control-icon {', stylesheet)
         self.assertIn('.visual-voice-response-button .control-icon { opacity: .3;', stylesheet)
         self.assertIn(':is(:hover, :focus-visible, :active) .control-icon', stylesheet)
-        self.assertIn('top: calc(clamp(24px, 7vh, 70px) + 36px)', stylesheet)
-        self.assertIn('top: calc(max(52px, 7vh) + 38px)', stylesheet)
+        self.assertIn('top: calc(clamp(24px, 7vh, 70px) + 52px)', stylesheet)
+        self.assertIn('top: calc(max(52px, 7vh) + 52px)', stylesheet)
         self.assertNotIn('.visual-caption { top: 28%;', stylesheet)
         self.assertNotIn("button.textContent = '🔊';", javascript)
 
@@ -565,7 +608,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('microphoneLastVoiceAt > wakeCuePendingAfter', javascript[acknowledgement_start:acknowledgement_end])
         microphone_code = javascript[microphone_start:microphone_end]
         self.assertNotIn('scheduleLocalSpeechSubmit', javascript)
-        self.assertIn('await transcribeVoiceInput(wavBlob(chunks, microphoneContext.sampleRate))', javascript)
+        self.assertIn('await transcribeVoiceInput(wavBlob(chunks, microphoneContext.sampleRate), timing)', javascript)
         self.assertIn("variants.push('Pete', 'Petty', 'Pity')", javascript)
         self.assertIn('Speech detected · waiting to hear', javascript)
         command_start = javascript.index('command = match[1].trim()')
@@ -595,14 +638,18 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('<option value="neural_core">Neural Core</option>', template)
         self.assertIn('<option value="aurora_flow">Aurora Flow</option>', template)
         self.assertIn('<option value="constellation_field">Constellation Field</option>', template)
+        self.assertEqual(template.count('<option value="cognitive_pulse">Cognitive Pulse</option>'), 2)
         self.assertIn('id="visual-state-heading"', template)
+        self.assertIn('id="visual-activity-detail"', template)
         self.assertIn('src="/static/petey_avatar.png"', template)
         self.assertIn('aurora_flow: drawAuroraFlow', javascript)
         self.assertIn('constellation_field: drawConstellationField', javascript)
+        self.assertIn('cognitive_pulse: drawCognitivePulse', javascript)
         self.assertIn("context.fillStyle = '#000';", javascript)
         for renderer in (
             'drawNeuralCore', 'drawSynapseDrift', 'drawOrbitalMind',
             'drawSignalBloom', 'drawAuroraFlow', 'drawConstellationField',
+            'drawCognitivePulse',
         ):
             self.assertIn(f'const {renderer} =', javascript)
         self.assertIn("listening: {primary: [255, 133, 31]", javascript)
@@ -610,7 +657,13 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn("if (visualThinking || voiceInputBusy) return 'thinking';", javascript)
         self.assertIn("if (microphoneMuted) return 'muted';", javascript)
         self.assertIn("if (time < visualErrorUntil) return 'error';", javascript)
+        self.assertIn("visualTokenEnergy = Math.min(1, visualTokenEnergy +", javascript)
+        self.assertIn("'STREAMING RESPONSE'", javascript)
+        self.assertIn("'LIVE MICROPHONE ENERGY'", javascript)
+        self.assertIn("'VOICE OUTPUT'", javascript)
+        self.assertIn('TOOL ACTION${visualToolActivityCount === 1', javascript)
         self.assertIn('.visual-state-heading {', stylesheet)
+        self.assertIn('.visual-activity-detail {', stylesheet)
         self.assertIn('body.native-visual-fullscreen .visual-caption', stylesheet)
 
     def test_media_catalog_reuses_its_embedded_speech_configuration(self):

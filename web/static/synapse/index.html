@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en" data-theme="black">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#000000"><title>Synapse — Living network</title><link rel="stylesheet" href="map.css"><link rel="stylesheet" href="petey-embed.css"></head>
+<body>
+<canvas id="map" aria-label=""></canvas>
+<header><a class="brand" href="./"><span>✳</span> PETEY_inference_visualizer <i>/</i><small>LIVING NETWORK</small></a><div class="top-actions"><a href="lab.html">Training lab <span>↗</span></a><select id="theme" aria-label="Color theme" title="Color theme"><option value="black">Blackout</option><option value="aurora">Aurora</option><option value="ember">Ember</option><option value="dark">Midnight</option><option value="light">Paper</option></select><button id="fullscreen" title="Enter fullscreen" aria-label="Toggle fullscreen">⛶</button></div></header>
+<div class="map-heading"><div class="eyebrow"><i></i></div><h1>v001</h1><p>bizzomephisto</p></div>
+<button id="controls-toggle" aria-expanded="true" aria-controls="controls">☷ <span>Field controls</span></button>
+<aside id="controls"><div class="panel-title"><span>Shape the network</span><span class="number">01 / FIELD</span></div>
+<div class="presets" role="group" aria-label="Animation presets"><button data-preset="drift" class="selected" aria-pressed="true">Drift</button><button data-preset="surge" aria-pressed="false">Surge</button><button data-preset="storm" aria-pressed="false">Storm</button></div>
+<details class="saved-presets" open><summary>Saved presets</summary>
+<label class="sr-only" for="saved-preset">Load a saved preset</label><select id="saved-preset"><option value="">Choose a preset…</option></select>
+<label class="sr-only" for="preset-name">Preset name</label><input id="preset-name" type="text" maxlength="60" placeholder="Name this setup" autocomplete="off">
+<div class="preset-actions"><button id="save-preset">Save preset</button><button id="delete-preset" disabled>Delete</button></div>
+<p id="preset-status" role="status">Stored in this browser.</p></details>
+<details class="node-controls" open><summary>Neuron dots</summary>
+<label class="check"><span>Show dots</span><input type="checkbox" id="show-nodes"></label>
+<fieldset id="node-options" disabled>
+<div class="control"><label for="node-size">Size <output id="node-size-value">100%</output></label><input id="node-size" type="range" min="10" max="1000" step="5" value="100"></div>
+<div class="control"><label for="node-style">Style</label><select id="node-style"><option value="soft">Soft dots</option><option value="solid">Solid dots</option><option value="ring">Rings</option><option value="diamond">Diamonds</option></select></div>
+<div class="control"><label for="node-color">Color</label><select id="node-color"><option value="theme">Follow theme</option><option value="neutral">Monochrome</option><option value="custom">Custom color</option></select></div>
+<div class="control" id="node-custom-control" hidden><label for="node-custom">Dot color</label><input type="color" id="node-custom" value="#ffffff"></div>
+</fieldset></details>
+<details class="hover-controls" open><summary>Mouse interaction</summary>
+<div class="control"><label for="hover-mode">Effect</label><select id="hover-mode"><option value="attract">Magnetic pull</option><option value="repel">Push away</option><option value="glow">Spotlight</option><option value="off">Off</option></select></div>
+<div class="control"><label for="hover-radius">Reach <output id="hover-radius-value">140 px</output></label><input id="hover-radius" type="range" min="40" max="400" step="10" value="140"></div>
+<div class="control"><label for="hover-strength">Strength <output id="hover-strength-value">65%</output></label><input id="hover-strength" type="range" min="0" max="200" step="5" value="65"></div>
+</details>
+<div class="control"><label for="width-scale">Width (X) <output id="width-scale-value">100%</output></label><input id="width-scale" type="range" min="10" max="1000" step="5" value="100"></div>
+<div class="control"><label for="height-scale">Height (Y) <output id="height-scale-value">100%</output></label><input id="height-scale" type="range" min="10" max="1000" step="5" value="100"></div>
+<div class="divider"></div>
+<div class="control"><label for="layers">Layers <output id="layers-value">18</output></label><input id="layers" type="range" min="2" max="48" value="18"></div>
+<div class="control"><label for="neurons">Neurons per layer <output id="neurons-value">28</output></label><input id="neurons" type="range" min="2" max="64" value="28"></div>
+<div class="control"><label for="connections">Connections per neuron <output id="connections-value">14</output></label><input id="connections" type="range" min="1" max="28" value="14"></div>
+<div class="divider"></div>
+<div class="control"><label for="speed">Flow speed <output id="speed-value">0.7×</output></label><input id="speed" type="range" min="5" max="1000" value="70"></div>
+<div class="control"><label for="activity">Signal activity <output id="activity-value">45%</output></label><input id="activity" type="range" min="5" max="100" value="45"></div>
+<div class="control"><label for="route-chance">Input → output chance <output id="route-chance-value">40%</output></label><input id="route-chance" type="range" min="0" max="100" value="40" title="Chance of launching a complete route each simulation second"></div>
+<div class="control"><label for="signal-width">Signal width <output id="signal-width-value">2.0×</output></label><input id="signal-width" type="range" min="10" max="2000" step="10" value="200"></div>
+<div class="control"><label for="motion">Undulation <output id="motion-value">55%</output></label><input id="motion" type="range" min="0" max="300" value="55"></div>
+<div class="control"><label for="brightness">Connection brightness <output id="brightness-value">65%</output></label><input id="brightness" type="range" min="0" max="200" value="65"></div>
+<div class="control"><label for="glow">Glow intensity <output id="glow-value">65%</output></label><input id="glow" type="range" min="0" max="300" value="65"></div>
+<div class="divider"></div><label class="check full-length"><span>Light entire connections</span><input type="checkbox" id="full-length" checked></label><label class="check"><span>Show quiet connections</span><input type="checkbox" id="quiet" checked></label><button class="regenerate" id="regenerate">⟳ <span>Regenerate network</span></button><p class="model-note">A generative signal simulation.<br>Explore trainable models in the <a href="lab.html">lab ↗</a>.</p></aside>
+<div class="canvas-tools"><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><span></span><button id="fit" title="Fit network to view" aria-label="Fit network to view">⌖</button><button id="capture" title="Save image" aria-label="Save network image">↓</button></div>
+<div class="probe" id="probe" hidden></div>
+<div class="bottom"><div class="playback"><button id="play" aria-label="Pause animation">Ⅱ</button><div><span id="live-status"><i></i> NETWORK IS ALIVE</span><small id="interaction-hint">Drag to explore · Scroll to zoom · Click to spark</small></div><button id="pulse" class="pulse-button">✧ <span>Send a pulse</span></button></div><div class="stats"><div><strong id="node-count">504</strong><span>NEURONS</span></div><div><strong id="edge-count">6,664</strong><span>CONNECTIONS</span></div><div><strong id="signal-count">0</strong><span>ACTIVE SIGNALS</span></div></div></div>
+<div class="scale-label"><span class="violet-dot"></span> Excitatory <span class="amber-dot"></span> Inhibitory <i></i> <span id="zoom-value">100%</span></div>
+<script type="module" src="map.js"></script>
+</body></html>

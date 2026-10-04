@@ -9,12 +9,36 @@ const voiceResponseButtons = [
     document.getElementById('visual-voice-response-toggle'),
 ];
 const statusText = document.getElementById('status');
+const voiceLatencyDetails = document.getElementById('voice-latency');
+const voiceLatencyValues = document.getElementById('voice-latency-values');
+let pendingVoiceTiming = null;
+let lastVoiceTimingText = '';
+function showVoiceTiming(timing) {
+    if (!timing?.firstAudio || !timing.chatStarted) return;
+    const ms = (end, start) => Math.max(0, Math.round(end - start));
+    const pieces = [
+        `Total ${ms(timing.firstAudio, timing.speechEnded)} ms`,
+        `route ${timing.route || 'unknown'}`,
+        `silence ${ms(timing.captureEnded, timing.speechEnded)} ms`,
+        `STT ${ms(timing.sttDone, timing.sttStarted)} ms`,
+        `chat first text ${timing.firstText ? ms(timing.firstText, timing.chatStarted) + ' ms' : 'none'}`,
+        `text to TTS ${timing.ttsStarted && timing.firstText ? ms(timing.ttsStarted, timing.firstText) + ' ms' : 'n/a'}`,
+        `TTS first audio ${ms(timing.firstAudio, timing.ttsStarted)} ms`,
+    ];
+    lastVoiceTimingText = pieces.join(' · ');
+    voiceLatencyValues.textContent = lastVoiceTimingText;
+    voiceLatencyDetails.hidden = false;
+    voiceLatencyDetails.querySelector('summary').textContent = `Voice timing · ${ms(timing.firstAudio, timing.speechEnded)} ms`;
+}
+document.getElementById('copy-voice-latency').addEventListener('click', async () => {
+    if (lastVoiceTimingText) await navigator.clipboard.writeText(lastVoiceTimingText);
+});
 const chatNameText = document.getElementById('chat-name');
 const chatPersonaSelect = document.getElementById('chat-persona');
-const commandChatSelect = document.getElementById('command-chat-select');
 const mobileChatPersonaSelect = document.getElementById('mobile-chat-persona');
 const jumpToLatestButton = document.getElementById('jump-to-latest');
 const newChatDialog = document.getElementById('new-chat-dialog');
+const changelogDialog = document.getElementById('changelog-dialog');
 const newChatTitle = document.getElementById('new-chat-title');
 const newChatPersona = document.getElementById('new-chat-persona');
 const mobileLayoutQuery = window.matchMedia('(max-width: 760px)');
@@ -32,6 +56,19 @@ function effectiveVoiceInputMode() {
     return mobileLayoutQuery.matches && mobileVoiceMode ? mobileVoiceMode : configured;
 }
 let personName = 'User';
+
+function showChangelog() {
+    if (changelogDialog && !changelogDialog.open) changelogDialog.showModal();
+}
+
+document.getElementById('open-changelog').addEventListener('click', showChangelog);
+document.getElementById('changelog-close-x').addEventListener('click', () => changelogDialog.close());
+document.getElementById('changelog-done').addEventListener('click', () => changelogDialog.close());
+changelogDialog.addEventListener('close', () => {
+    apiJson('/api/desktop/changelog/seen', {method: 'POST'}).catch(() => {
+        // Leave it unread so PETEY can show the release notes next time.
+    });
+});
 let personaPresets = {};
 let savedPersonas = [];
 let personalityLoaded = false;
@@ -91,6 +128,10 @@ let keyboardPushToTalkActive = false;
 let visualAudioEnergy = 0;
 let visualThinking = false;
 let visualErrorUntil = 0;
+let visualGenerating = false;
+let visualTokenEnergy = 0;
+let visualToolActivityUntil = 0;
+let visualToolActivityCount = 0;
 let lastPeteyCaption = '';
 let visualCaptionTimer = null;
 let visualCaptionHideTimer = null;
@@ -118,7 +159,7 @@ let addonEventSpeechChain = Promise.resolve();
 let conversationPersonaOptions = [];
 let temporaryHistory = [];
 let pendingDeleteConversation = null;
-let preferences = {always_on_top: false, sidebar_collapsed: false, ui_scale: 1, visual_mode: false, visual_style: 'neural_core'};
+let preferences = {always_on_top: false, sidebar_collapsed: false, ui_scale: 1, visual_mode: false, visual_style: 'synapse_network'};
 let toolsLoaded = false;
 let activeChatAudio = null;
 let activeSpeechButton = null;
@@ -231,6 +272,24 @@ navigator.mediaDevices?.addEventListener?.('devicechange', async () => {
     } catch (_) { /* Individual add-ons can still stop their own streams. */ }
 });
 
+let synapseVisualMessage = {type: 'petey-visual-state', active: false, phase: 'idle', energy: 0};
+function sendSynapseVisualState(active, phase = 'idle', energy = 0) {
+    synapseVisualMessage = {type: 'petey-visual-state', active, phase, energy};
+    const frame = document.getElementById('synapse-frame');
+    if (frame.getAttribute('src')) frame.contentWindow?.postMessage(synapseVisualMessage, window.location.origin);
+}
+function syncSynapseVisual() {
+    const active = Boolean(preferences.visual_mode) && preferences.visual_style === 'synapse_network';
+    const frame = document.getElementById('synapse-frame');
+    frame.hidden = !active;
+    document.getElementById('neural-canvas').hidden = active;
+    if (active && !frame.getAttribute('src')) frame.src = frame.dataset.src;
+    if (!active) sendSynapseVisualState(false);
+}
+document.getElementById('synapse-frame').addEventListener('load', event => {
+    event.currentTarget.contentWindow?.postMessage(synapseVisualMessage, window.location.origin);
+});
+
 function ensureNeuralVisualizationRunning() {
     const visual = document.getElementById('visual-chat');
     const chatVisible = document.getElementById('view-chat').classList.contains('active-view');
@@ -272,10 +331,16 @@ jumpToLatestButton.addEventListener('click', () => scrollToLatest(true));
 messages.addEventListener('scroll', updateJumpToLatest, {passive: true});
 
 async function copyChatText(text, button) {
+    let copied = false;
+    if (window.pywebview?.api?.copy_text) {
+        try { copied = (await window.pywebview.api.copy_text(text))?.ok === true; }
+        catch (_error) { /* Browser clipboard may still be available. */ }
+    }
     try {
-        if (navigator.clipboard?.writeText) {
+        if (!copied && navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(text);
-        } else {
+            copied = true;
+        } else if (!copied) {
             throw new Error('Clipboard API unavailable');
         }
     } catch (_error) {
@@ -286,7 +351,7 @@ async function copyChatText(text, button) {
         helper.style.opacity = '0';
         document.body.append(helper);
         helper.select();
-        const copied = document.execCommand('copy');
+        copied = document.execCommand('copy');
         helper.remove();
         if (!copied) {
             window.alert('Could not access the clipboard. Select the message and press Ctrl+C.');
@@ -593,6 +658,19 @@ function addMessage(role, text, options = {}) {
     const speaker = document.createElement('span');
     speaker.textContent = role === 'assistant' ? 'Petey' : personName;
     meta.append(speaker);
+    if (!options.typing) {
+        const date = options.timestamp ? new Date(options.timestamp) : new Date();
+        if (!Number.isNaN(date.getTime())) {
+            const timestamp = document.createElement('time');
+            timestamp.className = 'message-timestamp';
+            timestamp.dateTime = date.toISOString();
+            timestamp.textContent = new Intl.DateTimeFormat([], {
+                dateStyle: 'medium', timeStyle: 'short',
+            }).format(date);
+            timestamp.title = timestamp.textContent;
+            meta.append(timestamp);
+        }
+    }
     if (!options.typing && text) {
         const copyButton = document.createElement('button');
         copyButton.type = 'button';
@@ -791,6 +869,20 @@ async function loadDesktop() {
         conversations = bootstrap.conversations || [];
         conversationPersonaOptions = bootstrap.persona_options || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
+        try {
+            // Move the former default to Synapse once; a later explicit Neural Core choice stays put.
+            if (preferences.visual_style === 'neural_core'
+                && window.localStorage.getItem('petey-synapse-default-v1') !== '1') {
+                const updated = await apiJson('/api/desktop/preferences', {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({visual_style: 'synapse_network'}),
+                });
+                preferences = {...preferences, ...updated.preferences};
+                window.localStorage.setItem('petey-synapse-default-v1', '1');
+            }
+        } catch (error) {
+            console.warn('Could not set Synapse as the default visual style:', error);
+        }
         speechConfiguration = bootstrap.speech || {provider: 'automatic', auto_speak: false};
         voiceResponseEnabled = Boolean(speechConfiguration.auto_speak);
         voiceResponseInitialized = true;
@@ -809,6 +901,7 @@ async function loadDesktop() {
         if (['always_on', 'wake_word'].includes(effectiveVoiceInputMode())) {
             window.setTimeout(() => startContinuousVoiceInput(), 250);
         }
+        if (bootstrap.changelog_unread) showChangelog();
     } catch (error) {
         statusText.textContent = 'Could not load local state';
     }
@@ -820,6 +913,7 @@ function renderConversationMessages(history) {
     let latestPeteyReply = '';
     history.forEach(item => {
         addMessage(item.role, item.message, {
+            timestamp: item.timestamp,
             toolEvents: item.metadata?.tool_events || [],
             metadata: item.metadata || {},
             container: fragment,
@@ -839,12 +933,28 @@ async function loadConversationMessages() {
     renderConversationMessages(history);
 }
 
+function setSidebarChatsOpen(open) {
+    document.getElementById('sidebar-chats').hidden = !open;
+    document.getElementById('sidebar-chat-toggle').setAttribute('aria-expanded', String(open));
+}
+
+function placeWorkspaceComposer() {
+    const host = document.getElementById('workspace-composer');
+    const parent = mobileLayoutQuery.matches ? document.getElementById('view-chat') : host;
+    if (composer.parentElement !== parent) parent.append(composer);
+}
+
+function syncSidebarAddons() {
+    document.querySelectorAll('[data-sidebar-addon]').forEach(button => {
+        const id = button.dataset.sidebarAddon;
+        button.hidden = (preferences.addon_interface?.[id]?.sidebar ?? (id === 'tasks')) !== true;
+    });
+}
+
 function renderConversations() {
     const list = document.getElementById('conversation-list');
     list.innerHTML = '';
-    commandChatSelect.replaceChildren();
     conversations.forEach(conversation => {
-        commandChatSelect.add(new Option(conversation.title, conversation.id));
         const row = document.createElement('div');
         row.className = `conversation-row${conversation.id === activeConversationId ? ' active' : ''}`;
         const select = document.createElement('button');
@@ -873,8 +983,6 @@ function renderConversations() {
         row.append(select, rename, remove);
         list.append(row);
     });
-    commandChatSelect.value = activeConversationId || '';
-    commandChatSelect.disabled = conversations.length === 0;
 }
 
 async function renameConversation(conversation) {
@@ -900,9 +1008,12 @@ async function renameConversation(conversation) {
 }
 
 async function selectConversation(conversationId) {
-    if (conversationId === activeConversationId && !document.getElementById('temporary-mode').checked) return;
+    if (conversationId === activeConversationId && !document.getElementById('temporary-mode').checked) {
+        setSidebarChatsOpen(false); showView('chat'); return;
+    }
     const payload = await apiJson(`/api/desktop/conversations/${encodeURIComponent(conversationId)}/select`, {method: 'PUT'});
     activeConversationId = conversationId;
+    setSidebarChatsOpen(false);
     applyConversationContext(payload);
     leaveTemporaryMode();
     renderConversations();
@@ -993,6 +1104,7 @@ document.getElementById('new-chat-form').addEventListener('submit', async event 
         applyConversationContext(payload);
         leaveTemporaryMode();
         renderConversations();
+        setSidebarChatsOpen(false);
         showView('chat');
         showEmptyState(payload.conversation.title, 'This conversation will be saved to Petey’s local memory.');
         updateChatHeader();
@@ -1032,9 +1144,6 @@ chatPersonaSelect.addEventListener('change', async () => {
 mobileChatPersonaSelect.addEventListener('change', () => {
     chatPersonaSelect.value = mobileChatPersonaSelect.value;
     chatPersonaSelect.dispatchEvent(new Event('change', {bubbles: true}));
-});
-commandChatSelect.addEventListener('change', () => {
-    if (commandChatSelect.value) selectConversation(commandChatSelect.value);
 });
 
 let selectedAttachmentPreviewUrl = '';
@@ -1090,18 +1199,42 @@ attachmentInput.addEventListener('change', () => {
     selectAttachment(attachmentInput.files[0]);
 });
 
-messageInput.addEventListener('paste', event => {
-    const image = Array.from(event.clipboardData?.items || [])
-        .find(item => item.kind === 'file' && item.type.startsWith('image/'))
-        ?.getAsFile();
-    if (!image) return;
-    event.preventDefault();
-    let file = image;
-    if (!image.name) {
-        const extension = image.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-        file = new File([image], `pasted-image-${Date.now()}.${extension}`, {type: image.type});
+messageInput.addEventListener('paste', async event => {
+    const clipboard = event.clipboardData;
+    let file = Array.from(clipboard?.items || [])
+        .find(item => item.kind === 'file')?.getAsFile()
+        || Array.from(clipboard?.files || [])[0];
+    if (file) {
+        event.preventDefault();
+        if (!file.name) {
+            const extension = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+            file = new File([file], `pasted-file-${Date.now()}.${extension}`, {type: file.type});
+        }
+        selectAttachment(file);
+        return;
     }
-    selectAttachment(file);
+    const plainText = clipboard?.getData('text/plain') || '';
+    if (!window.pywebview?.api?.read_clipboard_attachment ||
+            (plainText && !/^file:\/\//i.test(plainText.trim()))) return;
+    event.preventDefault();
+    try {
+        const result = await window.pywebview.api.read_clipboard_attachment();
+        if (result?.ok && result.data_base64) {
+            const binary = atob(result.data_base64);
+            const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+            selectAttachment(new File([bytes], result.filename || 'pasted-file', {
+                type: result.content_type || 'application/octet-stream',
+            }));
+            return;
+        }
+        if (result?.error) statusText.textContent = result.error;
+    } catch (_error) {
+        statusText.textContent = 'Could not read the clipboard file.';
+    }
+    if (plainText) {
+        messageInput.setRangeText(plainText, messageInput.selectionStart, messageInput.selectionEnd, 'end');
+        messageInput.dispatchEvent(new Event('input', {bubbles: true}));
+    }
 });
 
 messageInput.addEventListener('input', () => {
@@ -1151,6 +1284,10 @@ composer.addEventListener('submit', async event => {
     const text = messageInput.value.trim();
     const file = selectedAttachmentFile || attachmentInput.files[0];
     if (sendButton.disabled || (!text && !file)) return;
+    showView('chat');
+    setSidebarChatsOpen(false);
+    const voiceTiming = pendingVoiceTiming;
+    pendingVoiceTiming = null;
     const continueVoiceConversation = effectiveVoiceInputMode() === 'wake_word'
         && voiceConversationActive && voiceConversationAwaitingReply;
 
@@ -1180,6 +1317,9 @@ composer.addEventListener('submit', async event => {
     sendButton.disabled = true;
     statusText.textContent = 'Petey is preparing a reply…';
     visualThinking = true;
+    visualGenerating = false;
+    visualTokenEnergy = 0;
+    visualToolActivityCount = 0;
     let partialText = '';
     let spokenPrefix = '';
     let autoSpeechChain = Promise.resolve();
@@ -1188,6 +1328,7 @@ composer.addEventListener('submit', async event => {
         && voiceResponseEnabled;
     const streamSpeechEarly = autoSpeak && !mobileLayoutQuery.matches;
     try {
+        if (voiceTiming) voiceTiming.chatStarted = performance.now();
         const response = await fetch('/api/desktop/chat', {method: 'POST', body});
         if (!response.ok) {
             const error = await response.json();
@@ -1195,6 +1336,9 @@ composer.addEventListener('submit', async event => {
         }
         const payload = await readChatStream(response, event => {
             if (event.type !== 'delta') return;
+            if (voiceTiming && !voiceTiming.firstText) voiceTiming.firstText = performance.now();
+            visualGenerating = true;
+            visualTokenEnergy = Math.min(1, visualTokenEnergy + .08 + event.text.length / 180);
             const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
             partialText += event.text;
             typing.classList.remove('typing');
@@ -1207,7 +1351,7 @@ composer.addEventListener('submit', async event => {
                 if (segment && !/(?:^|\n)\s*Created files:/i.test(segment)) {
                     spokenPrefix = segment;
                     autoSpeechChain = autoSpeechChain.then(() => speakChatText(
-                        segment, null, true, replySpeechGeneration,
+                        segment, null, true, replySpeechGeneration, voiceTiming,
                     ));
                 }
             }
@@ -1215,6 +1359,8 @@ composer.addEventListener('submit', async event => {
             updateJumpToLatest();
         });
         typing.remove();
+        visualToolActivityCount = (payload.tool_events || []).length;
+        if (visualToolActivityCount) visualToolActivityUntil = performance.now() + 3500;
         addMessage('assistant', payload.text || '', {
             toolEvents: payload.tool_events || [],
         });
@@ -1224,7 +1370,7 @@ composer.addEventListener('submit', async event => {
                 : payload.text;
             if (!spokenPrefix || remainder) {
                 autoSpeechChain = autoSpeechChain.then(() => speakChatText(
-                    remainder, null, true, replySpeechGeneration,
+                    remainder, null, true, replySpeechGeneration, voiceTiming,
                 ));
             }
         }
@@ -1254,6 +1400,7 @@ composer.addEventListener('submit', async event => {
         }
     } finally {
         visualThinking = false;
+        visualGenerating = false;
         sendButton.disabled = false;
         messageInput.focus();
     }
@@ -1424,6 +1571,33 @@ document.documentElement.style.setProperty(
 commandScrollbarProbe.remove();
 
 let commandControlsMenuOpen = false;
+let commandControlOpen = '';
+const commandControlPanels = {
+    theme: ['command-theme-toggle', 'command-theme-panel'],
+    microphone: ['command-microphone-toggle', 'command-microphone-panel'],
+    restart: ['command-restart-toggle', 'command-restart-panel'],
+};
+function setCommandControlPanel(name = '') {
+    commandControlOpen = name;
+    Object.entries(commandControlPanels).forEach(([key, [buttonId, panelId]]) => {
+        document.getElementById(buttonId).setAttribute('aria-expanded', String(key === name));
+        document.getElementById(panelId).hidden = key !== name;
+    });
+}
+function syncCommandMicrophoneButtons() {
+    const mode = voiceInputConfiguration.mode || 'disabled';
+    const labels = {disabled: 'Off', wake_word: 'Wake name', always_on: 'Always on', push_to_talk: 'Push to talk'};
+    const toggle = document.getElementById('command-microphone-toggle');
+    const label = `Microphone mode: ${labels[mode] || 'Off'}`;
+    toggle.setAttribute('aria-label', label);
+    toggle.title = label;
+    toggle.querySelector('use').setAttribute('href', mode === 'disabled' ? '#ci-mic-off' : '#ci-mic');
+    document.querySelectorAll('[data-command-microphone]').forEach(button => {
+        if (button.dataset.commandMicrophone !== 'disabled') {
+            button.setAttribute('aria-pressed', String(button.dataset.commandMicrophone === mode));
+        }
+    });
+}
 function syncCommandMenu(railEnabled, railOpen) {
     const rail = document.getElementById('command-rail');
     const core = document.getElementById('command-core-controls');
@@ -1437,6 +1611,7 @@ function syncCommandMenu(railEnabled, railOpen) {
     } else if (core.parentElement !== menu) {
         menu.append(core);
     }
+    if (railEnabled && !railOpen) setCommandControlPanel();
     menu.hidden = railEnabled || !commandControlsMenuOpen;
     toggle.setAttribute('aria-controls', railEnabled ? 'command-rail' : 'command-controls-menu');
     toggle.setAttribute('aria-expanded', String(railEnabled ? railOpen : commandControlsMenuOpen));
@@ -1452,7 +1627,7 @@ function syncCommandMenu(railEnabled, railOpen) {
 function applyPreferences() {
     const theme = preferences.theme || 'nebula';
     const defaultAccents = {
-        nebula: '#8b5cf6', studio: '#d65f36', signal: '#31d7a5',
+        nebula: '#8b5cf6', cognitive: '#ff9d32', signal: '#31d7a5',
         terminal: '#63ff8f', ember: '#ff8a4c',
     };
     const accents = preferences.theme_accents || {};
@@ -1461,6 +1636,8 @@ function applyPreferences() {
     const railEnabled = preferences.command_rail_enabled !== false;
     const railOpen = railEnabled && preferences.command_rail_open !== false;
     document.documentElement.dataset.commandRail = railEnabled ? (railOpen ? 'open' : 'closed') : 'disabled';
+    placeWorkspaceComposer();
+    syncSidebarAddons();
     window.PETEY_ADDON_INTERFACE = {...(preferences.addon_interface || {})};
     window.dispatchEvent(new CustomEvent('petey:addon-interface', {
         detail: {settings: window.PETEY_ADDON_INTERFACE},
@@ -1468,7 +1645,7 @@ function applyPreferences() {
     document.getElementById('command-rail-enabled-setting').checked = railEnabled;
     syncCommandMenu(railEnabled, railOpen);
     const railSections = {
-        session: true, launch: true, addons: true, signals: true,
+        media: true, session: true, launch: true, tasks: true, addons: true, signals: true,
         ...(preferences.command_rail_sections || {}),
     };
     document.querySelectorAll('[data-command-section]').forEach(section => {
@@ -1481,9 +1658,13 @@ function applyPreferences() {
         input.disabled = !railEnabled;
     });
     document.documentElement.style.setProperty('--theme-accent', accent);
-    document.getElementById('chat-theme-select').value = theme;
-    document.getElementById('chat-theme-accent').value = accent;
     document.querySelectorAll('[name="interface-theme"]').forEach(input => { input.checked = input.value === theme; });
+    document.querySelectorAll('[data-command-theme]').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.commandTheme === theme));
+    });
+    document.querySelectorAll('[data-command-theme-accent]').forEach(input => {
+        input.value = accents[input.dataset.commandThemeAccent] || defaultAccents[input.dataset.commandThemeAccent];
+    });
     document.querySelectorAll('[data-theme-accent]').forEach(input => {
         const inputTheme = input.dataset.themeAccent;
         input.value = accents[inputTheme] || defaultAccents[inputTheme];
@@ -1500,13 +1681,15 @@ function applyPreferences() {
     document.getElementById('view-chat').classList.toggle('visual-mode', visualMode);
     messages.hidden = visualMode;
     document.getElementById('visual-chat').hidden = !visualMode;
-    document.getElementById('visual-mode-toggle').classList.toggle('active', visualMode);
-    document.getElementById('visual-mode-toggle').textContent = visualMode ? 'Show chat' : 'Visual mode';
+    syncSynapseVisual();
+    const visualToggle = document.getElementById('visual-mode-toggle');
+    visualToggle.setAttribute('aria-pressed', String(visualMode));
+    visualToggle.setAttribute('aria-label', visualMode ? 'Show chat' : 'Open visual mode');
+    visualToggle.title = visualToggle.getAttribute('aria-label');
     const styleSelect = document.getElementById('visual-style-select');
     document.getElementById('visual-style-field').hidden = !visualMode;
-    styleSelect.value = preferences.visual_style || 'neural_core';
-    document.getElementById('visual-fullscreen').hidden = !visualMode;
-    document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
+    styleSelect.value = preferences.visual_style || 'synapse_network';
+    document.getElementById('mobile-animation').value = preferences.visual_style || 'synapse_network';
     renderVoiceResponseToggle();
     if (visualMode) {
         ensureNeuralVisualizationRunning();
@@ -1546,27 +1729,41 @@ document.getElementById('command-menu-toggle').addEventListener('click', () => {
         saveCommandRail({command_rail_open: preferences.command_rail_open === false});
     } else {
         commandControlsMenuOpen = !commandControlsMenuOpen;
+        if (!commandControlsMenuOpen) setCommandControlPanel();
         syncCommandMenu(false, false);
     }
 });
 document.addEventListener('pointerdown', event => {
+    if (commandControlOpen && !document.getElementById('command-core-controls').contains(event.target)) {
+        setCommandControlPanel();
+    }
     if (commandControlsMenuOpen && !document.querySelector('.command-menu-anchor').contains(event.target)) {
         commandControlsMenuOpen = false;
         syncCommandMenu(false, false);
     }
 });
 document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && commandControlsMenuOpen) {
+    if (event.key === 'Escape' && commandControlOpen) {
+        const button = document.getElementById(commandControlPanels[commandControlOpen][0]);
+        setCommandControlPanel();
+        button.focus();
+    } else if (event.key === 'Escape' && commandControlsMenuOpen) {
         commandControlsMenuOpen = false;
         syncCommandMenu(false, false);
         document.getElementById('command-menu-toggle').focus();
     }
 });
-document.getElementById('command-core-collapse').addEventListener('click', () => {
+const toggleCoreControlsCollapse = () => {
+    setCommandControlPanel();
     const collapsed = new Set(preferences.command_rail_collapsed || []);
     if (collapsed.has('controls')) collapsed.delete('controls');
     else collapsed.add('controls');
     saveCommandRail({command_rail_collapsed: [...collapsed]});
+};
+
+document.getElementById('command-core-collapse').addEventListener('click', event => {
+    event.stopPropagation();
+    toggleCoreControlsCollapse();
 });
 document.getElementById('command-disable-rail').addEventListener('click', () => {
     saveCommandRail({command_rail_enabled: false, command_rail_open: false});
@@ -1654,23 +1851,35 @@ document.querySelectorAll('[data-theme-accent]').forEach(input => {
     });
 });
 
-document.getElementById('chat-theme-select').addEventListener('change', event => {
-    const radio = document.querySelector(`[name="interface-theme"][value="${event.target.value}"]`);
-    if (!radio || themeSaving) return;
-    radio.checked = true;
-    radio.dispatchEvent(new Event('change'));
+Object.entries(commandControlPanels).forEach(([name, [buttonId]]) => {
+    document.getElementById(buttonId).addEventListener('click', () => {
+        setCommandControlPanel(commandControlOpen === name ? '' : name);
+    });
 });
-document.getElementById('chat-theme-accent').addEventListener('input', event => {
-    const input = document.querySelector(`[data-theme-accent="${document.getElementById('chat-theme-select').value}"]`);
-    if (!input || themeSaving) return;
-    input.value = event.target.value;
-    input.dispatchEvent(new Event('input'));
+document.querySelectorAll('[data-command-theme]').forEach(button => {
+    button.addEventListener('click', () => {
+        const radio = document.querySelector(`[name="interface-theme"][value="${button.dataset.commandTheme}"]`);
+        if (!radio || themeSaving) return;
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change'));
+    });
 });
-document.getElementById('chat-theme-accent').addEventListener('change', event => {
-    const input = document.querySelector(`[data-theme-accent="${document.getElementById('chat-theme-select').value}"]`);
-    if (!input || themeSaving) return;
-    input.value = event.target.value;
-    input.dispatchEvent(new Event('change'));
+document.querySelectorAll('[data-command-theme-accent]').forEach(control => {
+    ['input', 'change'].forEach(type => control.addEventListener(type, event => {
+        const input = document.querySelector(`[data-theme-accent="${control.dataset.commandThemeAccent}"]`);
+        if (!input || themeSaving) return;
+        input.value = event.target.value;
+        input.dispatchEvent(new Event(type));
+    }));
+});
+document.querySelectorAll('[data-command-microphone]').forEach(button => {
+    button.addEventListener('click', () => {
+        const select = document.getElementById('command-microphone-mode');
+        if (select.disabled) return;
+        select.value = button.dataset.commandMicrophone;
+        select.dispatchEvent(new Event('change'));
+        setCommandControlPanel();
+    });
 });
 
 async function savePreferences(changes, nativeTop = false) {
@@ -1837,7 +2046,7 @@ let mobileSpeechCatalogLoaded = false;
 
 function syncMobileSettings() {
     mobileVoiceMethod.value = mobileVoiceMode;
-    document.getElementById('mobile-animation').value = preferences.visual_style || 'neural_core';
+    document.getElementById('mobile-animation').value = preferences.visual_style || 'synapse_network';
 }
 
 function saveMobileVoiceMode(value) {
@@ -2065,12 +2274,16 @@ function leaveTemporaryMode() {
     const toggle = document.getElementById('temporary-mode');
     toggle.checked = false;
     toggle.closest('.temporary-toggle').classList.remove('active');
+    toggle.closest('.temporary-toggle').title = 'Temporary chat: off. This chat is not saved when enabled.';
     temporaryHistory = [];
 }
 
 document.getElementById('temporary-mode').addEventListener('change', async event => {
     const active = event.target.checked;
     event.target.closest('.temporary-toggle').classList.toggle('active', active);
+    event.target.closest('.temporary-toggle').title = active
+        ? 'Temporary chat: on. This chat is not saved.'
+        : 'Temporary chat: off. This chat is saved.';
     temporaryHistory = [];
     if (active) {
         showEmptyState('Temporary chat', 'This chat will not be saved and will not use memory or RAG.');
@@ -2218,7 +2431,7 @@ function renderAddons(payload) {
         }
         const controls = document.createElement('div');
         controls.className = 'addon-controls';
-        if (addon.source === 'user') {
+        if (addon.source === 'user' || addon.navigation) {
             const interfacePanel = document.createElement('section');
             interfacePanel.className = 'addon-interface-panel';
             const interfaceTitle = document.createElement('strong');
@@ -2241,10 +2454,20 @@ function renderAddons(payload) {
                     await reloadAddonsInPlace();
                 }
             };
-            for (const [key, title, hint] of [
+            const interfaceOptions = [];
+            if (addon.navigation) {
+                const open = document.createElement('button');
+                open.type = 'button'; open.className = 'secondary-button';
+                open.textContent = 'Open add-on'; open.disabled = !addon.navigation.available;
+                open.addEventListener('click', () => showView(addon.navigation.view));
+                controls.append(open);
+                interfaceOptions.push(['sidebar', 'Show in left sidebar', 'Pin a shortcut when this add-on is loaded. Changes apply immediately.']);
+            }
+            if (addon.source === 'user') interfaceOptions.push(
                 ['badges', 'Show badges', 'Status indicators beside chat or in the Command Center.'],
                 ['controls', 'Show interface controls', 'Command Center panels and action buttons.'],
-            ]) {
+            );
+            for (const [key, title, hint] of interfaceOptions) {
                 const label = document.createElement('label');
                 label.className = 'addon-toggle';
                 const text = document.createElement('span');
@@ -2256,7 +2479,7 @@ function renderAddons(payload) {
                 const input = document.createElement('input');
                 input.type = 'checkbox';
                 input.role = 'switch';
-                input.checked = addon.interface?.[key] !== false;
+                input.checked = key === 'sidebar' ? addon.interface?.sidebar === true : addon.interface?.[key] !== false;
                 input.addEventListener('change', () => saveInterface(key, input.checked));
                 label.append(text, input);
                 interfacePanel.append(label);
@@ -2350,7 +2573,7 @@ function renderAddons(payload) {
             surfaces.append(legend);
             const surfaceLabels = {
                 petey_desktop: 'Desktop', mobile_petey: 'Mobile',
-                discord: 'Discord', petey_life: 'Petey Life',
+                discord: 'Discord',
             };
             for (const [surface, label] of Object.entries(surfaceLabels)) {
                 const option = document.createElement('label');
@@ -2463,12 +2686,13 @@ document.getElementById('restart-petey').addEventListener('click', event => {
     restartPetey(event.currentTarget, document.getElementById('addons-status'));
 });
 
-document.getElementById('chat-restart-petey').addEventListener('click', event => {
-    const mode = document.getElementById('chat-restart-mode');
-    const label = mode.options[mode.selectedIndex]?.textContent || 'the selected mode';
+document.querySelectorAll('[data-command-restart]').forEach(button => button.addEventListener('click', () => {
+    const mode = button.dataset.commandRestart;
+    const label = button.textContent.trim();
     if (!window.confirm(`Any active responses or add-on jobs will stop. Restart PETEY in ${label}?`)) return;
-    restartPetey(event.currentTarget, statusText, mode.value);
-});
+    setCommandControlPanel();
+    restartPetey(button, statusText, mode);
+}));
 
 function showView(view) {
     const targetView = document.getElementById(`view-${view}`);
@@ -2477,11 +2701,15 @@ function showView(view) {
         && targetView?.classList.contains('settings-view');
     if (mobileLayoutQuery.matches && view !== 'chat' && !mobileSettingsAllowed) view = 'chat';
     if (!document.getElementById(`view-${view}`)) return;
+    document.body.dataset.activeView = view;
+    placeWorkspaceComposer();
+    if (view !== 'chat') setSidebarChatsOpen(false);
     if (view === 'chat') document.body.classList.remove('mobile-full-settings');
     document.querySelectorAll('.nav-button').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.app-view').forEach(item => item.classList.remove('active-view'));
     document.getElementById(`view-${view}`).classList.add('active-view');
     if (view === 'chat') ensureNeuralVisualizationRunning();
+    else sendSynapseVisualState(false);
     const navView = document.getElementById(`view-${view}`).classList.contains('settings-view') ? 'settings' : view;
     document.querySelector(`.nav-button[data-view="${navView}"]`)?.classList.add('active');
     window.location.hash = view === 'settings' ? 'settings' : view;
@@ -2803,6 +3031,7 @@ function configureVoiceInputUI() {
     const mode = effectiveVoiceInputMode();
     const externalVoiceActive = externalVoiceSessionOwners.size > 0;
     commandMicrophoneModeSelect.value = voiceInputConfiguration.mode || 'disabled';
+    syncCommandMicrophoneButtons();
     const micIsMuted = microphoneMuted
         || (['always_on', 'wake_word'].includes(mode)
             && !voiceInputRunning && !microphoneCapturing);
@@ -2907,6 +3136,7 @@ commandMicrophoneModeSelect.addEventListener('change', async () => {
         statusText.textContent = `Could not change microphone mode: ${error.message}`;
     } finally {
         commandMicrophoneModeSelect.disabled = false;
+        syncCommandMicrophoneButtons();
     }
 });
 
@@ -3127,6 +3357,22 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
     if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('This desktop backend does not provide microphone capture.');
     }
+    const androidMobilePushToTalk = mobileLayoutQuery.matches
+        && effectiveVoiceInputMode() === 'push_to_talk'
+        && /Android/i.test(navigator.userAgent || '');
+    if (!deviceId && androidMobilePushToTalk && navigator.mediaDevices?.enumerateDevices) {
+        try {
+            const inputs = (await navigator.mediaDevices.enumerateDevices())
+                .filter(device => device.kind === 'audioinput' && device.deviceId !== 'default');
+            const carInput = /bluetooth|hands[- ]?free|headset|android auto|car audio/i;
+            const phoneInput = /built[- ]?in|internal|phone|bottom|top|rear|front/i;
+            const preferred = inputs.find(device => phoneInput.test(device.label) && !carInput.test(device.label))
+                || inputs.find(device => device.label && !carInput.test(device.label));
+            if (preferred) deviceId = preferred.deviceId;
+        } catch (_error) {
+            // Android may hide device labels until microphone permission is granted.
+        }
+    }
     const audio = {echoCancellation: true, noiseSuppression: true, autoGainControl: true};
     if (deviceId) audio.deviceId = {exact: deviceId};
     try {
@@ -3153,12 +3399,20 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
     await microphoneContext.resume();
     microphoneSource = microphoneContext.createMediaStreamSource(microphoneStream);
     microphoneProcessor = microphoneContext.createScriptProcessor(2048, 1, 1);
-    microphoneSilentOutput = microphoneContext.createGain();
-    microphoneSilentOutput.gain.value = 0;
     microphoneProcessor.onaudioprocess = handleMicrophoneAudio;
     microphoneSource.connect(microphoneProcessor);
-    microphoneProcessor.connect(microphoneSilentOutput);
-    microphoneSilentOutput.connect(microphoneContext.destination);
+    if (androidMobilePushToTalk && microphoneContext.createMediaStreamDestination) {
+        // Keep ScriptProcessor active without opening a playback route. Connecting
+        // a silent graph to the hardware output can make Android/Bluetooth cars
+        // classify browser microphone capture as a phone call.
+        microphoneSilentOutput = microphoneContext.createMediaStreamDestination();
+        microphoneProcessor.connect(microphoneSilentOutput);
+    } else {
+        microphoneSilentOutput = microphoneContext.createGain();
+        microphoneSilentOutput.gain.value = 0;
+        microphoneProcessor.connect(microphoneSilentOutput);
+        microphoneSilentOutput.connect(microphoneContext.destination);
+    }
     prepareWakeCueBuffers().catch(() => {});
     refreshMicrophoneDevices();
 }
@@ -3263,6 +3517,7 @@ function beginVoiceCapture() {
 async function finishVoiceCapture(discard = false) {
     if (!microphoneCapturing) return;
     microphoneCapturing = false;
+    const captureEnded = performance.now();
     const chunks = microphoneCapture;
     microphoneCapture = [];
     microphonePreRoll = [];
@@ -3273,10 +3528,15 @@ async function finishVoiceCapture(discard = false) {
         setVoiceInputStatus('No speech detected.');
         return;
     }
-    await transcribeVoiceInput(wavBlob(chunks, microphoneContext.sampleRate));
+    const timing = {
+        speechEnded: effectiveVoiceInputMode() === 'push_to_talk' ? captureEnded : microphoneLastVoiceAt,
+        captureEnded,
+        sttStarted: performance.now(),
+    };
+    await transcribeVoiceInput(wavBlob(chunks, microphoneContext.sampleRate), timing);
 }
 
-async function transcribeVoiceInput(audio) {
+async function transcribeVoiceInput(audio, timing = null) {
     voiceInputBusy = true;
     let failure = '';
     configureVoiceInputUI();
@@ -3286,7 +3546,8 @@ async function transcribeVoiceInput(audio) {
         const response = await fetch('/api/desktop/voice-input/transcribe', {method: 'POST', body: form});
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || `Transcription failed (${response.status}).`);
-        handleVoiceTranscript(String(payload.transcript || '').trim());
+        if (timing) timing.sttDone = performance.now();
+        handleVoiceTranscript(String(payload.transcript || '').trim(), timing);
     } catch (error) {
         failure = `Microphone: ${error.message}`;
     } finally {
@@ -3296,7 +3557,7 @@ async function transcribeVoiceInput(audio) {
     }
 }
 
-function handleVoiceTranscript(transcript) {
+function handleVoiceTranscript(transcript, timing = null) {
     if (!transcript) return;
     let command = transcript;
     if (effectiveVoiceInputMode() === 'wake_word') {
@@ -3326,6 +3587,7 @@ function handleVoiceTranscript(transcript) {
     messageInput.dispatchEvent(new Event('input'));
     if (!sendButton.disabled) {
         if (effectiveVoiceInputMode() === 'wake_word') markVoiceConversationRequest();
+        pendingVoiceTiming = timing;
         composer.requestSubmit();
     }
     else setVoiceInputStatus('Transcript added to the message box; Petey is still replying.');
@@ -3950,7 +4212,9 @@ async function beginPushToTalk(event) {
     if (effectiveVoiceInputMode() !== 'push_to_talk' || voiceInputBusy
         || microphoneMuted) return;
     event.preventDefault();
-    primeSpeechPlayback();
+    const androidCarSafeCapture = mobileLayoutQuery.matches
+        && /Android/i.test(navigator.userAgent || '');
+    primeSpeechPlayback({carSafe: androidCarSafeCapture});
     if (!navigator.mediaDevices?.getUserMedia) {
         visualVoiceInputButton.hidden = true;
         visualDictationForm.hidden = false;
@@ -4267,8 +4531,9 @@ function getSpeechPlaybackContext() {
     return speechPlaybackContext;
 }
 
-function primeSpeechPlayback() {
+function primeSpeechPlayback({carSafe = false} = {}) {
     if (speechConfiguration?.provider === 'disabled') return;
+    if (carSafe) return;
     try {
         const context = getSpeechPlaybackContext();
         context.resume().catch(() => {});
@@ -4306,6 +4571,7 @@ function textForChatSpeech(text) {
 async function speakChatText(
     text, button = null, automatic = false,
     generation = automaticSpeechGeneration,
+    timing = null,
 ) {
     const automaticCancelled = () => automatic
         && (!voiceResponseEnabled || generation !== automaticSpeechGeneration);
@@ -4338,7 +4604,8 @@ async function speakChatText(
             setVoicePlaybackActive(true);
             try {
                 if (automaticCancelled()) return;
-                await playGeminiSpeechStream(text, button);
+                if (timing && !timing.ttsStarted) timing.ttsStarted = performance.now();
+                await playGeminiSpeechStream(text, button, timing);
                 return;
             } catch (error) {
                 const automatic = speechConfiguration?.provider === 'automatic';
@@ -4355,6 +4622,8 @@ async function speakChatText(
             }
         }
         if (automaticCancelled()) return;
+        if (timing && !timing.ttsStarted) timing.ttsStarted = performance.now();
+        if (timing && !timing.firstAudio) timing.route = 'media job';
         const queued = await apiJson('/api/desktop/chat/speech', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({text, skip_gemini: skipGemini}),
@@ -4414,6 +4683,10 @@ async function speakChatText(
         startVisualCaption(text);
         setVoicePlaybackActive(true);
         sourceNode.start();
+        if (timing && !timing.firstAudio) {
+            timing.firstAudio = performance.now();
+            showVoiceTiming(timing);
+        }
         await playbackFinished;
     } catch (error) {
         if (activeSpeechCancel) activeSpeechCancel();
@@ -4425,7 +4698,7 @@ async function speakChatText(
     }
 }
 
-async function playGeminiSpeechStream(text, button) {
+async function playGeminiSpeechStream(text, button, timing = null) {
     const context = getSpeechPlaybackContext();
     const controller = new AbortController();
     const scheduled = new Set();
@@ -4499,6 +4772,11 @@ async function playGeminiSpeechStream(text, button) {
         };
         source.start(startAt);
         receivedAudio = true;
+        if (timing && !timing.firstAudio) {
+            timing.route = 'Gemini stream';
+            timing.firstAudio = performance.now() + Math.max(0, startAt - context.currentTime) * 1000;
+            showVoiceTiming(timing);
+        }
     };
 
     while (true) {
@@ -4529,7 +4807,13 @@ async function playGeminiSpeechStream(text, button) {
 }
 
 document.querySelectorAll('.nav-button').forEach(button => {
-    button.addEventListener('click', () => showView(button.dataset.view));
+    button.addEventListener('click', () => {
+        if (button.id === 'sidebar-chat-toggle') {
+            setSidebarChatsOpen(button.getAttribute('aria-expanded') !== 'true');
+        } else {
+            showView(button.dataset.view);
+        }
+    });
 });
 
 if (document.getElementById('plan-budget')) {
@@ -4867,6 +5151,340 @@ document.getElementById('rewrite-persona').addEventListener('click', async () =>
     }
 });
 
+// --- Personality Creation Wizard ---
+let wizardCurrentStep = 1;
+let wizardGeneratedResult = null;
+
+const wizardDialog = document.getElementById('personality-wizard-dialog');
+
+function openPersonalityWizard() {
+    wizardCurrentStep = 1;
+    wizardGeneratedResult = null;
+    renderWizardStep(1);
+    updateWizardPreview();
+    wizardDialog.hidden = false;
+}
+
+function closePersonalityWizard() {
+    wizardDialog.hidden = true;
+}
+
+function renderWizardStep(step) {
+    wizardCurrentStep = Math.max(1, Math.min(4, step));
+    for (let i = 1; i <= 4; i++) {
+        const panel = document.getElementById(`wizard-step-${i}`);
+        if (panel) panel.hidden = (i !== wizardCurrentStep);
+    }
+    const tabs = wizardDialog.querySelectorAll('.wizard-step-tab');
+    tabs.forEach(tab => {
+        const tabStep = parseInt(tab.dataset.step, 10);
+        tab.classList.toggle('active', tabStep === wizardCurrentStep);
+    });
+
+    const prevBtn = document.getElementById('wizard-prev-btn');
+    const nextBtn = document.getElementById('wizard-next-btn');
+    const applyBtn = document.getElementById('wizard-apply-btn');
+
+    if (prevBtn) prevBtn.hidden = (wizardCurrentStep === 1);
+
+    if (wizardCurrentStep === 4) {
+        if (nextBtn) nextBtn.hidden = true;
+        if (applyBtn) applyBtn.hidden = false;
+        updateWizardPreview();
+    } else {
+        if (nextBtn) {
+            nextBtn.hidden = false;
+            const nextLabels = { 1: 'Next: Traits →', 2: 'Next: Style & Voice →', 3: 'Review & Apply →' };
+            nextBtn.textContent = nextLabels[wizardCurrentStep] || 'Next →';
+        }
+        if (applyBtn) applyBtn.hidden = true;
+    }
+}
+
+// Wizard slider sync and output labels
+['wiz-tone', 'wiz-verbosity', 'wiz-formality', 'wiz-empathy'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+        const valId = `${id.replace('wiz-', '')}-val`;
+        el.addEventListener('input', () => {
+            const valOut = document.getElementById(`${id}-val`) || document.getElementById(valId);
+            if (valOut) valOut.textContent = el.value;
+            if (wizardCurrentStep === 4) updateWizardPreview();
+        });
+    }
+});
+
+// Archetype selection
+wizardDialog.querySelectorAll('.archetype-card').forEach(card => {
+    card.addEventListener('click', () => {
+        wizardDialog.querySelectorAll('.archetype-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        const archetype = card.dataset.archetype;
+        const defaults = {
+            scholar: { name: 'Arcane Master', role: 'Arcane Scholar', concept: 'Knowledgeable, mysterious, loves ancient wisdom and dramatic explanations.', tone: 55, verbosity: 70, formality: 75, empathy: 50 },
+            detective: { name: 'Inspector Byte', role: 'Code Detective', concept: 'Treats bugs like crime scenes and uses methodical deduction.', tone: 40, verbosity: 55, formality: 65, empathy: 45 },
+            hacker: { name: 'Vapor', role: 'Cyberpunk Specialist', concept: 'High-tech, low-friction, rapid debugging and sharp direct advice.', tone: 70, verbosity: 35, formality: 25, empathy: 40 },
+            zen: { name: 'Master Kai', role: 'Mindfulness Guide', concept: 'Calm, patient, mindful guidance with empathetic wisdom.', tone: 65, verbosity: 50, formality: 30, empathy: 90 },
+            comedian: { name: 'Jester', role: 'Witty Comedian', concept: 'Delivers sharp insights with dry wit and punchy humor.', tone: 85, verbosity: 40, formality: 20, empathy: 55 },
+            mentor: { name: 'Captain Stone', role: 'Tough Love Coach', concept: 'Blunt, high-standards mentor who pushes you to succeed with zero excuses.', tone: 25, verbosity: 35, formality: 50, empathy: 35 },
+            scifi: { name: 'AURA-7', role: 'Ship AI', concept: 'Objective, articulate spacecraft AI assistant.', tone: 30, verbosity: 60, formality: 85, empathy: 30 },
+            custom: { name: '', role: '', concept: '', tone: 50, verbosity: 50, formality: 50, empathy: 50 },
+        }[archetype];
+
+        if (defaults && archetype !== 'custom') {
+            if (!document.getElementById('wizard-name').value || card.dataset.archetype !== 'custom') {
+                document.getElementById('wizard-name').value = defaults.name;
+            }
+            if (!document.getElementById('wizard-role').value || card.dataset.archetype !== 'custom') {
+                document.getElementById('wizard-role').value = defaults.role;
+            }
+            if (!document.getElementById('wizard-concept').value || card.dataset.archetype !== 'custom') {
+                document.getElementById('wizard-concept').value = defaults.concept;
+            }
+            document.getElementById('wiz-tone').value = defaults.tone;
+            document.getElementById('wiz-tone-val').textContent = defaults.tone;
+            document.getElementById('wiz-verbosity').value = defaults.verbosity;
+            document.getElementById('wiz-verb-val').textContent = defaults.verbosity;
+            document.getElementById('wiz-formality').value = defaults.formality;
+            document.getElementById('wiz-form-val').textContent = defaults.formality;
+            document.getElementById('wiz-empathy').value = defaults.empathy;
+            document.getElementById('wiz-empa-val').textContent = defaults.empathy;
+        }
+    });
+});
+
+// Trait chips toggle
+wizardDialog.querySelectorAll('.trait-chip').forEach(chip => {
+    chip.addEventListener('click', () => chip.classList.toggle('active'));
+});
+
+// Custom trait button
+document.getElementById('wizard-add-trait-btn').addEventListener('click', () => {
+    const input = document.getElementById('wizard-custom-trait-input');
+    const val = input.value.trim();
+    if (!val) return;
+    const cloud = document.getElementById('wizard-traits-cloud');
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'trait-chip active';
+    chip.dataset.trait = val;
+    chip.textContent = val;
+    chip.addEventListener('click', () => chip.classList.toggle('active'));
+    cloud.append(chip);
+    input.value = '';
+});
+
+// Slider Presets
+wizardDialog.querySelectorAll('.preset-chip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const preset = btn.dataset.preset;
+        const vals = {
+            exec: { tone: 20, verbosity: 30, formality: 80, empathy: 40 },
+            creative: { tone: 85, verbosity: 70, formality: 25, empathy: 75 },
+            guru: { tone: 35, verbosity: 45, formality: 60, empathy: 30 },
+            mentor: { tone: 65, verbosity: 60, formality: 30, empathy: 90 },
+        }[preset];
+        if (vals) {
+            document.getElementById('wiz-tone').value = vals.tone;
+            document.getElementById('wiz-tone-val').textContent = vals.tone;
+            document.getElementById('wiz-verbosity').value = vals.verbosity;
+            document.getElementById('wiz-verb-val').textContent = vals.verbosity;
+            document.getElementById('wiz-formality').value = vals.formality;
+            document.getElementById('wiz-form-val').textContent = vals.formality;
+            document.getElementById('wiz-empathy').value = vals.empathy;
+            document.getElementById('wiz-empa-val').textContent = vals.empathy;
+        }
+    });
+});
+
+// Vibe Chips
+wizardDialog.querySelectorAll('.vibe-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+        wizardDialog.querySelectorAll('.vibe-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+    });
+});
+
+function collectWizardState() {
+    const activeArchetypeCard = wizardDialog.querySelector('.archetype-card.active');
+    const archetype = activeArchetypeCard ? activeArchetypeCard.dataset.archetype : 'custom';
+
+    const traits = Array.from(wizardDialog.querySelectorAll('.trait-chip.active'))
+        .map(chip => chip.dataset.trait || chip.textContent.trim())
+        .filter(Boolean);
+
+    const nuances = Array.from(wizardDialog.querySelectorAll('.wizard-nuance-check:checked'))
+        .map(cb => cb.value);
+
+    const activeVibe = wizardDialog.querySelector('.vibe-chip.active');
+    const vocalVibe = activeVibe ? activeVibe.dataset.vibe : 'warm';
+
+    return {
+        fast_prompt: document.getElementById('wizard-fast-prompt').value.trim(),
+        archetype: archetype,
+        name: document.getElementById('wizard-name').value.trim(),
+        role_tag: document.getElementById('wizard-role').value.trim(),
+        concept: document.getElementById('wizard-concept').value.trim(),
+        traits: traits,
+        nuances: nuances,
+        sliders: {
+            tone: parseInt(document.getElementById('wiz-tone').value, 10),
+            verbosity: parseInt(document.getElementById('wiz-verbosity').value, 10),
+            formality: parseInt(document.getElementById('wiz-formality').value, 10),
+            empathy: parseInt(document.getElementById('wiz-empathy').value, 10),
+        },
+        vocal_vibe: vocalVibe,
+    };
+}
+
+function updateWizardPreview() {
+    const state = collectWizardState();
+    const name = state.name || 'Petey Profile';
+    const role = state.role_tag || 'AI Companion';
+    const tagline = state.concept ? `"${state.concept.slice(0, 60)}..."` : 'Nuanced AI assistant';
+
+    document.getElementById('preview-name').textContent = name;
+    document.getElementById('preview-role-tagline').innerHTML = `${role} · <em>${tagline}</em>`;
+    document.getElementById('preview-traits-list').textContent = state.traits.join(', ') || 'None selected';
+    document.getElementById('preview-sliders-summary').textContent =
+        `Tone ${state.sliders.tone} · Verbosity ${state.sliders.verbosity} · Formality ${state.sliders.formality} · Empathy ${state.sliders.empathy}`;
+
+    if (wizardGeneratedResult) {
+        document.getElementById('preview-system-prompt').textContent = wizardGeneratedResult.system_prompt;
+        const providerName = wizardGeneratedResult.recommended_provider || 'automatic';
+        const voice = wizardGeneratedResult.recommended_voice || 'Default';
+        const style = wizardGeneratedResult.speech_style || '';
+        document.getElementById('preview-speech-summary').textContent = `${providerName.toUpperCase()} (Voice: ${voice}) — ${style}`;
+    } else {
+        // Local synthesis preview
+        const promptLines = [
+            `You are ${name}, a ${role}.`,
+            `Embody the traits of being ${state.traits.join(', ') || 'helpful'}.`,
+        ];
+        if (state.concept) promptLines.push(`Background: ${state.concept}`);
+        promptLines.push(`Maintain a balanced communication style suited for ${role}.`);
+        document.getElementById('preview-system-prompt').textContent = promptLines.join('\n');
+        document.getElementById('preview-speech-summary').textContent = `Automatic delivery matching ${state.vocal_vibe} vibe.`;
+    }
+}
+
+async function synthesizeWizardPersonality() {
+    const status = document.getElementById('wizard-status');
+    const synthBtn = document.getElementById('wizard-synthesize-btn');
+    const fastBtn = document.getElementById('wizard-fast-generate-btn');
+    if (synthBtn) synthBtn.disabled = true;
+    if (fastBtn) fastBtn.disabled = true;
+    setFeedback(status, 'Synthesizing nuanced profile…');
+
+    try {
+        const payload = collectWizardState();
+        const result = await apiJson('/api/desktop/personality/wizard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        wizardGeneratedResult = result;
+
+        if (result.name) document.getElementById('wizard-name').value = result.name;
+        if (result.role_tag) document.getElementById('wizard-role').value = result.role_tag;
+
+        updateWizardPreview();
+        setFeedback(status, 'Profile generated! Review and click Apply when ready.', 'success');
+        renderWizardStep(4);
+    } catch (error) {
+        setFeedback(status, error.message, 'error');
+    } finally {
+        if (synthBtn) synthBtn.disabled = false;
+        if (fastBtn) fastBtn.disabled = false;
+    }
+}
+
+function applyWizardToForm() {
+    const result = wizardGeneratedResult || (function() {
+        const st = collectWizardState();
+        return {
+            name: st.name || 'Petey',
+            role_tag: st.role_tag || 'Assistant',
+            tagline: st.concept || 'Nuanced AI companion.',
+            system_prompt: document.getElementById('preview-system-prompt').textContent,
+            traits: st.traits,
+            sliders: st.sliders,
+            speech_style: '',
+            recommended_provider: 'automatic',
+            recommended_voice: '',
+        };
+    })();
+
+    document.getElementById('persona-preset').value = '';
+    document.getElementById('persona-name').value = result.name || 'Petey';
+    document.getElementById('persona-role').value = result.role_tag || 'Assistant';
+    document.getElementById('persona-tagline').value = result.tagline || '';
+    document.getElementById('persona-prompt').value = result.system_prompt || '';
+    document.getElementById('persona-traits').value = (result.traits || []).join(', ');
+
+    if (result.sliders) {
+        sliderKeys.forEach(key => {
+            const val = result.sliders[key] ?? 50;
+            const input = document.getElementById(`persona-${key}`);
+            const output = document.getElementById(`${key}-value`);
+            if (input) input.value = val;
+            if (output) output.textContent = val;
+        });
+    }
+
+    if (result.recommended_provider) {
+        const speechProv = document.getElementById('speech-provider');
+        if (speechProv) {
+            speechProv.value = result.recommended_provider;
+            speechProv.dispatchEvent(new Event('change'));
+        }
+    }
+    if (result.recommended_voice) {
+        const prov = result.recommended_provider || 'gemini';
+        const voiceSelect = document.getElementById(`speech-${prov}-voice`);
+        if (voiceSelect && Array.from(voiceSelect.options).some(o => o.value === result.recommended_voice)) {
+            voiceSelect.value = result.recommended_voice;
+        }
+    }
+    if (result.speech_style) {
+        const speechStyle = document.getElementById('speech-style');
+        if (speechStyle) speechStyle.value = result.speech_style;
+    }
+
+    closePersonalityWizard();
+    const feedback = document.getElementById('personality-status');
+    setFeedback(feedback, '✨ Personality Wizard auto-filled all fields and sliders! Click Save Petey profile when ready.', 'success');
+}
+
+// Wizard Event Listeners
+const openWizBtn = document.getElementById('open-personality-wizard');
+const openWizInlineBtn = document.getElementById('open-personality-wizard-inline');
+if (openWizBtn) openWizBtn.addEventListener('click', openPersonalityWizard);
+if (openWizInlineBtn) openWizInlineBtn.addEventListener('click', openPersonalityWizard);
+
+document.getElementById('wizard-close-btn').addEventListener('click', closePersonalityWizard);
+
+wizardDialog.querySelectorAll('.wizard-step-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const step = parseInt(tab.dataset.step, 10);
+        renderWizardStep(step);
+    });
+});
+
+document.getElementById('wizard-prev-btn').addEventListener('click', () => renderWizardStep(wizardCurrentStep - 1));
+document.getElementById('wizard-next-btn').addEventListener('click', () => renderWizardStep(wizardCurrentStep + 1));
+document.getElementById('wizard-synthesize-btn').addEventListener('click', synthesizeWizardPersonality);
+document.getElementById('wizard-fast-generate-btn').addEventListener('click', synthesizeWizardPersonality);
+document.getElementById('wizard-apply-btn').addEventListener('click', applyWizardToForm);
+
+wizardDialog.addEventListener('click', event => {
+    if (event.target === wizardDialog) closePersonalityWizard();
+});
+wizardDialog.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closePersonalityWizard();
+});
+
+
 const knowledgeFile = document.getElementById('knowledge-file');
 const uploadKnowledge = document.getElementById('upload-knowledge');
 knowledgeFile.addEventListener('change', () => {
@@ -5112,16 +5730,21 @@ const mediaSpeechFields = document.getElementById('media-speech-fields');
 const mediaSpeechProviderField = document.getElementById('media-speech-provider-field');
 const mediaSourceField = document.getElementById('media-source-field');
 const mediaNonimageSource = document.getElementById('media-nonimage-source');
+const mediaReferenceField = document.getElementById('media-reference-field');
+const mediaReferenceFiles = document.getElementById('media-reference-files');
+const mediaReferenceList = document.getElementById('media-reference-list');
 const mediaPrompt = document.getElementById('media-prompt');
 const mediaStatus = document.getElementById('media-status');
 let mediaModelRequest = 0;
 let selectedVisualImage = null;
 let selectedMediaImageFile = null;
+let selectedMediaReferences = [];
+const mediaReferencePreviewUrls = new Map();
 let mediaSelectionUrl = '';
 let mediaPriceTimer = null;
 let mediaPriceRequest = 0;
 let mediaPriceController = null;
-const pricedMediaOperations = new Set(['txt2img', 'img2img', 'txt2video', 'img2video', 'img-rmbg', 'img-upscale']);
+const pricedMediaOperations = new Set(['txt2img', 'img2img', 'txt2video', 'img2video', 'ref2vid', 'img-rmbg', 'img-upscale']);
 const mediaPromptDraftStorageKey = 'petey.media-prompt-drafts.v1';
 const mediaSpeechProviderStorageKey = 'petey.media-speech-provider.v1';
 let deapiSpeechConfiguration = {default_model: '', voices: []};
@@ -5131,6 +5754,7 @@ const mediaOperationUI = {
     img2img: {source: 'image', prompt: 'Restyle prompt', placeholder: 'Describe how the image should change…', visual: true},
     txt2video: {source: null, prompt: 'Video prompt', placeholder: 'Describe the scene and motion…', visual: true, video: true},
     img2video: {source: 'image', prompt: 'Animation prompt', placeholder: 'Describe how the image should move…', visual: true, video: true},
+    ref2vid: {source: null, references: true, prompt: 'Reference video prompt', placeholder: 'Use <Picture 1>, <Video 1>, and <Audio 1> to describe the scene…', visual: true, video: true},
     vid2video: {source: 'video', prompt: 'Restyle prompt', placeholder: 'Describe the new video style…', visual: true, video: true},
     txt2music: {source: 'optional_audio', prompt: 'Music style / caption', placeholder: 'Energetic electronic pop with cinematic drums…', music: true},
     txt2audio: {source: null, prompt: 'Text to speak', placeholder: 'Enter the words Petey should speak…', speech: true},
@@ -5217,6 +5841,7 @@ function configureMediaOperation(preserveSource = false) {
         mediaPrompt.value = '';
     }
     mediaSourceField.hidden = !config.source;
+    mediaReferenceField.hidden = !config.references;
     if (config.source) {
         const labels = {image: 'Source image', video: 'Source video', optional_audio: 'Reference audio (optional)'};
         const accepts = {image: 'image/*', video: 'video/*,.mov,.avi', optional_audio: 'audio/*,.m4a,.flac'};
@@ -5226,7 +5851,10 @@ function configureMediaOperation(preserveSource = false) {
         mediaNonimageSource.hidden = isImage;
         if (!isImage) mediaNonimageSource.accept = accepts[config.source];
     }
-    if (!preserveSource) clearMediaSourceSelection();
+    if (!preserveSource) {
+        clearMediaSourceSelection();
+        clearMediaReferences();
+    }
     document.getElementById('media-visual-fields').hidden = !config.visual;
     document.getElementById('media-video-fields').hidden = !config.video;
     document.getElementById('media-music-fields').hidden = !config.music;
@@ -5277,9 +5905,11 @@ async function loadMediaModels(operation) {
         const preferredModel = operation === 'txt2audio' && speechProvider === 'gemini'
             ? speechConfiguration.gemini_model
             : mediaSelectedModels[operation]
-                || (operation === 'txt2audio' ? deapiSpeechConfiguration.default_model : '');
+                || (operation === 'txt2audio' ? deapiSpeechConfiguration.default_model : '')
+                || (operation === 'ref2vid' ? 'MiniMaxH3_33B_Turbo_INT8' : '');
         mediaModel.value = models.some(model => model.slug === preferredModel) ? preferredModel : '';
         mediaModel.disabled = false;
+        if (operation === 'ref2vid') updateMediaReferenceHint();
         scheduleMediaEstimate();
         if (!models.length) setFeedback(mediaStatus, 'No compatible models were returned. Check the media service configuration.', 'error');
     };
@@ -5340,6 +5970,141 @@ function clearMediaSourceSelection() {
     scheduleMediaEstimate();
 }
 
+function referenceKind(file) {
+    if (file.type.startsWith('image/')) return 'image';
+    if (file.type.startsWith('video/')) return 'video';
+    if (file.type.startsWith('audio/')) return 'audio';
+    const extension = file.name.toLowerCase().split('.').pop();
+    if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff', 'avif'].includes(extension)) return 'image';
+    if (['mp4', 'mov', 'webm', 'avi', 'mpeg', 'mpg'].includes(extension)) return 'video';
+    if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(extension)) return 'audio';
+    return '';
+}
+
+function mediaReferenceLimits() {
+    const models = mediaModelsCache.get('ref2vid') || [];
+    const selected = models.find(model => model.slug === mediaModel.value) || models[0];
+    const limits = selected?.info?.limits || {};
+    return {
+        image: Number(limits.max_ref_images ?? 3),
+        video: Number(limits.max_ref_videos ?? 1),
+        audio: Number(limits.max_ref_audios ?? 3),
+        total: Number(limits.max_ref_files ?? 3),
+    };
+}
+
+function updateMediaReferenceHint() {
+    const limits = mediaReferenceLimits();
+    document.getElementById('media-reference-hint').textContent =
+        `This H3 model accepts ${limits.total} reference file${limits.total === 1 ? '' : 's'} total: `
+        + `up to ${limits.image} image${limits.image === 1 ? '' : 's'}, ${limits.video} video, and `
+        + `${limits.audio} audio clip${limits.audio === 1 ? '' : 's'}. Audio needs an image or video. `
+        + 'Use the displayed tags in your prompt.';
+}
+
+function validateMediaReferences(files) {
+    if (!files.length) throw new Error('Choose at least one image or video reference.');
+    const limits = mediaReferenceLimits();
+    const counts = {image: 0, video: 0, audio: 0};
+    for (const file of files) {
+        const kind = referenceKind(file);
+        if (!kind) throw new Error(`${file.name} is not a supported image, video, or audio file.`);
+        counts[kind] += 1;
+        const maxMegabytes = {image: 10, video: null, audio: 15}[kind];
+        const maxBytes = maxMegabytes ? maxMegabytes * 1024 * 1024 : null;
+        if (file.size < 1024) throw new Error(`${file.name} must be at least 1 KB.`);
+        if (maxBytes && file.size > maxBytes) throw new Error(`${file.name} exceeds the ${maxMegabytes} MB ${kind} limit.`);
+    }
+    if (files.length > limits.total) throw new Error(`This H3 model accepts no more than ${limits.total} reference files.`);
+    if (counts.image > limits.image || counts.video > limits.video || counts.audio > limits.audio) {
+        throw new Error(`This H3 model accepts up to ${limits.image} images, ${limits.video} video, and ${limits.audio} audio clips.`);
+    }
+    if (!counts.image && !counts.video) throw new Error('Audio cannot be the only reference; add an image or video.');
+    return counts;
+}
+
+function renderMediaReferences() {
+    mediaReferenceList.innerHTML = '';
+    const hasVideo = selectedMediaReferences.some(file => referenceKind(file) === 'video');
+    const videoAudioField = document.getElementById('media-reference-video-audio-field');
+    const videoHasAudio = document.getElementById('media-reference-video-audio');
+    videoAudioField.hidden = !hasVideo;
+    if (!hasVideo) videoHasAudio.checked = false;
+    const indexes = {image: 0, video: 0, audio: hasVideo && videoHasAudio.checked ? 1 : 0};
+    const labels = {image: 'Picture', video: 'Video', audio: 'Audio'};
+    selectedMediaReferences.forEach(file => {
+        const kind = referenceKind(file);
+        indexes[kind] += 1;
+        const tag = `<${labels[kind]} ${indexes[kind]}>`;
+        const item = document.createElement('div');
+        item.className = 'media-reference-item';
+        const preview = document.createElement(kind === 'image' ? 'img' : 'span');
+        preview.className = 'media-reference-preview';
+        if (kind === 'image') {
+            let previewUrl = file.previewUrl || mediaReferencePreviewUrls.get(file);
+            if (!previewUrl && file instanceof File) {
+                previewUrl = URL.createObjectURL(file);
+                mediaReferencePreviewUrls.set(file, previewUrl);
+            }
+            preview.src = previewUrl;
+            preview.alt = `Preview of ${file.name}`;
+        } else {
+            preview.textContent = kind === 'video' ? '▶' : '♪';
+            preview.setAttribute('aria-hidden', 'true');
+        }
+        const tagButton = document.createElement('button');
+        tagButton.type = 'button';
+        tagButton.className = 'text-button';
+        tagButton.title = `Insert ${tag} into the prompt`;
+        const code = document.createElement('code');
+        code.textContent = tag;
+        tagButton.append(code);
+        tagButton.addEventListener('click', () => {
+            const start = mediaPrompt.selectionStart ?? mediaPrompt.value.length;
+            mediaPrompt.setRangeText(`${tag} `, start, mediaPrompt.selectionEnd ?? start, 'end');
+            mediaPrompt.focus();
+            rememberMediaPrompt();
+        });
+        const name = document.createElement('span');
+        name.textContent = file.name;
+        const size = document.createElement('small');
+        size.textContent = formatFileSize(file.size);
+        item.append(preview, tagButton, name, size);
+        mediaReferenceList.append(item);
+    });
+    document.getElementById('clear-media-references').hidden = !selectedMediaReferences.length;
+    scheduleMediaEstimate();
+}
+
+function clearMediaReferences() {
+    mediaReferencePreviewUrls.forEach(url => URL.revokeObjectURL(url));
+    mediaReferencePreviewUrls.clear();
+    selectedMediaReferences = [];
+    mediaReferenceFiles.value = '';
+    renderMediaReferences();
+}
+
+mediaReferenceFiles.addEventListener('change', () => {
+    const files = Array.from(mediaReferenceFiles.files || []);
+    try {
+        const keys = new Set(selectedMediaReferences.map(file => file.browser
+            ? `browser:${file.token}:${file.path}`
+            : `file:${file.name}:${file.size}:${file.lastModified || 0}`));
+        const additions = files.filter(file => !keys.has(`file:${file.name}:${file.size}:${file.lastModified || 0}`));
+        const combined = [...selectedMediaReferences, ...additions];
+        validateMediaReferences(combined);
+        selectedMediaReferences = combined;
+        mediaReferenceFiles.value = '';
+        renderMediaReferences();
+        setFeedback(mediaStatus, `${combined.length} H3 reference${combined.length === 1 ? '' : 's'} selected.`, 'success');
+    } catch (error) {
+        mediaReferenceFiles.value = '';
+        setFeedback(mediaStatus, error.message, 'error');
+    }
+});
+document.getElementById('clear-media-references').addEventListener('click', clearMediaReferences);
+document.getElementById('media-reference-video-audio').addEventListener('change', renderMediaReferences);
+
 function showMediaImageSelection(file, previewUrl) {
     if (mediaSelectionUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaSelectionUrl);
     mediaSelectionUrl = previewUrl;
@@ -5361,8 +6126,38 @@ function formatFileSize(bytes) {
 const imageBrowserDialog = document.getElementById('image-browser-dialog');
 let imageBrowserToken = '';
 let imageBrowserPath = '';
+let imageBrowserPurpose = 'source';
+const pendingReferenceMedia = new Map();
+
+function updateReferenceImageAction() {
+    const button = document.getElementById('add-reference-images');
+    const count = pendingReferenceMedia.size;
+    button.disabled = count === 0;
+    button.textContent = count
+        ? `Add ${count} selected reference${count === 1 ? '' : 's'}`
+        : 'Add selected references';
+}
 
 document.getElementById('browse-media-images').addEventListener('click', () => {
+    imageBrowserPurpose = 'source';
+    pendingReferenceMedia.clear();
+    document.querySelectorAll('#image-browser-grid .image-thumbnail-card.selected').forEach(
+        card => card.classList.remove('selected'),
+    );
+    document.getElementById('image-browser-title').textContent = 'Choose an image';
+    document.getElementById('add-reference-images').hidden = true;
+    imageBrowserDialog.showModal();
+});
+document.getElementById('browse-media-reference-images').addEventListener('click', () => {
+    imageBrowserPurpose = 'references';
+    pendingReferenceMedia.clear();
+    document.querySelectorAll('#image-browser-grid .image-thumbnail-card.selected').forEach(
+        card => card.classList.remove('selected'),
+    );
+    document.getElementById('image-browser-title').textContent = 'Choose H3 references';
+    document.getElementById('add-reference-images').hidden = false;
+    updateReferenceImageAction();
+    setFeedback(document.getElementById('image-browser-status'), 'Select images, videos, or audio clips.');
     imageBrowserDialog.showModal();
 });
 document.getElementById('close-image-browser').addEventListener('click', () => imageBrowserDialog.close());
@@ -5418,11 +6213,12 @@ async function loadImageBrowserDirectory(path = '') {
         document.getElementById('image-browser-path').textContent = `/${imageBrowserPath}`;
         grid.innerHTML = '';
         payload.folders.forEach(folder => grid.append(createImageFolderCard(folder)));
-        payload.images.forEach(image => grid.append(createImageThumbnailCard(image)));
-        if (!payload.folders.length && !payload.images.length) {
-            grid.innerHTML = '<p class="muted">No supported images in this folder.</p>';
+        const items = imageBrowserPurpose === 'references' ? (payload.media || payload.images) : payload.images;
+        items.forEach(item => grid.append(createMediaThumbnailCard(item)));
+        if (!payload.folders.length && !items.length) {
+            grid.innerHTML = `<p class="muted">No supported ${imageBrowserPurpose === 'references' ? 'media files' : 'images'} in this folder.</p>`;
         }
-        setFeedback(status, `${payload.images.length} image${payload.images.length === 1 ? '' : 's'} in this folder.`);
+        setFeedback(status, `${items.length} supported file${items.length === 1 ? '' : 's'} in this folder.`);
     } catch (error) {
         grid.innerHTML = '';
         setFeedback(status, error.message, 'error');
@@ -5446,24 +6242,95 @@ function imageBrowserUrl(endpoint, path) {
     return `/api/desktop/image-browser/${endpoint}?${new URLSearchParams({token: imageBrowserToken, path})}`;
 }
 
-function createImageThumbnailCard(item) {
+function createMediaThumbnailCard(item) {
     const button = document.createElement('button');
     button.className = 'image-thumbnail-card';
     button.type = 'button';
-    const preview = document.createElement('img');
-    preview.loading = 'lazy';
-    preview.src = imageBrowserUrl('thumbnail', item.path);
-    preview.alt = '';
+    const kind = item.kind || 'image';
+    let preview;
+    if (kind === 'image') {
+        preview = document.createElement('img');
+        preview.loading = 'lazy';
+        preview.src = imageBrowserUrl('thumbnail', item.path);
+        preview.alt = '';
+    } else if (kind === 'video') {
+        preview = document.createElement('video');
+        preview.preload = 'metadata';
+        preview.muted = true;
+        preview.playsInline = true;
+        preview.src = imageBrowserUrl('file', item.path);
+        preview.addEventListener('loadedmetadata', () => {
+            if (Number.isFinite(preview.duration) && preview.duration > 0) {
+                preview.currentTime = Math.min(0.2, preview.duration / 2);
+            }
+        }, {once: true});
+    } else {
+        preview = document.createElement('div');
+        preview.className = 'media-browser-audio-preview';
+        preview.textContent = '♪';
+        preview.setAttribute('aria-hidden', 'true');
+    }
     const copy = document.createElement('span');
     const name = document.createElement('strong');
     name.textContent = item.name;
     const details = document.createElement('small');
-    details.textContent = `${item.width && item.height ? `${item.width}×${item.height} · ` : ''}${formatFileSize(item.size)}`;
+    const kindLabel = {image: 'Image', video: 'Video', audio: 'Audio'}[kind];
+    details.textContent = `${kindLabel} · ${item.width && item.height ? `${item.width}×${item.height} · ` : ''}${formatFileSize(item.size)}`;
     copy.append(name, details);
     button.append(preview, copy);
-    button.addEventListener('click', () => selectVisualImage(item, button));
+    if (imageBrowserPurpose === 'references' && pendingReferenceMedia.has(item.path)) {
+        button.classList.add('selected');
+        button.setAttribute('aria-pressed', 'true');
+    }
+    button.addEventListener('click', () => {
+        if (imageBrowserPurpose === 'references') {
+            const selected = !pendingReferenceMedia.has(item.path);
+            if (selected) pendingReferenceMedia.set(item.path, item);
+            else pendingReferenceMedia.delete(item.path);
+            button.classList.toggle('selected', selected);
+            button.setAttribute('aria-pressed', String(selected));
+            const count = pendingReferenceMedia.size;
+            updateReferenceImageAction();
+            setFeedback(
+                document.getElementById('image-browser-status'),
+                count ? `${count} reference${count === 1 ? '' : 's'} selected.` : 'Select images, videos, or audio clips.',
+            );
+            return;
+        }
+        selectVisualImage(item, button);
+    });
     return button;
 }
+
+document.getElementById('add-reference-images').addEventListener('click', () => {
+    const additions = [...pendingReferenceMedia.values()].map(item => ({
+        browser: true,
+        token: imageBrowserToken,
+        path: item.path,
+        name: item.name,
+        size: item.size,
+        type: item.type,
+        previewUrl: item.kind === 'image' ? imageBrowserUrl('thumbnail', item.path) : '',
+    }));
+    const existingKeys = new Set(
+        selectedMediaReferences.filter(item => item.browser).map(item => `${item.token}:${item.path}`),
+    );
+    const combined = [
+        ...selectedMediaReferences,
+        ...additions.filter(item => !existingKeys.has(`${item.token}:${item.path}`)),
+    ];
+    try {
+        validateMediaReferences(combined);
+        selectedMediaReferences = combined;
+        pendingReferenceMedia.clear();
+        updateReferenceImageAction();
+        renderMediaReferences();
+        imageBrowserDialog.close();
+        setFeedback(mediaStatus, `${combined.length} H3 reference${combined.length === 1 ? '' : 's'} selected.`, 'success');
+    } catch (error) {
+        setFeedback(document.getElementById('image-browser-status'), error.message, 'error');
+    }
+});
 
 async function selectVisualImage(item, button) {
     const status = document.getElementById('image-browser-status');
@@ -5520,7 +6387,7 @@ document.getElementById('enhance-media-prompt').addEventListener('click', async 
 
 function mediaParameters() {
     const [width, height] = document.getElementById('media-size').value.split('x');
-    return {
+    const parameters = {
         width,
         height,
         steps: document.getElementById('media-steps').value,
@@ -5535,6 +6402,11 @@ function mediaParameters() {
         tts_provider: document.getElementById('media-speech-provider').value,
         scale: document.getElementById('media-scale').value,
     };
+    if (mediaOperation.value === 'ref2vid') {
+        parameters.ref_images_count = selectedMediaReferences.filter(file => referenceKind(file) === 'image').length;
+        parameters.ref_videos_count = selectedMediaReferences.filter(file => referenceKind(file) === 'video').length;
+    }
+    return parameters;
 }
 
 function scheduleMediaEstimate() {
@@ -5560,6 +6432,10 @@ function scheduleMediaEstimate() {
     }
     if (['img-rmbg', 'img-upscale'].includes(operation) && !selectedVisualImage && !selectedMediaImageFile) {
         note.textContent = 'Choose a source image to estimate cost.';
+        return;
+    }
+    if (operation === 'ref2vid' && !selectedMediaReferences.length) {
+        note.textContent = 'Choose H3 references to estimate cost.';
         return;
     }
     button.textContent = 'Generate · estimating…';
@@ -5604,7 +6480,10 @@ function scheduleMediaEstimate() {
     }, 450);
 }
 
-mediaModel.addEventListener('change', scheduleMediaEstimate);
+mediaModel.addEventListener('change', () => {
+    if (mediaOperation.value === 'ref2vid') updateMediaReferenceHint();
+    scheduleMediaEstimate();
+});
 for (const id of ['media-size', 'media-steps', 'media-guidance', 'media-frames', 'media-fps', 'media-scale', 'media-prompt']) {
     document.getElementById(id).addEventListener('input', scheduleMediaEstimate);
     document.getElementById(id).addEventListener('change', scheduleMediaEstimate);
@@ -5655,6 +6534,14 @@ document.getElementById('generate-media').addEventListener('click', async () => 
         ? selectedMediaImageFile
         : mediaNonimageSource.files[0];
     const hasVisualImage = config.source === 'image' && Boolean(selectedVisualImage);
+    if (config.references) {
+        try {
+            validateMediaReferences(selectedMediaReferences);
+        } catch (error) {
+            setFeedback(mediaStatus, error.message, 'error');
+            return;
+        }
+    }
     if (['image', 'video'].includes(config.source) && !file && !hasVisualImage) {
         setFeedback(mediaStatus, `Choose a source ${config.source} first.`, 'error');
         return;
@@ -5670,6 +6557,14 @@ document.getElementById('generate-media').addEventListener('click', async () => 
     body.append('prompt', mediaPrompt.value);
     body.append('parameters', JSON.stringify(mediaParameters()));
     if (file) body.append('source', file);
+    selectedMediaReferences.forEach(reference => {
+        if (reference.browser) {
+            body.append('reference_browser_token', reference.token);
+            body.append('reference_browser_path', reference.path);
+        } else {
+            body.append('references', reference);
+        }
+    });
     if (hasVisualImage) {
         body.append('source_browser_token', selectedVisualImage.token);
         body.append('source_browser_path', selectedVisualImage.path);
@@ -6000,6 +6895,7 @@ function startNeuralVisualization() {
     const context = canvas.getContext('2d');
     const stateLabel = document.getElementById('visual-chat-state');
     const stateHeading = document.getElementById('visual-state-heading');
+    const activityDetail = document.getElementById('visual-activity-detail');
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     const nodeCount = reducedMotion ? 52 : 104;
     const nodes = Array.from({length: nodeCount}, (_, index) => {
@@ -6383,7 +7279,91 @@ function startNeuralVisualization() {
         }
     };
 
+    const drawCognitivePulse = scene => {
+        const {time, energy, cx, cy, scale, primary, secondary, state} = scene;
+        const layers = 4;
+        const activeNodes = nodes.slice(0, reducedMotion ? 32 : 52).map((node, index) => {
+            const layer = index % layers;
+            const members = Math.ceil((reducedMotion ? 32 : 52) / layers);
+            const angle = index / members * Math.PI * 2 + layer * .54
+                + time * (.000035 + layer * .000012) * (layer % 2 ? -1 : 1);
+            const radius = scale * (.3 + layer * .32) * (1 + Math.sin(time * .0012 + node.phase) * .025);
+            return {
+                node, layer,
+                x: cx + Math.cos(angle) * radius,
+                y: cy + Math.sin(angle) * radius * .72,
+                angle, radius,
+            };
+        });
+        context.lineCap = 'round';
+        activeNodes.forEach((point, index) => {
+            const next = activeNodes[(index + layers) % activeNodes.length];
+            const sameLayer = next?.layer === point.layer;
+            if (sameLayer) {
+                context.strokeStyle = rgba(index % 3 ? primary : secondary, .07 + energy * .2);
+                context.lineWidth = .5 + energy * .9;
+                context.beginPath();
+                context.moveTo(point.x, point.y);
+                context.quadraticCurveTo(cx, cy, next.x, next.y);
+                context.stroke();
+            }
+            if (point.node.hot || state === 'thinking') {
+                context.strokeStyle = rgba(index % 2 ? primary : secondary, .035 + energy * .13);
+                context.lineWidth = .45 + energy * .65;
+                context.beginPath();
+                context.moveTo(cx, cy);
+                context.lineTo(point.x, point.y);
+                context.stroke();
+            }
+            const pulseSpeed = .00016 + visualTokenEnergy * .00055 + energy * .00012;
+            let travel = (time * pulseSpeed + index * .127) % 1;
+            if (state === 'listening') travel = 1 - travel;
+            if (point.node.hot || visualTokenEnergy > .12 || state === 'listening') {
+                const signalX = cx + (point.x - cx) * travel;
+                const signalY = cy + (point.y - cy) * travel;
+                glowDot(signalX, signalY, .8 + energy * 2.5,
+                    index % 2 ? secondary : primary, .3 + energy * .58);
+            }
+            const firing = Math.max(0, Math.sin(time * (.0025 + visualTokenEnergy * .008) + point.node.phase));
+            glowDot(point.x, point.y, point.node.size * .65 + firing * (1 + visualTokenEnergy * 3.2),
+                index % 3 ? primary : secondary, .28 + energy * .5 + firing * visualTokenEnergy * .3);
+        });
+
+        if (time < visualToolActivityUntil && visualToolActivityCount) {
+            const tools = Math.min(8, visualToolActivityCount);
+            for (let index = 0; index < tools; index += 1) {
+                const angle = index / tools * Math.PI * 2 - Math.PI / 2 + time * .00012;
+                const radius = scale * 1.68;
+                const x = cx + Math.cos(angle) * radius;
+                const y = cy + Math.sin(angle) * radius * .72;
+                const size = 4 + energy * 5;
+                context.save();
+                context.translate(x, y);
+                context.rotate(angle + Math.PI / 4);
+                context.fillStyle = rgba(secondary, .45 + energy * .45);
+                context.shadowColor = `rgb(${secondary})`;
+                context.shadowBlur = 12 + energy * 18;
+                context.fillRect(-size / 2, -size / 2, size, size);
+                context.restore();
+            }
+        }
+
+        const coreRadius = scale * (.1 + energy * .055 + visualTokenEnergy * .035);
+        const core = context.createRadialGradient(cx, cy, 0, cx, cy, coreRadius * 3.4);
+        core.addColorStop(0, 'rgba(255,255,255,.98)');
+        core.addColorStop(.13, rgba(secondary, .92));
+        core.addColorStop(.48, rgba(primary, .34 + energy * .34));
+        core.addColorStop(1, rgba(primary, 0));
+        context.fillStyle = core;
+        context.beginPath();
+        context.arc(cx, cy, coreRadius * 3.4, 0, Math.PI * 2);
+        context.fill();
+        drawEnergyRings(time, cx, cy, scale * 1.55, energy, primary, secondary,
+            state === 'speaking' ? 6 : state === 'thinking' ? 4 : 2);
+    };
+
     const renderers = {
+        cognitive_pulse: drawCognitivePulse,
         neural_core: drawNeuralCore,
         synapse_drift: drawSynapseDrift,
         orbital_mind: drawOrbitalMind,
@@ -6404,13 +7384,31 @@ function startNeuralVisualization() {
         previousTime = time;
         visualAudioEnergy *= .9;
         const state = visualState(time);
+        if (preferences.visual_style === 'synapse_network') {
+            const energy = Math.min(1, Math.max(visualAudioEnergy, visualTokenEnergy,
+                voiceInputPlaybackBlocked ? .45 : 0, time < visualToolActivityUntil ? .35 : 0));
+            sendSynapseVisualState(true, state, energy);
+            visualTokenEnergy *= Math.exp(-delta / 520);
+            const palette = bloomPalettes[state];
+            stateLabel.textContent = palette.label;
+            stateHeading.textContent = palette.label.toUpperCase();
+            activityDetail.textContent = state === 'speaking' ? 'VOICE OUTPUT'
+                : state === 'listening' ? 'LIVE MICROPHONE ENERGY'
+                : state === 'thinking' ? (visualGenerating ? 'STREAMING RESPONSE' : 'PREPARING RESPONSE')
+                : state === 'muted' ? 'INPUT DISABLED' : state === 'error' ? 'SYSTEM ATTENTION' : 'READY';
+            neuralAnimationFrame = window.requestAnimationFrame(draw);
+            return;
+        }
         const syntheticSpeech = voiceInputPlaybackBlocked
             ? .18 + Math.max(0, Math.sin(time * .022)) * .38 + Math.random() * .14
             : 0;
         const stateEnergy = state === 'thinking' ? .24 + Math.sin(time * .004) * .08
             : state === 'listening' ? .17 : state === 'speaking' ? .2 : .035;
-        const targetEnergy = Math.min(1, Math.max(visualAudioEnergy, syntheticSpeech) + stateEnergy);
+        const toolEnergy = time < visualToolActivityUntil ? .22 : 0;
+        const targetEnergy = Math.min(1,
+            Math.max(visualAudioEnergy, syntheticSpeech, visualTokenEnergy, toolEnergy) + stateEnergy);
         smoothEnergy += (targetEnergy - smoothEnergy) * (1 - Math.exp(-delta / 105));
+        visualTokenEnergy *= Math.exp(-delta / 520);
         const palette = bloomPalettes[state];
         const colorBlend = 1 - Math.exp(-delta / 220);
         for (let channel = 0; channel < 3; channel += 1) {
@@ -6419,7 +7417,7 @@ function startNeuralVisualization() {
         }
         const primary = currentPrimary.map(Math.round).join(',');
         const secondary = currentSecondary.map(Math.round).join(',');
-        const style = preferences.visual_style || 'neural_core';
+        const style = preferences.visual_style || 'synapse_network';
         if (style !== previousStyle) {
             context.clearRect(0, 0, width, height);
             previousStyle = style;
@@ -6438,13 +7436,25 @@ function startNeuralVisualization() {
         stateLabel.textContent = palette.label;
         stateHeading.textContent = palette.label.toUpperCase();
         stateHeading.style.color = rgba(secondary, .86);
+        const toolLabel = `${visualToolActivityCount} TOOL ACTION${visualToolActivityCount === 1 ? '' : 'S'} COMPLETED`;
+        activityDetail.textContent = state === 'error' ? 'SYSTEM ATTENTION'
+            : state === 'speaking' ? 'VOICE OUTPUT'
+            : state === 'listening' ? 'LIVE MICROPHONE ENERGY'
+            : state === 'thinking' && visualGenerating ? 'STREAMING RESPONSE'
+            : state === 'thinking' ? 'PREPARING RESPONSE'
+            : time < visualToolActivityUntil && visualToolActivityCount ? toolLabel
+            : state === 'muted' ? 'INPUT DISABLED' : 'READY';
+        activityDetail.style.color = rgba(primary, .58);
         neuralAnimationFrame = window.requestAnimationFrame(draw);
     };
     neuralDraw = draw;
     ensureNeuralVisualizationRunning();
 }
 
-document.addEventListener('visibilitychange', ensureNeuralVisualizationRunning);
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) sendSynapseVisualState(false);
+    else ensureNeuralVisualizationRunning();
+});
 
 
 let providerKeysLoaded = false;
@@ -6570,6 +7580,7 @@ async function loadTools() {
     try {
         const payload = await apiJson('/api/desktop/tools');
         renderFilesystemTool(payload.filesystem);
+        if (window.peteyGeneralMCP) await window.peteyGeneralMCP.load();
         toolsLoaded = true;
     } catch (error) {
         setFeedback(feedback, error.message, 'error');
@@ -6697,6 +7708,7 @@ const commandNotifications = new Map();
 const commandPanels = new Map();
 let draggedCommandPanel = null;
 let commandPanelOrderBeforeDrag = '';
+let isDraggingCommandPanel = false;
 
 function boundedInterfaceText(value, limit) {
     return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, limit);
@@ -6735,44 +7747,62 @@ function enhanceCommandPanel(card) {
     const heading = card.querySelector(':scope > .command-card-heading');
     if (!heading) return;
     card.dataset.commandPanelReady = 'true';
-    const controls = document.createElement('span');
-    controls.className = 'command-card-controls';
-    const drag = document.createElement('span');
-    drag.className = 'command-card-drag';
-    drag.draggable = true;
-    drag.tabIndex = 0;
-    drag.setAttribute('role', 'button');
-    drag.setAttribute('aria-label', `Move ${heading.querySelector('span')?.textContent || 'panel'}`);
-    drag.title = 'Drag to rearrange';
-    drag.textContent = '⠿';
-    const collapse = document.createElement('button');
-    collapse.type = 'button';
-    collapse.className = 'command-card-collapse';
-    collapse.addEventListener('click', () => {
+
+    heading.draggable = true;
+    heading.title = 'Click to open/close · Click and drag to move';
+
+    const togglePanelCollapse = () => {
         const panelId = card.dataset.commandPanel;
         const collapsed = new Set(preferences.command_rail_collapsed || []);
         if (collapsed.has(panelId)) collapsed.delete(panelId);
         else collapsed.add(panelId);
         saveCommandRail({command_rail_collapsed: [...collapsed]});
-    });
-    drag.addEventListener('dragstart', event => {
+    };
+
+    heading.addEventListener('dragstart', event => {
+        isDraggingCommandPanel = true;
         draggedCommandPanel = card;
         commandPanelOrderBeforeDrag = currentCommandPanelOrder().join('|');
         card.classList.add('dragging');
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', card.dataset.commandPanel);
     });
-    drag.addEventListener('dragend', () => {
+
+    heading.addEventListener('dragend', () => {
         card.classList.remove('dragging');
         const order = currentCommandPanelOrder();
         draggedCommandPanel = null;
         if (order.join('|') !== commandPanelOrderBeforeDrag) {
             saveCommandRail({command_rail_order: order});
         }
+        setTimeout(() => { isDraggingCommandPanel = false; }, 50);
     });
-    controls.append(drag, collapse);
-    heading.append(controls);
+
+    heading.addEventListener('click', () => {
+        if (isDraggingCommandPanel) return;
+        togglePanelCollapse();
+    });
+
+    heading.querySelectorAll('.command-card-controls, .command-card-drag').forEach(el => el.remove());
+
+    const titleSpan = heading.querySelector(':scope > span:first-child');
+    let collapse = heading.querySelector(':scope > .command-card-collapse');
+    if (!collapse) {
+        collapse = document.createElement('button');
+        collapse.type = 'button';
+        collapse.className = 'command-card-collapse';
+        collapse.addEventListener('click', event => {
+            event.stopPropagation();
+            togglePanelCollapse();
+        });
+        if (titleSpan) {
+            titleSpan.insertAdjacentElement('afterend', collapse);
+        } else {
+            heading.appendChild(collapse);
+        }
+    }
 }
+
 
 function applyCommandPanelPreferences() {
     const rail = document.getElementById('command-rail');
@@ -6794,9 +7824,14 @@ function applyCommandPanelPreferences() {
     coreButton.setAttribute('aria-expanded', String(!coreCollapsed));
     coreButton.setAttribute('aria-label', coreCollapsed ? 'Expand controls' : 'Collapse controls');
     coreButton.title = coreCollapsed ? 'Expand controls' : 'Collapse controls';
+    refreshCommandMediaPlayers();
     commandPanelCards().forEach(card => {
         enhanceCommandPanel(card);
-        card.hidden = !addonInterfaceAllows(card.dataset.addonId, 'controls');
+        const section = card.dataset.commandSection;
+        card.hidden = (
+            (section && preferences.command_rail_sections?.[section] === false)
+            || !addonInterfaceAllows(card.dataset.addonId, 'controls')
+        );
         const isCollapsed = collapsed.has(card.dataset.commandPanel);
         card.classList.toggle('collapsed', isCollapsed);
         const button = card.querySelector(':scope > .command-card-heading .command-card-collapse');
@@ -6809,13 +7844,43 @@ function applyCommandPanelPreferences() {
     });
 }
 
+function refreshCommandMediaPlayers() {
+    const selector = document.getElementById('command-media-provider');
+    const previous = selector.value;
+    const players = [...commandPanels.entries()].filter(([, item]) => item.media && addonInterfaceAllows(item.addonId, 'controls'));
+    selector.replaceChildren();
+    for (const [id, item] of players) {
+        const option = document.createElement('option'); option.value = id; option.textContent = item.title; selector.append(option);
+    }
+    if (players.some(([id]) => id === previous)) selector.value = previous;
+    selector.hidden = players.length < 2;
+    document.getElementById('command-media-empty').hidden = players.length > 0;
+    for (const [id, item] of commandPanels) {
+        if (item.media) item.card.hidden = id !== selector.value || !addonInterfaceAllows(item.addonId, 'controls');
+    }
+}
+
+document.getElementById('command-media-provider').addEventListener('change', refreshCommandMediaPlayers);
+
 function registerCommandPanel(panel, bridge) {
     if (!panel || typeof panel !== 'object') return () => {};
     const panelId = interfaceItemId(panel.id || panel.title, 'panel');
-    if (commandPanelCards().some(card => card.dataset.commandPanel === panelId)) {
+    if (commandPanels.has(panelId) || commandPanelCards().some(card => card.dataset.commandPanel === panelId)) {
         return () => {};
     }
     if (commandPanels.size >= 8) return () => {};
+    if (panel.kind === 'media') {
+        const body = document.createElement('div');
+        body.className = 'command-custom-panel-body command-shared-player';
+        document.getElementById('command-media-players').append(body);
+        let cleanup = null;
+        try { cleanup = typeof panel.render === 'function' ? panel.render(body) : null; }
+        catch (_) { body.textContent = 'This media player could not load.'; }
+        commandPanels.set(panelId, {card: body, cleanup, media: true,
+            addonId: boundedInterfaceText(panel.addonId, 49), title: boundedInterfaceText(panel.title, 42) || 'Media player'});
+        refreshCommandMediaPlayers();
+        return () => bridge.removePanel(panelId);
+    }
     const card = document.createElement('section');
     card.className = 'command-card command-custom-card';
     card.dataset.commandPanel = panelId;
@@ -6942,6 +8007,7 @@ function initializePeteyInterface() {
         renderCommandActions();
     };
     bridge.registerPanel = panel => registerCommandPanel(panel, bridge);
+    bridge.registerMediaPlayer = panel => bridge.registerPanel({...panel, kind: 'media'});
     bridge.removePanel = id => {
         const panelId = interfaceItemId(id, 'panel');
         const registered = commandPanels.get(panelId);
@@ -6949,6 +8015,7 @@ function initializePeteyInterface() {
         if (typeof registered.cleanup === 'function') registered.cleanup();
         registered.card.remove();
         commandPanels.delete(panelId);
+        refreshCommandMediaPlayers();
     };
     bridge.notify = notification => {
         if (!notification || typeof notification !== 'object') return '';
@@ -7021,5 +8088,6 @@ window.addEventListener('hashchange', () => {
     if (knownViews.includes(view) && !document.getElementById(`view-${view}`).classList.contains('active-view')) showView(view);
 });
 mobileLayoutQuery.addEventListener('change', event => {
+    placeWorkspaceComposer();
     if (event.matches) showView('chat');
 });

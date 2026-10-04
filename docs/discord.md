@@ -85,9 +85,6 @@ The Discord bridge uses activity-aware pacing and bounded room context:
 - Discord shows its native typing indicator as soon as PETEY starts generating a
   reply. PETEY refreshes it every eight seconds during a long model response. A
   failed typing pulse does not discard the reply.
-- When the optional Discord Voice add-on is enabled, typed `petey play` and
-  `petey queue` requests go to its YouTube DJ. The text bridge skips those
-  commands so they do not also start a chat-model reply.
 
 Use **Give PETEY an instruction** for guidance such as “Offer a round of made-up
 trivia” or “Stop offering games and talk about movies.” Later instructions override

@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.21.0 — 2026-10-03
+
+- Wired the desktop workspace around Chat, Create, Gallery, Tasks, and Addons.
+  Addons opens the manager directly; each addon can be pinned to the sidebar.
+  Chat expands the saved-chat list and closes it after selection.
+- Added shared media-player space in the right rail and kept the composer
+  available across desktop pages. Improved Command Console theme alignment,
+  mobile settings, and the sidebar Settings icon and version placement.
+- Added optional general MCP connections with local stdio and remote HTTP
+  transports, selected tools, per-surface grants, and local credential storage.
+  Removed Petey Life from addon and MCP control permissions.
+- Improved conversational tool selection and literal handling of short replies.
+- Added the Android companion API, local memory retrieval improvements,
+  Synapse Network visuals, and an optional bundled 3D visualizer experiment.
+- Expanded Create with reference-to-video generation and model dimension limits,
+  and added configurable personality-wizard presets.
+- Includes the Tasks scheduling and changelog features described in v0.20.0.
+
+## v0.20.0 — 2026-09-27
+
+- Chat messages now show their date and time on hover; Copy and clipboard image/file attachments work in the desktop window.
+- Added Tasks as a built-in PETEY add-on. Task Manager combines reviewed actions
+  from enabled add-ons, including Home Assistant lights, Spotify tracks, and Webcam
+  snapshots. It supports one-time, daily, selected weekday, and monthly schedules.
+  Tasks can be paused, edited, run immediately, or deleted; upcoming tasks can
+  appear in the Command Center rail.
+- Added a scheduled snapshot action to PETEY Webcam. It captures a fresh frame
+  from a named, armed camera and attaches the saved image to PETEY's announcement.
+  PETEY and the camera source must be running when the task is due.
+- Moved the active chat's profile selector into its header and condensed core
+  Controls into a fixed icon row. Theme, microphone mode, and restart choices
+  expand in place; the sidebar and rail controls remain easy to find.
+- Improved retrieval of older, exact-match memories and corrected the rail
+  customization controls so visibility changes persist.
+- Made the sidebar version open this changelog. New release notes appear once
+  on the first app open after an update and remain available from the version.
+
 ## v0.19.3 — 2026-09-27
 
 - Kept the Command Center hamburger in one fixed position. It toggles the
