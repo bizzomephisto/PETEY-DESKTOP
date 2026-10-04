@@ -108,7 +108,7 @@ connector keeps its separate approved-folder and read-only restrictions.
 
 `petey/general_mcp.py` owns configuration, policy, connection lifecycle, and the
 remote client. `petey/mcp_client.py` supplies stdio. Desktop/mobile and Discord chat
-registries include granted tools. Petey Life is excluded from control grants. Schema availability and dispatch both check grants. Remote
+registries include granted tools. Schema availability and dispatch both check grants. Remote
 errors and subprocess diagnostics are sanitized before reaching public APIs.
 
 Run focused checks from the core directory:

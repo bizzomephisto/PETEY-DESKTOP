@@ -62,7 +62,7 @@ actions always use the saved active chat provider rather than naming or forcing 
   Completed utterances in every microphone mode are uploaded to the selected
   transcription provider. Configurable wake-pause and silence-to-send timers
   control acknowledgement and submission.
-- Chat requests identify Petey Desktop or Mobile Petey; Discord and Petey Life add their own explicit surface context. SQLite message rows retain the source surface, and correction-aware retrieval presents older facts before newer user corrections.
+- Chat requests identify Petey Desktop or Mobile Petey; Discord adds its own explicit surface context. SQLite message rows retain the source surface, and correction-aware retrieval presents older facts before newer user corrections.
 - Deleting a saved chat asks whether to preserve its rows for memory retrieval or permanently delete them; memory deletion is irreversible.
 - A Petey profile owns instructions, traits, communication style, speech provider,
   voice, and delivery. Microphone mode and the device's auto-speak behavior remain

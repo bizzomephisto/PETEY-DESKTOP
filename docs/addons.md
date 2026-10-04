@@ -8,19 +8,13 @@ PETEY Desktop add-ons are local Python modules that can add API routes, backgrou
 services, and optional sidebar screens. The built-in Discord integration appears in
 the same **Add-ons** manager, so people can choose whether PETEY loads it.
 
-PETEY's GitHub releases bundle no external add-ons. Discord is the only built-in
-integration. Third-party add-ons remain separate folders installed by the user.
+PETEY's GitHub releases bundle no external add-ons. Discord and Tasks are built-in addons. Third-party add-ons remain separate folders installed by the user.
 `scripts/package_release.py` enforces this boundary by rejecting `examples/`, known
 legacy add-on roots, external `petey-addon.json` files, `.env`, and symlinks.
 
-Official external add-ons are released independently:
-
-- [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT)
-- [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE)
-
-Petey Life reads `DesktopState.system_prompt`, so its simulation always uses the
-system-default Petey profile and never the persona assigned to the active chat or
-Discord. Its decision prompt explicitly identifies the current surface as Petey Life.
+External addons are released independently. The [addon catalog](../ADDONS.md)
+lists Home Assistant, Spotify, OpenCode, Google Sheets Scorecards, Quick Actions,
+and additional local development addons.
 
 Add-ons run inside PETEY's process with the same filesystem, network, settings, and
 user permissions as PETEY. Install only code you trust. PETEY discovers manifests

@@ -10,7 +10,6 @@
   mobile settings, and the sidebar Settings icon and version placement.
 - Added optional general MCP connections with local stdio and remote HTTP
   transports, selected tools, per-surface grants, and local credential storage.
-  Removed Petey Life from addon and MCP control permissions.
 - Improved conversational tool selection and literal handling of short replies.
 - Added the Android companion API, local memory retrieval improvements,
   Synapse Network visuals, and an optional bundled 3D visualizer experiment.
@@ -165,8 +164,7 @@ This prerelease is published for testing. **v0.18.2 remains the stable release.*
 ### Add-on control
 
 - Added off-by-default **Allow Petey to control** policies for compatible add-ons
-  and the core deAPI image generator, with separate Desktop, Mobile, Discord, and
-  Petey Life grants.
+  and the core deAPI image generator, with separate Desktop, Mobile, and Discord grants.
 - Added per-capability controls, current-day usage, and autonomous daily limits.
   Explicit user requests bypass the daily allowance while still respecting every
   enablement, surface, and capability permission.

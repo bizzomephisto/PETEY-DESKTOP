@@ -86,18 +86,39 @@ speed, and hardware setup.
 - User-triggered update checks and confirmed installs for PETEY and repository-declared add-ons, with add-on data preserved
 - Reorganized Settings overview with grouped categories, cross-page search, section links, compact layouts, and a catalog-driven page structure
 
-The GitHub release includes only PETEY's built-in Discord integration. Third-party
-and locally developed add-ons are installed separately in PETEY's application-data
-folder and are not bundled with the source release.
+Discord and Tasks are built into PETEY. External addons are installed separately
+in PETEY's application-data folder and are not bundled with the source release.
+Use **Addons** to open the manager, enable installed addons, and choose which ones
+appear in the left sidebar. Compatible media addons share the right-hand player.
 
-### Official external add-ons
+### Addons on GitHub
 
-- [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT) — inspect exposed Home Assistant entities, teach PETEY household names, and control devices through review or trust mode.
-- [Petey Life](https://github.com/bizzomephisto/PETEY-LIFE) — give the active persona an editable pixel home with autonomous, directed, and build modes.
+| Addon | What it adds |
+| --- | --- |
+| [Home Assistant MCP](https://github.com/bizzomephisto/PETEY-HOME-ASSISTANT) | Household entities, device controls, and alerts. |
+| [Spotify](https://github.com/bizzomephisto/PETEY-SPOTIFY) | Spotify Connect playback, playlists, DJ mode, and a shared media player. |
+| [OpenCode](https://github.com/bizzomephisto/PETEY-OPENCODE) | Start, monitor, preview, and cancel coding-agent runs. |
+| [Google Sheets Scorecards](https://github.com/bizzomephisto/PETEY-GOOGLE-SHEETS) | Read configured sheets and fill golf scores from scorecard pictures. |
+| [Quick Actions](https://github.com/bizzomephisto/PETEY-QUICK-ACTIONS) | Customizable silent action buttons for desktop and mobile. |
 
-Each add-on repository provides a ready-to-install release archive. Install them
-through PETEY's **Add-ons** screen; they remain independently versioned and are not
-included in PETEY Desktop source archives.
+Use each repository's installation instructions and release downloads where
+available. Addons remain independently versioned. See the [addon map](ADDONS.md)
+for installation details and local development addons.
+
+### Additional local addons
+
+These addons are available in the development setup; they currently have no
+published repository on this GitHub account. They are installed separately.
+
+| Addon | What it adds |
+| --- | --- |
+| Blender MCP | Scene inspection and reviewed Blender script execution. |
+| PETEY Webcam | Named cameras, visual questions, snapshots, and frame comparison. |
+| PETEY Conference | Record, transcribe, search, and selectively participate in meetings. |
+| Discord Voice & YouTube DJ | Wake-name voice conversations and a YouTube playback queue. |
+| Freebuff | Set up, start, and track Freebuff coding-agent runs. |
+| Real-Time Clock | Current-time tools and an analog/digital clock panel. |
+| System Monitor | CPU, memory, load, uptime, and process information. |
 
 The same screen can check for PETEY and add-on updates. PETEY installs only a clean
 fast-forward from the official Git checkout. Add-ons opt in through their manifest's

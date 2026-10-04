@@ -48,7 +48,7 @@ Typical uses include:
 - A game master supported by uploaded lore and character sheets.
 - A voiced companion with persistent conversational continuity.
 
-Discord chooses its saved profile independently of desktop chats. Its default room identity does not automatically inherit the system profile. Petey Life uses the system-default personality rather than a desktop conversation's profile assignment.
+Discord chooses its saved profile independently of desktop chats. Its default room identity does not automatically inherit the system profile.
 
 ## 4. Memory and reference knowledge
 
@@ -180,14 +180,17 @@ External add-ons live under the application's data directory and are installed s
 
 An enabled extension can supply namespaced API routes, a sidebar panel and assets, services, model tools, and cleanup behavior. Add-ons run as trusted local code inside PETEY's process with the user's privileges.
 
-Model control is a separate opt-in from installing or enabling an add-on. Compatible extensions expose individual capability grants and surface controls for Desktop, Mobile, Discord, and Petey Life. Metered capabilities can have daily autonomous-use limits. A direct user request can bypass an applicable daily limit, but it does not bypass the underlying grant.
+Model control is a separate opt-in from installing or enabling an add-on. Compatible extensions expose individual capability grants and surface controls for Desktop, Mobile, and Discord. Metered capabilities can have daily autonomous-use limits. A direct user request can bypass an applicable daily limit, but it does not bypass the underlying grant.
 
-Examples documented by the project or present in this local setup include:
+The [addon catalog](ADDONS.md) lists published repositories and additional local
+addons, including Spotify, Home Assistant, OpenCode, Google Sheets Scorecards,
+Quick Actions, Webcam, Conference, Discord Voice, Freebuff, Clock, and System Monitor.
+
+Examples include:
 
 | Extension | Role |
 | --- | --- |
 | Home Assistant MCP | Access exposed household entities and device controls through its configured review or trust workflow. |
-| Petey Life | Give the system-default persona an editable pixel home with autonomous, directed, and build modes. |
 | Blender MCP | Inspect scenes and objects and propose Python scripts for explicit review before execution in Blender. |
 | OpenCode | Run coding tasks in a chosen project, inspect progress, cancel work, and open output artifacts. |
 
