@@ -21,15 +21,37 @@ needed for the feature you deliberately select.
 
 ## Preview
 
-![PETEY conversation view](docs/screenshots/chat.png)
+Current desktop development preview, captured October 2026. Screenshots use demo
+conversations, model data, and artwork; they contain no private chats or credentials.
+Some controls shown here belong to pending desktop changes rather than the tagged release.
 
-| Media studio | Audio-reactive visual mode |
-| --- | --- |
-| ![PETEY media generation studio](docs/screenshots/media.png) | ![PETEY audio-reactive neural visualization](docs/screenshots/visual-mode.png) |
+![PETEY desktop conversation with demo artwork](docs/screenshots/chat.png)
 
-| Settings | Gallery actions |
+| Create | Audio-reactive visual mode |
 | --- | --- |
-| ![PETEY appearance settings and theme picker](docs/screenshots/settings.png) | ![PETEY gallery image actions](docs/screenshots/gallery.png) |
+| ![PETEY media studio with demo artwork](docs/screenshots/media.png) | ![PETEY Neural Core visual mode](docs/screenshots/visual-mode.png) |
+
+| Settings overview | Gallery actions |
+| --- | --- |
+| ![PETEY grouped settings overview](docs/screenshots/settings.png) | ![PETEY local gallery and image actions](docs/screenshots/gallery.png) |
+
+| Appearance & profile | Personality & voice |
+| --- | --- |
+| ![PETEY desktop styles and display controls](docs/screenshots/appearance.png) | ![PETEY saved profiles and personality settings](docs/screenshots/personality.png) |
+
+<details>
+<summary>Tools & integrations</summary>
+
+![PETEY tools and web browser controls](docs/screenshots/tools.png)
+
+</details>
+
+<details>
+<summary>Mobile browser chat</summary>
+
+<img src="docs/screenshots/mobile-chat.png" alt="PETEY mobile browser chat with demo artwork" width="430">
+
+</details>
 
 ## Character creation and roleplay
 
