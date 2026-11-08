@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 
+from petey.tools.media import DEAPI_IMAGE_CONTROL
 from petey.tools.registry import ToolSpec
 
 
@@ -61,14 +62,11 @@ class AddonManager:
             },
             "deapi-media": {
                 "id": "deapi-media", "name": "deAPI Media", "version": "",
-                "description": "Generate images through PETEY's configured deAPI media service.",
+                "description": "Generate, edit, and combine images in chat through PETEY's configured deAPI media service.",
                 "source": "core", "default_enabled": True, "loaded": True,
                 "error": "", "path": None, "manifest": {}, "instance": None,
                 "configurable_enabled": False,
-                "control_capabilities": [{
-                    "id": "generate_image", "label": "Generate images",
-                    "metered": True, "default_daily_limit": 5,
-                }],
+                "control_capabilities": DEAPI_IMAGE_CONTROL,
             }
         }
         self._discover_user_addons()

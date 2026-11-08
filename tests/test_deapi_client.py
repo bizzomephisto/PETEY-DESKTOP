@@ -74,6 +74,42 @@ class _StatusSession:
 
 
 class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prompt_limits_are_checked_for_the_actual_model_before_submission(self):
+        client = DeapiClient(api_key="test-key")
+        session = _PostSession()
+        client.get_session = AsyncMock(return_value=session)
+        client.wait_for_job = AsyncMock()
+        client.wait_for_v2_job = AsyncMock()
+        client.get_models = AsyncMock(return_value=[{
+            "slug": "ace-step", "info": {"limits": {"min_caption": 3, "max_caption": 300}},
+        }, {
+            "slug": "minimax-music", "info": {"limits": {"min_caption": 3, "max_caption": 2_000}},
+        }])
+        with self.assertRaisesRegex(ValueError, "at most 300 characters"):
+            await client.generate_music("x" * 301, model_slug="ace-step")
+        with self.assertRaisesRegex(ValueError, "at least 3 characters"):
+            await client.generate_music("hi", model_slug="ace-step")
+        self.assertEqual(session.payloads, [])
+        await client.generate_music("x" * 301)
+        form = session.payloads.pop()
+        fields = {field["name"]: value for field, _, value in form._fields}
+        self.assertEqual(fields["model"], "minimax-music")
+        self.assertEqual(fields["caption"], "x" * 301)
+
+        client.get_models.return_value = [{"slug": "Kokoro", "info": {"limits": {"max_text": 10_001}}}]
+        with self.assertRaisesRegex(ValueError, "at most 10,001 characters"):
+            await client.generate_speech("x" * 10_002, model_slug="Kokoro")
+        client.get_models.return_value = [{"slug": "MiniMaxH3_33B_Turbo_INT8"}]
+        with self.assertRaisesRegex(ValueError, "at most 7,000 characters"):
+            await client.generate_video("x" * 7_001)
+        client.get_models.return_value = [{"slug": "image-model"}]
+        with self.assertRaisesRegex(ValueError, "at most 15,000 characters"):
+            await client.generate_image("x" * 15_001)
+        self.assertEqual(session.payloads, [])
+        client.get_models.return_value[0]["info"] = {"limits": {"max_prompt": 20_000}}
+        await client.generate_image("x" * 20_000)
+        self.assertEqual(len(session.payloads[0]["prompt"]), 20_000)
+
     async def test_image_quote_uses_live_price_and_same_model_limits_as_generation(self):
         client = DeapiClient(api_key="test-key")
         info = {"limits": {"min_steps": 4, "max_steps": 4}, "defaults": {"steps": 4}}
@@ -389,7 +425,7 @@ class DeapiClientTests(unittest.IsolatedAsyncioTestCase):
             return "image-job"
 
         client._execute_with_fallback = AsyncMock(side_effect=execute)
-        client.wait_for_job = AsyncMock(return_value={"result_url": "https://media.example/image.png"})
+        client.wait_for_v2_job = AsyncMock(return_value={"result_url": "https://media.example/image.png"})
         await client.generate_image_to_image("Restyle", b"image")
         names = [headers["name"] for headers, _headers, _value in captured["form"]._fields]
         self.assertIn("image", names)

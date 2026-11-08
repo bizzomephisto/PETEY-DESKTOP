@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.21.1 — 2026-11-08
+
+- Ask PETEY to generate images directly in desktop or mobile browser chat.
+  Attach several images to the same message to edit or combine them in order.
+  Completed images appear in chat and in Gallery.
+- Create supports ordered multi-image editing and model-specific options.
+  deAPI prompt, caption, and speech limits follow the selected model's catalog.
+  Create displays the maximum and uses it when enhancing prompts.
+- Added Fish Audio S2.1 for spoken replies, including streamed playback, a
+  searchable voice picker, contextual expression cues, and optional cue
+  visibility in chat.
+- Added PETEY output volume in Chat, Visual Mode, and Personality & voice.
+  The setting applies to spoken replies and wake cues across profiles.
+
 ## v0.21.0 — 2026-10-03
 
 - Wired the desktop workspace around Chat, Create, Gallery, Tasks, and Addons.

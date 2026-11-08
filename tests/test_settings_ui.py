@@ -369,23 +369,26 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('bluetooth|hands[- ]?free|headset|android auto|car audio', javascript)
 
     def test_pending_attachment_can_be_removed_on_desktop_and_mobile(self):
+        template = (Path(__file__).parents[1] / 'web/templates/desktop.html').read_text(
+            encoding='utf-8'
+        )
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
             encoding='utf-8'
         )
         stylesheet = (Path(__file__).parents[1] / 'web/static/desktop.css').read_text(
             encoding='utf-8'
         )
-        self.assertIn('function clearSelectedAttachment()', javascript)
+        self.assertIn('id="attachment" name="attachment" type="file" multiple', template)
         self.assertIn("attachmentInput.value = '';", javascript)
         self.assertIn("remove.className = 'attachment-remove'", javascript)
-        self.assertIn("remove.addEventListener('click', clearSelectedAttachment)", javascript)
+        self.assertIn("selectedAttachments.splice(index, 1)", javascript)
         self.assertIn("messageInput.addEventListener('paste', async event =>", javascript)
         self.assertIn("item.kind === 'file'", javascript)
         self.assertIn("window.pywebview.api.read_clipboard_attachment()", javascript)
-        self.assertIn('selectAttachment(file);', javascript)
-        self.assertIn('const file = selectedAttachmentFile || attachmentInput.files[0];', javascript)
-        self.assertNotIn('.composer > small, .attachment-chip { display: none', stylesheet)
-        self.assertIn('.attachment-chip[hidden] { display: none !important; }', stylesheet)
+        self.assertIn('addAttachments(Array.from(attachmentInput.files))', javascript)
+        self.assertIn("for (const file of files) body.append('attachment', file);", javascript)
+        self.assertNotIn('.composer > small, .attachment-list { display: none', stylesheet)
+        self.assertIn('.attachment-list[hidden], .attachment-feedback[hidden] { display: none; }', stylesheet)
 
     def test_addon_event_speech_uses_a_global_queue_and_respects_mute(self):
         javascript = (Path(__file__).parents[1] / 'web/static/desktop.js').read_text(
@@ -409,7 +412,7 @@ class SettingsUITests(unittest.TestCase):
         submit_end = javascript.index('function firstStreamingSpeechSegment', submit_start)
         submit = javascript[submit_start:submit_end]
         speech_start = javascript.index('async function speakChatText(')
-        speech_end = javascript.index('async function playGeminiSpeechStream', speech_start)
+        speech_end = javascript.index('async function playChatSpeechStream', speech_start)
         speech = javascript[speech_start:speech_end]
         self.assertIn('const streamSpeechEarly = autoSpeak && !mobileLayoutQuery.matches;', submit)
         self.assertIn('remainder, null, true, replySpeechGeneration', submit)

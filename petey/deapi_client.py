@@ -7,6 +7,33 @@ import random
 import math
 
 from petey.deapi_tts import DEAPI_TTS_MODEL
+from petey.deapi_image_models import image_model_info
+
+DEFAULT_MEDIA_PROMPT_LENGTH = 15_000
+H3_MODEL = "MiniMaxH3_33B_Turbo_INT8"
+
+
+def deapi_prompt_limits(operation: str, model: dict | None = None) -> dict:
+    model = model or {}
+    limits = (model.get("info") or {}).get("limits") or {}
+    field = {"txt2music": "caption", "txt2audio": "text"}.get(operation, "prompt")
+    minimum = limits.get(f"min_{field}")
+    maximum = limits.get(f"max_{field}")
+    # H3's prompting guide publishes a character cap omitted from its catalog.
+    fallback = 7_000 if model.get("slug") == H3_MODEL else DEFAULT_MEDIA_PROMPT_LENGTH
+    return {
+        "min": minimum if type(minimum) is int and minimum > 0 else 0,
+        "max": maximum if type(maximum) is int and maximum > 0 else fallback,
+    }
+
+
+def validate_media_prompt_length(prompt: str, limits: dict, label: str = "Media input") -> None:
+    count = len(prompt)
+    if count > limits["max"]:
+        raise ValueError(f"{label} accepts at most {limits['max']:,} characters (entered {count:,}).")
+    if count < limits["min"]:
+        raise ValueError(f"{label} requires at least {limits['min']:,} characters (entered {count:,}).")
+
 
 class DeapiError(Exception):
     pass
@@ -27,7 +54,7 @@ class DeapiClient:
     # deAPI currently omits MiniMax H3's fixed step count from its model metadata,
     # while both the v1 and v2 validators require exactly 8 steps.
     MODEL_PARAMETER_OVERRIDES = {
-        "MiniMaxH3_33B_Turbo_INT8": {"steps": 8},
+        H3_MODEL: {"steps": 8},
     }
 
     def __init__(self, progress_callback=None, api_key=None):
@@ -103,19 +130,29 @@ class DeapiClient:
         inference_type = "img2video" if operation == "ref2vid" else operation
         models = await self.get_models(inference_type)
         if operation == "ref2vid":
-            models = [item for item in models if item.get("slug") == "MiniMaxH3_33B_Turbo_INT8"]
-        model = next((item for item in models if item.get("slug") == model_slug), None) if model_slug else next(iter(models), None)
-        if not model:
+            models = [item for item in models if item.get("slug") == H3_MODEL]
+        if model_slug:
+            models = [item for item in models if item.get("slug") == model_slug]
+        if not models:
             raise ValueError("Choose an available model to estimate its price.")
+        prompt = prompt.strip()
+        model = models[0]
+        if prompt:
+            for candidate in models:
+                limits = deapi_prompt_limits(operation, candidate)
+                if limits["min"] <= len(prompt) <= limits["max"]:
+                    model = candidate
+                    break
+            validate_media_prompt_length(prompt, deapi_prompt_limits(operation, model), model.get("name") or model["slug"])
         slug = model["slug"]
         info = model.get("info") or {}
         defaults = info.get("defaults") or {}
         payload = {"model": slug}
         effective = {}
         if operation in {"txt2img", "img2img"}:
-            effective = self._image_parameters(defaults, info, {**parameters, "seed": 0})
+            effective = self._image_parameters(defaults, image_model_info(slug, info), {**parameters, "seed": 0}, editing=operation == "img2img")
             payload.update(effective)
-            payload["prompt"] = prompt.strip() or "Image"
+            payload["prompt"] = prompt or "Image"
         elif operation in {"txt2video", "img2video", "ref2vid"}:
             effective = self._video_parameters(slug, defaults, info, {**parameters, "seed": 0})
             payload.update({name: effective[name] for name in ("width", "height", "steps", "frames", "fps")})
@@ -189,6 +226,8 @@ class DeapiClient:
                     break
                 page = current_page + 1
 
+            if inference_type in {"txt2img", "img2img"}:
+                models = [{**model, "info": image_model_info(model["slug"], model.get("info"))} for model in models]
             self._cache[cache_key] = models
             self._cache_ts[cache_key] = now
             return models
@@ -201,7 +240,7 @@ class DeapiClient:
 
     async def _execute_with_fallback(
         self, endpoint, payload_builder, inference_type, is_multipart=False,
-        guild_id=None, selected_model_slug=None, strict_model=False,
+        guild_id=None, selected_model_slug=None, strict_model=False, prompt_text=None,
     ):
         """Try available models until one succeeds."""
         models = await self.get_models(inference_type)
@@ -219,11 +258,20 @@ class DeapiClient:
 
         session = await self.get_session()
         last_error = None
+        prompt_error = None
 
         for model in models:
             model_slug = model["slug"]
-            info = model.get("info", {})
-            defaults = info.get("defaults", {})
+            info = model.get("info") or {}
+            defaults = info.get("defaults") or {}
+            if prompt_text is not None:
+                try:
+                    validate_media_prompt_length(
+                        prompt_text, deapi_prompt_limits(inference_type, model), model.get("name") or model_slug,
+                    )
+                except ValueError as exc:
+                    prompt_error = exc
+                    continue
             try:
                 # Build payload specific to this model
                 payload = payload_builder(model_slug, defaults, info)
@@ -266,6 +314,8 @@ class DeapiClient:
 
         if last_error:
             raise last_error
+        if prompt_error:
+            raise prompt_error
         raise DeapiError("All models failed")
 
     @staticmethod
@@ -315,15 +365,34 @@ class DeapiClient:
             )
         return params
 
-    def _image_parameters(self, defaults, info, kwargs):
-        limits = info.get("limits", {})
-        return {
-            "width": self._bounded_model_value("width", kwargs, defaults, limits, 1024),
-            "height": self._bounded_model_value("height", kwargs, defaults, limits, 1024),
-            "steps": self._bounded_model_value("steps", kwargs, defaults, limits, 20),
-            "guidance": kwargs.get("guidance", defaults.get("guidance", 3.5)),
-            "seed": kwargs.get("seed", random.randint(0, 2**32 - 1)),
-        }
+    def _image_parameters(self, defaults, info, kwargs, editing=False):
+        limits = info.get("limits") or {}
+        features = info.get("features") or {}
+        defaults = {**defaults, **(info.get("defaults") or {})}
+        seed = kwargs.get("seed", -1)
+        params = {"seed": random.randint(0, 2**32 - 1) if seed == -1 else seed}
+        if not editing or features.get("supports_custom_output_size", True):
+            multiple = int(limits.get("resolution_step") or limits.get("dimension_multiple") or 1)
+            for name in ("width", "height"):
+                value = self._bounded_model_value(name, kwargs, defaults, limits, 1024)
+                params[name] = max(multiple, int(value) // multiple * multiple)
+            ratio = limits.get("max_ratio")
+            if ratio and max(params['width'], params['height']) / min(params['width'], params['height']) > float(ratio):
+                raise ValueError(f"This model supports an aspect ratio up to {ratio}:1.")
+            if limits.get("max_pixels") and params['width'] * params['height'] > int(limits['max_pixels']):
+                raise ValueError("The selected output size exceeds this model's pixel limit.")
+        for name, fallback in (("steps", 20), ("guidance", 3.5)):
+            if features.get(f"supports_{name}", True):
+                params[name] = self._bounded_model_value(name, kwargs, defaults, limits, fallback)
+        if features.get("supports_negative_prompt"):
+            params["negative_prompt"] = str(kwargs.get("negative_prompt", ""))[:32000]
+        options = limits.get("quality_options") or []
+        if options:
+            quality = kwargs.get("quality") or defaults.get("quality") or options[0]
+            if quality not in options:
+                raise ValueError("Choose a supported quality tier for this model.")
+            params["quality"] = quality
+        return params
 
     async def wait_for_job(self, request_id, interval=2, timeout=300):
         url = f"{self.base_url}/api/v1/client/request-status/{request_id}"
@@ -385,26 +454,57 @@ class DeapiClient:
             return {
                 "prompt": prompt,
                 "model": model,
-                **self._image_parameters({"steps": 4, **defaults}, info, kwargs),
+                **self._image_parameters({"steps": 4, **defaults}, image_model_info(model, info), kwargs),
             }
 
-        req_id = await self._execute_with_fallback("/api/v1/client/txt2img", build_payload, "txt2img", guild_id=guild_id, selected_model_slug=model_slug)
+        req_id = await self._execute_with_fallback("/api/v1/client/txt2img", build_payload, "txt2img", guild_id=guild_id, selected_model_slug=model_slug, prompt_text=prompt)
         return await self.wait_for_job(req_id)
 
-    async def generate_image_to_image(self, prompt, image_bytes, **kwargs):
+    async def select_image_edit_model(self, count: int, preferred_slug: str) -> str:
+        models = await self.get_models("img2img")
+        if not models:
+            raise DeapiError("No image editing models are available from deAPI.")
+        compatible = []
+        for model in models:
+            slug = model["slug"]
+            limits = image_model_info(slug, model.get("info"))["limits"]
+            if int(limits.get("max_input_images", 1)) >= count:
+                compatible.append(slug)
+        if not compatible:
+            raise DeapiError(f"No available deAPI image editing model accepts {count} images.")
+        if preferred_slug in compatible:
+            return preferred_slug
+        return compatible[0]
+
+    async def generate_image_to_image(self, prompt, image_bytes=None, references=None, **kwargs):
         guild_id = kwargs.pop("guild_id", None)
         model_slug = kwargs.pop("model_slug", None)
+        references = list(references or [])
+        if image_bytes is not None and references:
+            raise ValueError("Choose a source image or reference images, not both.")
+        if image_bytes is None and not references:
+            raise ValueError("Choose a source image.")
+
         def build_payload(model, defaults, info):
+            info = image_model_info(model, info)
+            maximum = int(info["limits"].get("max_input_images", 1))
+            if len(references) > maximum:
+                raise ValueError(f"{model} accepts at most {maximum} input images.")
             data = aiohttp.FormData()
             data.add_field("prompt", prompt)
             data.add_field("model", model)
-            for name, value in self._image_parameters(defaults, info, kwargs).items():
+            for name, value in self._image_parameters(defaults, info, kwargs, editing=True).items():
                 data.add_field(name, str(value))
-            data.add_field("image", io.BytesIO(image_bytes), filename="source.png", content_type="image/png")
+            if references:
+                field = "images[]" if len(references) > 1 else "image"
+                for reference in references:
+                    data.add_field(field, io.BytesIO(reference.data), filename=reference.filename, content_type=reference.content_type)
+            else:
+                data.add_field("image", io.BytesIO(image_bytes), filename="source.png", content_type="image/png")
             return data
 
-        req_id = await self._execute_with_fallback("/api/v1/client/img2img", build_payload, "img2img", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug)
-        return await self.wait_for_job(req_id, timeout=600)
+        req_id = await self._execute_with_fallback("/api/v2/images/edits", build_payload, "img2img", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug, strict_model=True, prompt_text=prompt)
+        return await self.wait_for_v2_job(req_id, timeout=600)
 
     async def generate_video(self, prompt, **kwargs):
         guild_id = kwargs.pop("guild_id", None)
@@ -416,7 +516,7 @@ class DeapiClient:
                 **self._video_parameters(model, defaults, info, kwargs),
             }
 
-        req_id = await self._execute_with_fallback("/api/v1/client/txt2video", build_payload, "txt2video", guild_id=guild_id, selected_model_slug=model_slug)
+        req_id = await self._execute_with_fallback("/api/v1/client/txt2video", build_payload, "txt2video", guild_id=guild_id, selected_model_slug=model_slug, prompt_text=prompt)
         return await self.wait_for_job(req_id, interval=5, timeout=900)  # Longer polling interval for video
 
     async def generate_image_to_video(self, prompt, image_bytes, **kwargs):
@@ -432,13 +532,13 @@ class DeapiClient:
             data.add_field("first_frame_image", io.BytesIO(image_bytes), filename="start.png", content_type="image/png")
             return data
 
-        req_id = await self._execute_with_fallback("/api/v1/client/img2video", build_payload, "img2video", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug)
+        req_id = await self._execute_with_fallback("/api/v1/client/img2video", build_payload, "img2video", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug, prompt_text=prompt)
         return await self.wait_for_job(req_id, interval=5, timeout=900)
 
     async def generate_reference_to_video(self, prompt, references, **kwargs):
         """Generate MiniMax H3 video from ordered image, video, and audio references."""
         kwargs.pop("guild_id", None)
-        model_slug = kwargs.pop("model_slug", None) or "MiniMaxH3_33B_Turbo_INT8"
+        model_slug = kwargs.pop("model_slug", None) or H3_MODEL
 
         def build_payload(model, defaults, info):
             counts = {"image": 0, "video": 0, "audio": 0}
@@ -484,6 +584,7 @@ class DeapiClient:
             is_multipart=True,
             selected_model_slug=model_slug,
             strict_model=True,
+            prompt_text=prompt,
         )
         return await self.wait_for_v2_job(req_id, timeout=900)
 
@@ -500,7 +601,7 @@ class DeapiClient:
             data.add_field("video", io.BytesIO(video_bytes), filename="source.mp4", content_type="video/mp4")
             return data
 
-        req_id = await self._execute_with_fallback("/api/v1/client/vid2video", build_payload, "vid2video", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug)
+        req_id = await self._execute_with_fallback("/api/v1/client/vid2video", build_payload, "vid2video", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug, prompt_text=prompt)
         return await self.wait_for_job(req_id, interval=5, timeout=900)
 
     async def generate_remove_bg(self, image_bytes, **kwargs):
@@ -549,7 +650,7 @@ class DeapiClient:
 
             return data
 
-        req_id = await self._execute_with_fallback("/api/v1/client/txt2music", build_payload, "txt2music", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug)
+        req_id = await self._execute_with_fallback("/api/v1/client/txt2music", build_payload, "txt2music", is_multipart=True, guild_id=guild_id, selected_model_slug=model_slug, prompt_text=caption)
         return await self.wait_for_job(req_id, interval=4)
 
     async def generate_speech(self, text, **kwargs):
@@ -573,6 +674,7 @@ class DeapiClient:
             "/api/v2/audio/speech", build_payload, "txt2audio",
             is_multipart=True, guild_id=guild_id,
             selected_model_slug=model_slug, strict_model=True,
+            prompt_text=text,
         )
         return await self.wait_for_v2_job(req_id)
 

@@ -98,11 +98,14 @@ class AssistantService:
         persist: bool = True,
         use_conversation_history: bool = True,
         memory_query: str | None = None,
+        additional_attachments: tuple[AssistantAttachment, ...] = (),
+        describe_attachments: bool = True,
     ) -> AssistantReply:
         cleaned = (message or "").strip()
         if cleaned.endswith("+++"):
             cleaned = cleaned[:-3].strip()
-        if not cleaned and attachment is None:
+        attachments = ((attachment,) if attachment else ()) + additional_attachments
+        if not cleaned and not attachments:
             raise ValueError("A message or attachment is required.")
         surface = identity.surface if identity.surface in SURFACE_LABELS else "petey_desktop"
         surface_label = SURFACE_LABELS[surface]
@@ -113,7 +116,8 @@ class AssistantService:
         messages = [] if temporary or not use_conversation_history else self.memory.get_conversation_messages(
             identity.installation_id, identity.conversation_id, 8
         )
-        memory_query = memory_query or cleaned or (attachment.filename if attachment else "")
+        attachment_names = ", ".join(item.filename for item in attachments)
+        memory_query = memory_query or cleaned or attachment_names
         if cleaned and re.search(
             r"\b(it|that|this|those|these|they|them|he|she|his|her|there)\b",
             cleaned, flags=re.IGNORECASE,
@@ -138,7 +142,12 @@ class AssistantService:
             ),
             **({"include_assistant": True} if _ASSISTANT_RECALL.search(cleaned) else {}),
         )
-        image_description = await self._describe_image(attachment, cleaned)
+
+        user_prompt = f"User {identity.display_name} said: {cleaned}"
+        for index, item in enumerate(attachments, 1):
+            description = await self._describe_image(item, cleaned) if describe_attachments else None
+            details = f"image description: {description}" if description else f"type: {item.content_type}"
+            user_prompt += f"\n[Attachment {index}: {item.filename}; {details}]"
 
         if temporary:
             history = []
@@ -185,8 +194,8 @@ class AssistantService:
                 history.append({"role": role, "content": content})
 
         stored_user_text = cleaned
-        if attachment:
-            stored_user_text = stored_user_text or f"[Attached {attachment.filename}]"
+        if attachments:
+            stored_user_text = stored_user_text or f"[Attached {attachment_names}]"
         deferred_user_embedding = None
         if not temporary and persist:
             supports_deferred_embedding = all(
@@ -214,21 +223,8 @@ class AssistantService:
                     metadata=user_metadata,
                 )
 
-        if image_description:
-            user_prompt = (
-                f"User {identity.display_name} said: {cleaned}\n"
-                f"[Attachment: {attachment.filename}; image description: {image_description}]"
-            )
-        elif attachment:
-            user_prompt = (
-                f"User {identity.display_name} said: {cleaned}\n"
-                f"[Attachment: {attachment.filename}; type: {attachment.content_type}]"
-            )
-        else:
-            user_prompt = f"User {identity.display_name} said: {cleaned}"
-
         conversational_only = (
-            attachment is None
+            not attachments
             and not (user_metadata or {}).get("hidden_from_chat")
             and _SOCIAL_MESSAGE.fullmatch(cleaned.rstrip(".!? ")) is not None
         )

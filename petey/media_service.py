@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from petey.deapi_client import deapi
+from petey.deapi_client import DEFAULT_MEDIA_PROMPT_LENGTH, H3_MODEL, deapi
 
 
 OPERATIONS = {
     "txt2img": {"label": "Generate image", "kind": "image", "file": None},
-    "img2img": {"label": "Restyle image", "kind": "image", "file": "image"},
+    "img2img": {"label": "Edit / combine images", "kind": "image", "file": "images"},
     "txt2video": {"label": "Generate video", "kind": "video", "file": None},
     "img2video": {"label": "Animate image", "kind": "video", "file": "image"},
     "ref2vid": {"label": "Reference to video", "kind": "video", "file": "references"},
@@ -41,7 +41,7 @@ class MediaService:
         inference_type = "img2video" if operation == "ref2vid" else operation
         models = await self.client.get_models(inference_type)
         if operation == "ref2vid":
-            return [item for item in models if item.get("slug") == "MiniMaxH3_33B_Turbo_INT8"]
+            return [item for item in models if item.get("slug") == H3_MODEL]
         return models
 
     async def balance(self) -> float:
@@ -62,6 +62,8 @@ class MediaService:
                 "steps": self._integer(parameters, "steps", 20, 1, 100),
                 "guidance": self._number(parameters, "guidance", 3.5, 0, 30),
             }
+        if operation in {"txt2img", "img2img"}:
+            values = self._image_options(parameters)
         if operation in {"txt2video", "img2video", "ref2vid"}:
             values.update(frames=self._integer(parameters, "frames", 120, 1, 600),
                           fps=self._integer(parameters, "fps", 24, 1, 60))
@@ -90,8 +92,8 @@ class MediaService:
     ) -> dict:
         config = self._require_operation(operation)
         parameters = parameters or {}
-        self._validate_source(config["file"], source)
         references = list(references or [])
+        self.validate_inputs(operation, source, references)
         if operation == "ref2vid":
             self._validate_references(references)
         prompt = (prompt or "").strip()
@@ -112,10 +114,12 @@ class MediaService:
             "fps": self._integer(parameters, "fps", 24, 1, 60),
         }
 
+        if operation in {"txt2img", "img2img"}:
+            visual = {**common, **self._image_options(parameters)}
         if operation == "txt2img":
             result = await self.client.generate_image(prompt, **visual)
         elif operation == "img2img":
-            result = await self.client.generate_image_to_image(prompt, source.data, **visual)
+            result = await self.client.generate_image_to_image(prompt, source.data if source else None, references=references, **visual)
         elif operation == "txt2video":
             result = await self.client.generate_video(prompt, **video)
         elif operation == "img2video":
@@ -142,10 +146,10 @@ class MediaService:
             )
         elif operation == "txt2audio":
             result = await self.client.generate_speech(
-                prompt[:5000],
+                prompt,
                 voice=str(parameters.get("voice") or "Vivian"),
                 speed=self._number(parameters, "speed", 1.0, 0.5, 2.0),
-                style=str(parameters.get("style") or "").strip()[:2000],
+                style=str(parameters.get("style") or "").strip()[:DEFAULT_MEDIA_PROMPT_LENGTH],
                 **common,
             )
         else:  # pragma: no cover - guarded by _require_operation
@@ -163,6 +167,41 @@ class MediaService:
         if operation not in OPERATIONS:
             raise ValueError("Unsupported media operation.")
         return OPERATIONS[operation]
+
+    @classmethod
+    def _image_options(cls, parameters):
+        """Keep omitted values omitted so the model can supply its own defaults."""
+        result = {}
+        bounds = {"width": (1024, 128, 4096), "height": (1024, 128, 4096),
+                  "steps": (20, 1, 100), "seed": (-1, -1, 2**32 - 1)}
+        for name, (default, minimum, maximum) in bounds.items():
+            if name in parameters:
+                result[name] = cls._integer(parameters, name, default, minimum, maximum)
+        if "guidance" in parameters:
+            result["guidance"] = cls._number(parameters, "guidance", 3.5, 0, 30)
+        for name in ("quality", "negative_prompt"):
+            if name in parameters:
+                result[name] = str(parameters[name])[:32000]
+        return result
+
+    @staticmethod
+    def validate_inputs(operation, source, references):
+        if operation != "img2img":
+            MediaService._validate_source(OPERATIONS[operation]["file"], source)
+            return
+        if source and references:
+            raise ValueError("Choose a source image or reference images, not both.")
+        images = [source] if source else references
+        if not images:
+            raise ValueError("This operation requires a source image.")
+        if len(images) > 16:
+            raise ValueError("Image editing accepts at most 16 input images.")
+        for image in images:
+            MediaService._validate_source("image", image)
+            if not image.data or len(image.data) > 10 * 1024 * 1024:
+                raise ValueError("Each input image must be nonempty and at most 10 MB.")
+            if image.content_type not in {"image/jpeg", "image/png", "image/gif", "image/bmp", "image/webp"}:
+                raise ValueError("Use JPG, PNG, GIF, BMP, or WebP input images.")
 
     @staticmethod
     def _validate_source(requirement: str | None, source: MediaInput | None) -> None:

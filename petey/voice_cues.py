@@ -47,7 +47,7 @@ class VoiceCueLibrary:
     def selected_voice(speech: dict | None) -> str:
         settings = dict(speech or {})
         provider = str(settings.get("provider") or "automatic")
-        voice_keys = {"deapi": ("deapi_voice", "Vivian"), "openai": ("openai_voice", "marin")}
+        voice_keys = {"deapi": ("deapi_voice", "Vivian"), "openai": ("openai_voice", "marin"), "fish": ("fish_voice", "default")}
         key, fallback = voice_keys.get(provider, ("gemini_voice", "Kore"))
         voice = str(settings.get(key) or fallback).strip()
         safe = re.sub(r"[^A-Za-z0-9._ -]+", "_", voice).strip(" .")[:80]

@@ -130,6 +130,7 @@
                             <strong id="visual-voice-input-label">Hold to talk</strong>
                         </button>
                         <button id="visual-voice-response-toggle" class="voice-response-button visual-voice-response-button muted" type="button" aria-label="Turn voice responses on" aria-pressed="false"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4V9ZM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button>
+                            <button class="speech-volume-button" type="button" popovertarget="speech-volume-popover" aria-label="Adjust Petey output volume" title="Petey output volume"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6m4 0h6M4 17h10m4 0h2"/><circle cx="12" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></svg></button>
                     </div>
                     <form id="visual-dictation-form" class="visual-dictation-form" hidden>
                         <label for="visual-dictation-input">Use the microphone on your phone keyboard</label>
@@ -170,17 +171,19 @@
             </nav>
 
             <form id="composer" class="composer">
-                <div id="attachment-chip" class="attachment-chip" hidden></div>
+                <ul id="attachment-list" class="attachment-list" aria-label="Files attached to this message" hidden></ul>
+                <p id="attachment-feedback" class="attachment-feedback" role="status" hidden></p>
                 <div class="composer-main-row">
                     <div id="chat-utility-dock" class="chat-utility-dock" aria-label="Chat status tools"></div>
                     <div class="composer-row">
                         <div class="composer-tools">
-                            <label class="attach-button" title="Attach a file" aria-label="Attach a file">
-                                <input id="attachment" name="attachment" type="file" hidden>
-                                <span aria-hidden="true">＋</span>
-                            </label>
+                            <input id="attachment" name="attachment" type="file" multiple hidden>
+                            <button id="attach-button" class="attach-button" type="button" title="Attach files" aria-label="Attach files">
+                                <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                            </button>
                             <button id="voice-input-button" class="mic-button" type="button" title="Microphone input" aria-label="Microphone input" hidden><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/></svg></button>
                             <button id="voice-response-toggle" class="voice-response-button muted" type="button" title="Turn voice responses on" aria-label="Turn voice responses on" aria-pressed="false"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4V9ZM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg></button>
+                            <button class="speech-volume-button" type="button" popovertarget="speech-volume-popover" aria-label="Adjust Petey output volume" title="Petey output volume"><svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6m4 0h6M4 17h10m4 0h2"/><circle cx="12" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></svg></button>
                         </div>
                         <div class="composer-input-shell"><textarea id="message" name="message" rows="1" placeholder="Message Petey…" autofocus></textarea><span class="terminal-cursor" aria-hidden="true"></span></div>
                         <button id="send" class="send-button" type="submit">Send</button>
@@ -206,7 +209,7 @@
                         <label><span>Operation</span>
                             <select id="media-operation">
                                 <option value="txt2img">Generate image</option>
-                                <option value="img2img">Restyle image</option>
+                                <option value="img2img">Edit / combine images</option>
                                 <option value="txt2video">Generate video</option>
                                 <option value="img2video">Animate image</option>
                                 <option value="ref2vid">Reference to video · MiniMax H3</option>
@@ -230,11 +233,11 @@
                             <button id="clear-media-image" class="text-button" type="button" hidden>Clear</button>
                         </div>
                         <input id="media-nonimage-source" type="file" hidden>
-                        <div id="media-image-selection" class="image-selection" hidden><img id="media-image-selection-preview" alt="Selected source"><span id="media-image-selection-name"></span></div>
+                        <div id="media-image-selection" class="image-selection" hidden><span id="media-image-selection-name"></span></div>
                     </div>
 
                     <div id="media-reference-field" class="full-field" hidden>
-                        <span>H3 references</span>
+                        <span id="media-reference-label">Reference images / media</span>
                         <p id="media-reference-hint" class="hint">Choose up to 3 reference files for MiniMax H3. Audio needs an image or video. Use the displayed tags in your prompt.</p>
                         <div class="image-source-controls">
                             <label class="secondary-button media-file-button" for="media-reference-files">Choose reference files</label>
@@ -259,6 +262,14 @@
                         </select></label>
                         <label><span>Steps</span><input id="media-steps" type="number" min="1" max="100" value="20"></label>
                         <label><span>Guidance</span><input id="media-guidance" type="number" min="0" max="30" step="0.1" value="3.5"></label>
+                    </div>
+                    <div id="media-image-model-fields" class="media-parameter-group field-grid two-column" hidden>
+                        <p id="media-image-model-hint" class="hint full-span"></p>
+                        <label><span>Seed (−1 = random)</span><input id="media-image-seed" type="number" min="-1" max="4294967295" value="-1"></label>
+                        <label id="media-image-quality-field" hidden><span>Quality</span><select id="media-image-quality"></select></label>
+                        <label id="media-image-width-field"><span>Width</span><input id="media-image-width" type="number" value="1024"></label>
+                        <label id="media-image-height-field"><span>Height</span><input id="media-image-height" type="number" value="1024"></label>
+                        <label id="media-image-negative-field" class="full-span" hidden><span>Negative prompt</span><textarea id="media-image-negative" rows="2" placeholder="Elements to avoid"></textarea></label>
                     </div>
                     <div id="media-video-fields" class="media-parameter-group field-grid two-column" hidden>
                         <label><span>Frames</span><input id="media-frames" type="number" min="1" max="600" value="120"></label>
@@ -446,6 +457,12 @@
         <iframe id="artifact-preview-frame" title="OpenCode artifact preview"
             sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-scripts"></iframe>
     </section>
+
+<div id="speech-volume-popover" class="speech-volume-popover" popover>
+    <label class="speech-volume-label" for="petey-output-volume"><span>Petey volume</span><output data-speech-volume-value for="petey-output-volume">100%</output></label>
+    <input id="petey-output-volume" data-speech-volume type="range" min="0" max="100" step="1" value="100" aria-label="Petey output volume">
+    <p class="hint" data-speech-volume-status role="status">Only Petey’s voice and wake cues. Mute stays separate.</p>
+</div>
     <script>
         window.PETEY_ADDON_VIEWS = {{ addon_view_ids|tojson }};
         window.peteyInterface = window.peteyInterface || {

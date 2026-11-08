@@ -7,7 +7,7 @@ optional hosted providers and can remain disabled.
 ## Spoken replies
 
 1. Open **Settings → Personality & voice**.
-2. Choose Automatic, deAPI, Gemini, OpenAI, or Disabled, then choose PETEY's voice,
+2. Choose Automatic, deAPI, Gemini, OpenAI, Fish Audio, or Disabled, then choose PETEY's voice,
    delivery directions, and whether new replies should play automatically.
 3. Select **Save Petey profile**. Instructions, traits, communication style, voice,
    and speech provider save together.
@@ -16,6 +16,11 @@ optional hosted providers and can remain disabled.
 
 Automatic speech tries Gemini and can fall back to OpenAI when configured. The
 required provider key must be saved or present in the environment.
+
+For Fish Audio, save a Fish key in **Models & API keys**, then select a voice
+and S2.1 model in **Personality & voice**. You can switch streaming, expressive
+delivery, and cue visibility separately. Use the volume control in Chat,
+Visual Mode, or Personality & voice to adjust PETEY's output and wake cues.
 
 ## Microphone
 

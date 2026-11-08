@@ -27,6 +27,9 @@ from petey.discord_transport import DiscordError
 from petey.config import PERSONA_PRESETS
 from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
+from petey.deapi_client import (
+    DEFAULT_MEDIA_PROMPT_LENGTH, H3_MODEL, deapi_prompt_limits, validate_media_prompt_length,
+)
 from petey.deapi_stt import DeapiSTT, DeapiSTTError, DEAPI_STT_MODELS
 from petey.deapi_tts import DEAPI_TTS_MODEL, DEAPI_TTS_VOICES
 from petey.gemini_tts import GeminiTTS, GeminiTTSError, GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
@@ -35,6 +38,8 @@ from petey.local_whisper import (
     LOCAL_WHISPER_MODELS, LocalWhisper, LocalWhisperError,
 )
 from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
+from petey.fish_tts import (FISH_TTS_MODELS, FishTTS, FishTTSError,
+                            fish_expression_prompt, fish_speech_text)
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
 from petey.general_mcp import GeneralMCPManager
@@ -43,6 +48,7 @@ from petey.image_browser import ImageBrowser, ImageBrowserError
 from petey.voice_cues import VoiceCueLibrary
 from petey.wake_detector import LocalWakeDetector, WakeDetectorError
 from petey.tools import ToolRegistry, build_desktop_tool_registry, build_media_tools
+from petey.tools.media import explicit_image_edit_request
 from petey.subscription_plans import estimate_plan
 from petey.updater import PeteyUpdater, UpdateError
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
@@ -50,6 +56,7 @@ from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
 MAX_MEDIA_SOURCE_BYTES = 25 * 1024 * 1024
 MAX_REFERENCE_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_CHAT_ATTACHMENTS = 16
 
 
 def _synthesize_wizard_persona_fallback(data: dict) -> dict:
@@ -304,7 +311,7 @@ def create_desktop_app(
                 surface=identity.surface,
             )
         service = AssistantService(
-            current.conversation_system_prompt,
+            fish_expression_prompt(current.conversation_system_prompt, current.conversation_speech),
             current.ai_provider,
             app.config["PETEY_MEMORY"],
             tool_registry=tools,
@@ -814,14 +821,30 @@ def create_desktop_app(
     def desktop_chat():
         current: DesktopState = app.config["PETEY_STATE"]
         message = request.form.get("message", "")
-        uploaded = request.files.get("attachment")
-        attachment = None
-        if uploaded and uploaded.filename:
-            attachment = AssistantAttachment(
-                filename=uploaded.filename,
-                content_type=uploaded.mimetype or "application/octet-stream",
-                data=uploaded.read(),
-            )
+        uploads = [upload for upload in request.files.getlist("attachment") if upload.filename]
+        if len(uploads) > MAX_CHAT_ATTACHMENTS:
+            return jsonify(error=f"Attach at most {MAX_CHAT_ATTACHMENTS} files per message."), 400
+        remaining = MAX_MEDIA_SOURCE_BYTES
+        attachments = []
+        for upload in uploads:
+            filename = PurePath(upload.filename.replace("\\", "/")).name[:255]
+            content_type = upload.mimetype
+            if not content_type or content_type == "application/octet-stream":
+                content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            data = upload.read(remaining + 1)
+            remaining -= len(data)
+            if remaining < 0:
+                return jsonify(error="Chat attachments must total 25 MB or less."), 413
+            attachments.append(AssistantAttachment(filename, content_type, data))
+        image_references = tuple(
+            MediaInput(item.filename, item.content_type, item.data)
+            for item in attachments if item.content_type.startswith("image/")
+        )
+        attachment_options = {
+            "additional_attachments": tuple(attachments[1:]),
+            "describe_attachments": not (image_references and explicit_image_edit_request(message)),
+        }
+        attachment = attachments[0] if attachments else None
 
         identity = AssistantIdentity(
             installation_id=current.installation_id,
@@ -845,9 +868,10 @@ def create_desktop_app(
             general_mcp_manager=app.config["PETEY_GENERAL_MCP"],
             addon_manager=app.config["PETEY_ADDONS"],
             surface=identity.surface,
+            image_references=image_references,
         )
         service = AssistantService(
-            current.conversation_system_prompt,
+            fish_expression_prompt(current.conversation_system_prompt, current.conversation_speech),
             current.ai_provider,
             app.config["PETEY_MEMORY"],
             tool_registry=tools,
@@ -880,6 +904,7 @@ def create_desktop_app(
                         message, identity, attachment, temporary=temporary,
                         temporary_history=temporary_history,
                         on_text=lambda text: emit({"type": "delta", "text": text}),
+                        **attachment_options,
                     ))
                     emit({"type": "done", "text": reply.text,
                           "tool_events": list(reply.tool_events)})
@@ -918,6 +943,7 @@ def create_desktop_app(
                     attachment,
                     temporary=temporary,
                     temporary_history=temporary_history,
+                    **attachment_options,
                 )
             )
             return jsonify(
@@ -1215,7 +1241,7 @@ def create_desktop_app(
         result = {}
         for provider, env_name in {
             "gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY",
-            "local": "LOCAL_AI_API_KEY", "deapi": "DEAPI_KEY",
+            "local": "LOCAL_AI_API_KEY", "deapi": "DEAPI_KEY", "fish": "FISH_API_KEY",
         }.items():
             saved = bool(current.ai_provider.get(provider, {}).get("api_key"))
             environment = bool(str(os.getenv(env_name, "")).strip())
@@ -1265,6 +1291,21 @@ def create_desktop_app(
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
+    @app.get("/api/desktop/speech/fish/voices")
+    def desktop_fish_voices():
+        from petey.fish_voices import list_fish_voices
+        try:
+            page = int(request.args.get("page", "1"))
+            result = list_fish_voices(app.config["PETEY_STATE"].ai_provider,
+                query=request.args.get("q", ""), scope=request.args.get("scope", "public"), page=page)
+            response = jsonify(result)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except FishTTSError as exc:
+            return jsonify(error=str(exc)), 502
+
     @app.route("/api/desktop/speech", methods=["GET", "PUT"])
     def desktop_speech_settings():
         current: DesktopState = app.config["PETEY_STATE"]
@@ -1299,6 +1340,8 @@ def create_desktop_app(
                 openai.get("api_key") or os.getenv("OPENAI_API_KEY")
             ),
             "openai_models": list(OPENAI_TTS_MODELS),
+            "fish_models": list(FISH_TTS_MODELS),
+            "fish_has_api_key": provider_key_status()["fish"]["has_api_key"],
             "openai_voices": list(OPENAI_TTS_VOICES),
             "billing_url": "https://aistudio.google.com/billing",
             "balance_available_via_api": False,
@@ -1326,6 +1369,8 @@ def create_desktop_app(
             model_slug = speech.get("gemini_model", "")
         elif provider == "openai":
             model_slug = speech.get("openai_model", "")
+        elif provider == "fish":
+            model_slug = speech.get("fish_model", "s2.1-pro-free")
         try:
             job = get_media_jobs().submit(
                 operation="txt2audio",
@@ -1335,7 +1380,7 @@ def create_desktop_app(
                 source=None,
                 parameters={
                     "voice": speech.get({
-                        "deapi": "deapi_voice", "gemini": "gemini_voice", "openai": "openai_voice",
+                        "deapi": "deapi_voice", "gemini": "gemini_voice", "openai": "openai_voice", "fish": "fish_voice",
                     }.get(provider, "gemini_voice")),
                     "style": speech.get("style", ""),
                 },
@@ -1343,6 +1388,7 @@ def create_desktop_app(
                 ai_config={
                     "gemini": current.ai_provider.get("gemini", {}),
                     "openai": current.ai_provider.get("openai", {}),
+                    "fish": current.ai_provider.get("fish", {}),
                     "deapi": current.ai_provider.get("deapi", {}),
                 },
                 save_to_gallery=False,
@@ -1364,25 +1410,38 @@ def create_desktop_app(
             return jsonify({"error": "There is no reply to speak."}), 400
         if len(text) > 32000:
             return jsonify({"error": "This reply is too long to speak."}), 400
-        if speech.get("provider") not in {"automatic", "gemini"} or not model.startswith("gemini-3.1-"):
-            return jsonify({"error": "Streaming requires Gemini 3.1 Flash TTS."}), 400
-        client = GeminiTTS({"gemini": current.ai_provider.get("gemini", {})})
-        voice = str(speech.get("gemini_voice") or "Kore")
-        style = str(speech.get("style") or "")
-        consistent_voice = bool(speech.get("consistent_voice", True))
+        fish = speech.get("provider") == "fish"
+        if fish:
+            if not speech.get("fish_streaming", True):
+                return jsonify({"error": "Fish Audio streaming is disabled in this profile."}), 400
+            client = FishTTS(current.ai_provider)
+            text = fish_speech_text(text, speech.get("fish_emotions", True), speech.get("fish_model", "s2.1-pro-free"))
+            args = (text, speech.get("fish_model", "s2.1-pro-free"),
+                    speech.get("fish_voice", ""), speech.get("fish_latency", "balanced"))
+        else:
+            if speech.get("provider") not in {"automatic", "gemini"} or not model.startswith("gemini-3.1-"):
+                return jsonify({"error": "Streaming requires Fish Audio or Gemini 3.1 Flash TTS."}), 400
+            client = GeminiTTS({"gemini": current.ai_provider.get("gemini", {})})
+            args = (fish_speech_text(text, False), model,
+                    str(speech.get("gemini_voice") or "Kore"),
+                    str(speech.get("style") or ""), bool(speech.get("consistent_voice", True)))
 
         def generate_stream():
-            yield json.dumps({"status": "connecting"}) + "\n"
+            yield json.dumps({"status": "connecting", "sample_rate": 24000,
+                              "provider": "fish" if fish else "gemini"}) + "\n"
+            chunks = client.stream_pcm(*args)
             try:
-                for chunk in client.stream_pcm(
-                    text, model, voice, style, consistent_voice
-                ):
+                for chunk in chunks:
                     yield json.dumps({
                         "audio": base64.b64encode(chunk).decode("ascii")
                     }) + "\n"
                 yield json.dumps({"status": "done"}) + "\n"
-            except GeminiTTSError as exc:
+            except (GeminiTTSError, FishTTSError) as exc:
                 yield json.dumps({"error": str(exc)}) + "\n"
+            finally:
+                close = getattr(chunks, "close", None)
+                if close:
+                    close()
 
         return Response(
             generate_stream(),
@@ -1709,6 +1768,7 @@ def create_desktop_app(
         return jsonify(
             {
                 "operations": operations,
+                "default_prompt_max": DEFAULT_MEDIA_PROMPT_LENGTH,
                 "configured": bool(ai_provider.get("deapi", {}).get("api_key") or service.client.api_key),
                 "selected_models": selected_models,
                 "speech": speech,
@@ -1725,11 +1785,15 @@ def create_desktop_app(
     @app.get("/api/desktop/media/models/<operation>")
     def desktop_media_models(operation):
         try:
-            current: DesktopState = app.config["PETEY_STATE"]
             models = app.config["PETEY_RUNTIME"].call(
                 media_provider_request("models", operation), timeout=90
             )
-            return jsonify({"operation": operation, "models": models})
+            default_limits = deapi_prompt_limits(operation)
+            public_models = []
+            for model in models:
+                limits = deapi_prompt_limits(operation, model)
+                public_models.append({**model, "prompt_limits": limits} if limits != default_limits else model)
+            return jsonify({"operation": operation, "models": public_models})
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
@@ -1751,14 +1815,33 @@ def create_desktop_app(
         payload = request.get_json(silent=True) or {}
         prompt = str(payload.get("prompt") or "").strip()
         operation = str(payload.get("operation") or "txt2img")
+        model_slug = str(payload.get("model_slug") or "").strip()[:200]
         if not prompt:
             return jsonify({"error": "Enter a prompt first."}), 400
         if operation not in MediaService.operation_catalog():
             return jsonify({"error": "Unsupported media operation."}), 400
+        if operation == "ref2vid" and not model_slug:
+            model_slug = H3_MODEL
+        limits = deapi_prompt_limits(operation, {"slug": model_slug})
+        if model_slug or ("model_slug" in payload and provider_key_status()["deapi"]["has_api_key"]):
+            try:
+                models = app.config["PETEY_RUNTIME"].call(
+                    media_provider_request("models", operation), timeout=20
+                )
+                if model_slug:
+                    models = [item for item in models if item.get("slug") == model_slug]
+                if models:
+                    limits = max(
+                        (deapi_prompt_limits(operation, model) for model in models),
+                        key=lambda item: (item["max"], -item["min"]),
+                    )
+            except Exception as exc:
+                return jsonify({"error": f"Could not read model limits: {_public_media_error(exc)}"}), 502
         system_message = (
             "Rewrite the user's idea as a vivid, precise prompt for an AI media generator. "
-            "Preserve their subject and intent, add useful style, composition, lighting, mood, "
-            "and motion details where relevant. Return only the enhanced prompt under 500 characters."
+            "Preserve their subject, intent, and specific instructions. Add useful detail where "
+            "relevant. Return only the enhanced prompt, up to "
+            f"{limits['max']:,} characters."
         )
         if operation == "ref2vid":
             system_message += (
@@ -1766,18 +1849,26 @@ def create_desktop_app(
                 "exactly; never invent a reference token that was not in the user's prompt."
             )
         try:
+            validate_media_prompt_length(
+                prompt, {"min": 0, "max": max(DEFAULT_MEDIA_PROMPT_LENGTH, limits["max"])},
+            )
             provider = AIProvider(current.ai_provider)
-            enhanced = provider.complete(prompt, system_message, [])
-            return jsonify({
-                "prompt": enhanced.strip()[:500], "provider": provider.provider,
-            })
+            enhanced = provider.complete(prompt, system_message, []).strip()
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         except AIProviderError as exc:
             return jsonify({"error": str(exc)}), 502
+        try:
+            validate_media_prompt_length(enhanced, limits, "The selected model")
+        except ValueError as exc:
+            return jsonify({"error": f"{exc} Your original prompt is still in the editor."}), 502
+        return jsonify({"prompt": enhanced, "provider": provider.provider})
 
     @app.post("/api/desktop/media/estimate")
     def desktop_media_estimate():
         operation = request.form.get("operation", "")
         try:
+            prompt = request.form.get("prompt", "").strip()
             parameters = json.loads(request.form.get("parameters", "{}"))
             if not isinstance(parameters, dict):
                 raise ValueError("Media parameters must be an object.")
@@ -1800,7 +1891,7 @@ def create_desktop_app(
                     source = MediaInput(path.name, mimetypes.guess_type(path.name)[0] or "image/png", path.read_bytes())
             quote = app.config["PETEY_RUNTIME"].call(media_provider_request(
                 "estimate", operation, request.form.get("model_slug", "")[:200], parameters,
-                request.form.get("prompt", "")[:32000], source,
+                prompt, source,
             ), timeout=30)
             return jsonify(quote)
         except ValueError as exc:
@@ -1812,7 +1903,7 @@ def create_desktop_app(
     def desktop_media_generate():
         current: DesktopState = app.config["PETEY_STATE"]
         operation = request.form.get("operation", "")
-        prompt = request.form.get("prompt", "")
+        prompt = request.form.get("prompt", "").strip()
         model_slug = request.form.get("model_slug", "")
         try:
             parameters = json.loads(request.form.get("parameters", "{}"))
@@ -1843,7 +1934,7 @@ def create_desktop_app(
                     content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                     data=path.read_bytes(),
                 )
-            if operation == "ref2vid":
+            if operation in {"ref2vid", "img2img"}:
                 for upload in request.files.getlist("references"):
                     if not upload.filename:
                         continue
@@ -1867,9 +1958,16 @@ def create_desktop_app(
                         content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                         data=path.read_bytes(),
                     ))
+            if request.form.get("reference_order"):
+                order = json.loads(request.form["reference_order"])
+                if not isinstance(order, list) or any(type(index) is not int for index in order) or sorted(order) != list(range(len(references))):
+                    raise ValueError("Reference image order is invalid.")
+                references = [references[index] for index in order]
             tts_provider = str(parameters.get("tts_provider") or "deapi")
             if operation == "txt2audio" and tts_provider not in {"deapi", "gemini"}:
                 raise ValueError("Choose deAPI or Gemini for media speech.")
+            if operation == "txt2audio" and tts_provider == "gemini":
+                validate_media_prompt_length(prompt, deapi_prompt_limits(operation))
             speech_settings = current.speech
             if operation == "txt2audio":
                 speech_settings = {
@@ -1889,6 +1987,7 @@ def create_desktop_app(
                 ai_config={
                     "gemini": current.ai_provider.get("gemini", {}),
                     "openai": current.ai_provider.get("openai", {}),
+                    "fish": current.ai_provider.get("fish", {}),
                     "deapi": current.ai_provider.get("deapi", {}),
                 },
             )

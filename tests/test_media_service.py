@@ -23,7 +23,7 @@ class MediaServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["result_url"], "https://media.example/image.png")
         kwargs = generate.await_args.kwargs
         self.assertEqual(kwargs["model_slug"], "flux-test")
-        self.assertEqual(kwargs["width"], 2048)
+        self.assertEqual(kwargs["width"], 4096)
         self.assertEqual(kwargs["height"], 128)
         self.assertEqual(kwargs["steps"], 8)
 
@@ -54,6 +54,15 @@ class MediaServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["kind"], "audio")
         self.assertEqual(generate.await_args.kwargs["reference_audio"], b"audio")
         self.assertEqual(generate.await_args.kwargs["duration"], 45)
+
+    async def test_deapi_speech_sends_the_full_15000_character_script(self):
+        client = AsyncMock()
+        client.generate_speech.return_value = {"result_url": "https://media.example/speech.mp3"}
+        script = "a" * 14_999 + "."
+
+        await MediaService(client).generate("txt2audio", script, "desktop-test")
+
+        self.assertEqual(client.generate_speech.await_args.args, (script,))
 
     async def test_minimax_h3_reference_video_dispatches_ordered_mixed_files(self):
         service = MediaService()

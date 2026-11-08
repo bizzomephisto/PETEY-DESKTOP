@@ -18,6 +18,7 @@ from petey.deapi_client import DeapiClient
 from petey.gemini_tts import GeminiTTS
 from petey.media_service import MediaInput, MediaService
 from petey.openai_tts import OpenAITTS
+from petey.fish_tts import FishTTS, fish_speech_text
 
 
 def _now() -> str:
@@ -246,6 +247,7 @@ class MediaJobManager:
         speech_settings: dict | None = None,
         ai_config: dict | None = None,
         save_to_gallery: bool = True,
+        select_compatible_edit_model: bool = False,
     ) -> dict:
         if self._closed:
             raise RuntimeError("The media job manager is shutting down.")
@@ -257,8 +259,8 @@ class MediaJobManager:
             raise ValueError("The media queue is full. Wait for a generation to finish.")
         # Validate immediately so a malformed request does not occupy a queue slot.
         config = MediaService._require_operation(operation)
-        MediaService._validate_source(config["file"], source)
         references = list(references or [])
+        MediaService.validate_inputs(operation, source, references)
         if operation == "ref2vid":
             MediaService._validate_references(references)
         if operation not in {"img-rmbg", "img-upscale"} and not (prompt or "").strip():
@@ -293,6 +295,7 @@ class MediaJobManager:
             "_speech_settings": speech_settings,
             "_ai_config": dict(ai_config or {}),
             "_save_to_gallery": bool(save_to_gallery),
+            "_select_compatible_edit_model": select_compatible_edit_model,
             "_result_data": None,
             "_result_content_type": "",
         }
@@ -366,19 +369,25 @@ class MediaJobManager:
             progress_callback=lambda update: self._update_progress(job["id"], update)
         )
         try:
+            references = job.get("_references") or []
+            model_slug = job["model_slug"]
+            if job["operation"] == "img2img" and job.get("_select_compatible_edit_model"):
+                model_slug = await client.select_image_edit_model(len(references), model_slug)
+                with self._lock:
+                    job["model_slug"] = model_slug
             result = await MediaService(client).generate(
                 operation=job["operation"],
                 prompt=job["prompt"],
                 installation_id=job["_installation_id"],
-                model_slug=job["model_slug"],
+                model_slug=model_slug,
                 source=job["_source"],
-                references=job.get("_references") or [],
+                references=references,
                 parameters=job["_parameters"],
             )
             gallery_item = None
             if job.get("_save_to_gallery", True):
                 gallery_item = await self.gallery.capture(
-                    job["id"], result, job["prompt"], job["model_slug"]
+                    job["id"], result, job["prompt"], model_slug
                 )
             return result, gallery_item
         finally:
@@ -387,6 +396,7 @@ class MediaJobManager:
     async def _execute_speech(self, job: dict, speech: dict) -> tuple[dict, dict]:
         """Generate speech through deAPI Media or PETEY's configured chat voice."""
         selected = str(speech.get("provider") or "automatic")
+        spoken_text = fish_speech_text(job["prompt"], selected == "fish" and speech.get("fish_emotions", True), speech.get("fish_model", "s2.1-pro-free"))
         if selected == "deapi":
             client = DeapiClient(
                 api_key=(job.get("_ai_config") or {}).get("deapi", {}).get("api_key"),
@@ -395,7 +405,7 @@ class MediaJobManager:
             try:
                 result = await MediaService(client).generate(
                     operation="txt2audio",
-                    prompt=job["prompt"],
+                    prompt=spoken_text,
                     installation_id=job["_installation_id"],
                     model_slug=job["model_slug"],
                     source=None,
@@ -407,7 +417,7 @@ class MediaJobManager:
             gallery_item = None
             if job.get("_save_to_gallery", True):
                 gallery_item = await self.gallery.capture(
-                    job["id"], result, job["prompt"], job["model_slug"],
+                    job["id"], result, spoken_text, job["model_slug"],
                 )
             return result, gallery_item
         providers = ["gemini", "openai"] if selected == "automatic" else [selected]
@@ -428,7 +438,7 @@ class MediaJobManager:
                         if selected == "gemini" else speech.get("gemini_voice", "Kore")
                     )
                     result = GeminiTTS(job.get("_ai_config") or {}).generate(
-                        job["prompt"][:32000], used_model,
+                        spoken_text[:32000], used_model,
                         voice,
                         job["_parameters"].get("style") or speech.get("style", ""),
                         bool(speech.get("consistent_voice", True)),
@@ -440,9 +450,16 @@ class MediaJobManager:
                         if selected == "openai" else speech.get("openai_voice", "marin")
                     )
                     result = OpenAITTS(job.get("_ai_config") or {}).generate(
-                        job["prompt"], used_model,
+                        spoken_text, used_model,
                         voice,
                         speech.get("style", ""),
+                    )
+                elif provider == "fish":
+                    used_model = speech.get("fish_model", "s2.1-pro-free")
+                    result = FishTTS(job.get("_ai_config") or {}).generate(
+                        spoken_text, used_model,
+                        job["_parameters"].get("voice") or speech.get("fish_voice", ""),
+                        speech.get("fish_latency", "balanced"),
                     )
                 else:
                     raise ValueError("Unsupported speech provider.")
@@ -460,7 +477,7 @@ class MediaJobManager:
         gallery_item = None
         if job.get("_save_to_gallery", True):
             gallery_item = await self.gallery.capture(
-                job["id"], result, job["prompt"], used_model,
+                job["id"], result, spoken_text, used_model,
             )
         return result, gallery_item
 

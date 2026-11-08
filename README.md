@@ -1,6 +1,6 @@
 # PETEY
 
-Current version: **v0.21.0** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
+Current version: **v0.21.1** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
@@ -13,11 +13,19 @@ model work runs instead of tying the companion to one cloud service.
 | Chat and prompt enhancement | LM Studio, Ollama, or another OpenAI-compatible server | Gemini or OpenAI |
 | Vision for image attachments | The active local chat model, when it supports images | The active Gemini or OpenAI chat model |
 | Speech recognition (STT) | Local Whisper on this computer | deAPI or Gemini |
-| Spoken replies (TTS) | Leave speech disabled | deAPI, Gemini, or OpenAI |
+| Spoken replies (TTS) | Leave speech disabled | deAPI, Gemini, OpenAI, or Fish Audio |
 
 SQLite memory, retrieval, and keyword search remain local. Semantic embeddings can
 also use a local OpenAI-compatible server. Hosted features receive only the content
 needed for the feature you deliberately select.
+
+## Create from chat
+
+Save a deAPI key in **Models & API keys**, then enable **Allow Petey to control**
+for **deAPI Media** in Addons. Ask PETEY to generate an image. To edit or combine
+images, use **+** to attach them to the same message and describe what should
+change. The result appears in chat and Gallery. See [image editing and model
+limits](docs/deapi-image-editing.md).
 
 ## Preview
 
@@ -86,6 +94,7 @@ speed, and hardware setup.
 - RAG uploads, retrieval testing, vector rebuilding, and local database controls
 - Parallel image, video, music, speech, background-removal, and upscale jobs
 - Streaming Gemini text to speech with OpenAI fallback, named voices, and delivery direction
+- Optional Fish Audio spoken replies with a saved voice model ID and selectable latency (see [setup](docs/fish-audio.md))
 - Per-reply Speak controls and optional automatic playback for new chat responses
 - Hosted or private Local Whisper transcription for push-to-talk, always-on, and wake-name microphone input
 - Replaceable per-voice wake acknowledgements that play only after the wake name is followed by a pause

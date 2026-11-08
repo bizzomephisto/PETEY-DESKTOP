@@ -16,6 +16,7 @@ from petey.desktop_state import DesktopState
 from petey.desktop_memory import DesktopMemory
 from petey.deapi_stt import DeapiSTTError
 from petey.media_jobs import MediaGallery
+from petey.tools.media import DEAPI_IMAGE_CONTROL
 from web.desktop_app import AsyncRuntime, create_desktop_app
 from petey.version import MEDIA_PROVIDER_URL, PROJECT_URL, __version__
 
@@ -414,8 +415,8 @@ class DesktopAppTests(unittest.TestCase):
             self.assertIn(f"v{__version__}", shell.get_data(as_text=True))
             self.assertIn(PROJECT_URL, shell.get_data(as_text=True))
             self.assertIn(MEDIA_PROVIDER_URL, shell.get_data(as_text=True))
-            self.assertNotIn("deAPI Media", shell.get_data(as_text=True).split(
-                '<dialog id="changelog-dialog"', 1)[0])
+            sidebar = shell.get_data(as_text=True).split('<aside class="sidebar">', 1)[1]
+            self.assertNotIn("deAPI Media", sidebar.split("</aside>", 1)[0])
             self.assertIn('id="view-providers"', shell.get_data(as_text=True))
             self.assertIn('id="view-help"', shell.get_data(as_text=True))
             self.assertNotIn('id="view-plan"', shell.get_data(as_text=True))
@@ -564,6 +565,83 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.get_json()["text"], "Desktop reply")
             self.assertNotIn("gif_url", response.get_json())
+
+    def test_chat_routes_image_requests_and_preserves_ordered_edit_uploads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_provider_key("deapi", "test-key")
+            state.update_petey_control("deapi-media", {"enabled": True}, DEAPI_IMAGE_CONTROL)
+            jobs = MagicMock()
+            jobs.submit.return_value = {"id": "image-job"}
+            memory = MagicMock()
+            app = create_desktop_app(
+                state=state, runtime=AsyncRuntime(), job_manager=jobs, memory=memory,
+            )
+            client = app.test_client()
+
+            def use_tool(prompt, system, history, schemas, execute, *, require_tool):
+                self.assertTrue(require_tool)
+                self.assertEqual(len(schemas), 1)
+                name = schemas[0]["function"]["name"]
+                result = execute(name, {"prompt": prompt.splitlines()[0]})
+                if name == "edit_images":
+                    self.assertLess(prompt.index("first.jpg"), prompt.index("second.png"))
+                    retry = execute(name, {"prompt": "Try another variation"})
+                    self.assertEqual(retry["job_id"], result["job_id"])
+                return "Image queued.", [{"name": name, "result": result}]
+
+            with (
+                patch.object(AIProvider, "complete_with_tools", side_effect=use_tool),
+                patch.object(AIProvider, "describe_image") as vision,
+            ):
+                generated = client.post("/api/desktop/chat", data={"message": "Generate an image of a cat"})
+                self.assertEqual(generated.status_code, 200, generated.json)
+                self.assertEqual(generated.json["tool_events"][0]["name"], "generate_image")
+                self.assertEqual(jobs.submit.call_args.kwargs["operation"], "txt2img")
+                self.assertEqual(jobs.submit.call_args.kwargs["parameters"], {})
+                jobs.submit.reset_mock()
+
+                edited = client.post("/api/desktop/chat", data={
+                    "message": "Combine them and add funny hats to each of them.",
+                    "surface": "mobile_petey",
+                    "stream": "true",
+                    "attachment": [(BytesIO(b"first"), "first.jpg"), (BytesIO(b"second"), "second.png")],
+                })
+                self.assertEqual(edited.status_code, 200)
+                done = json.loads(edited.get_data(as_text=True).splitlines()[-1])
+                self.assertEqual(done["tool_events"][0]["name"], "edit_images")
+                jobs.submit.assert_called_once()
+                submission = jobs.submit.call_args.kwargs
+                self.assertEqual(submission["operation"], "img2img")
+                self.assertTrue(submission["select_compatible_edit_model"])
+                self.assertEqual(
+                    [(item.filename, item.content_type, item.data) for item in submission["references"]],
+                    [("first.jpg", "image/jpeg", b"first"), ("second.png", "image/png", b"second")],
+                )
+                vision.assert_not_called()
+
+            jobs.submit.reset_mock()
+            with (
+                patch.object(AIProvider, "complete", return_value="Two cats."),
+                patch.object(AIProvider, "describe_image", return_value="A cat.") as vision,
+            ):
+                inspected = client.post("/api/desktop/chat", data={
+                    "message": "What is in these images?",
+                    "attachment": [(BytesIO(b"first"), "first.jpg"), (BytesIO(b"second"), "second.png")],
+                })
+                self.assertEqual(inspected.json["tool_events"], [])
+                self.assertEqual(vision.call_count, 2)
+            jobs.submit.assert_not_called()
+
+            state.update_petey_control("deapi-media", {"surfaces": {"mobile_petey": False}}, DEAPI_IMAGE_CONTROL)
+            with patch.object(AIProvider, "complete", return_value="The edit tool is unavailable."):
+                denied = client.post("/api/desktop/chat", data={
+                    "message": "Edit this photo",
+                    "surface": "mobile_petey",
+                    "attachment": (BytesIO(b"first"), "first.jpg"),
+                })
+                self.assertEqual(denied.json["tool_events"], [])
+            jobs.submit.assert_not_called()
 
     def test_chat_route_uses_the_conversations_assigned_persona(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -963,6 +1041,37 @@ class DesktopAppTests(unittest.TestCase):
             self.assertEqual(source.filename, "selected.png")
             self.assertEqual(source.content_type, "image/png")
             self.assertEqual(source.data, b"local-image-bytes")
+
+    def test_create_queues_full_prompts_and_enhances_with_the_selected_model_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jobs = MagicMock()
+            jobs.submit.return_value = {"id": "test-job", "kind": "video"}
+            client = create_desktop_app(
+                state=DesktopState(directory), job_manager=jobs, memory=MagicMock(),
+            ).test_client()
+            prompt = "x" * 14_999 + "."
+            for operation in ("txt2img", "txt2video", "txt2music", "txt2audio"):
+                with self.subTest(operation=operation):
+                    response = client.post("/api/desktop/media/generate", data={
+                        "operation": operation, "prompt": prompt,
+                    })
+                    self.assertEqual(response.status_code, 202)
+                    self.assertEqual(jobs.submit.call_args.kwargs["prompt"], prompt)
+
+            model = {"slug": "music-model", "info": {"limits": {"min_caption": 3, "max_caption": 300}}}
+            with (
+                patch("web.desktop_app.MediaService.models", new=AsyncMock(return_value=[model])),
+                patch.object(AIProvider, "complete", side_effect=["x" * 300, "x" * 301]) as complete,
+            ):
+                models = client.get("/api/desktop/media/models/txt2music")
+                self.assertEqual(models.json["models"][0]["prompt_limits"], {"min": 3, "max": 300})
+                data = {"operation": "txt2music", "prompt": "A song about a cat", "model_slug": "music-model"}
+                enhanced = client.post("/api/desktop/media/enhance", json=data)
+                rejected = client.post("/api/desktop/media/enhance", json=data)
+                self.assertEqual(enhanced.json["prompt"], "x" * 300)
+                self.assertEqual(rejected.status_code, 502)
+                self.assertIn("300 characters", rejected.json["error"])
+                self.assertIn("300 characters", complete.call_args.args[1])
 
     def test_media_text_to_speech_supports_deapi_and_gemini_independently(self):
         queued = {

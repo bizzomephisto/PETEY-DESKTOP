@@ -7,8 +7,8 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.21.0**
-- Current version: **v0.21.0**
+- Release: **v0.21.1**
+- Current version: **v0.21.1**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
 - Test framework: `unittest`; current full suite contains 353 tests

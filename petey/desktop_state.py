@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import copy
 import json
+import math
 import os
 import re
 import sys
@@ -376,13 +377,27 @@ class DesktopState:
             "gemini_voice": "Kore",
             "openai_model": "gpt-4o-mini-tts",
             "openai_voice": "marin",
+            "fish_model": "s2.1-pro-free",
+            "fish_voice": "",
+            "fish_latency": "balanced",
+            "fish_emotions": True,
+            "fish_show_cues": False,
+            "fish_streaming": True,
             "style": "",
             "consistent_voice": True,
             "auto_speak": False,
+            "volume": 1.0,
         }
         if not isinstance(settings.get("speech"), dict):
             settings["speech"] = copy.deepcopy(speech_defaults)
             changed = True
+        # Keep old saved Drama preview selections on the documented canonical model.
+        for fish_settings in [settings["speech"], *(
+            item.get("speech", {}) for item in settings["saved_personas"] if isinstance(item, dict)
+        )]:
+            if isinstance(fish_settings, dict) and fish_settings.get("fish_model") == "drama-3-preview":
+                fish_settings["fish_model"] = "drama-3"
+                changed = True
         legacy_speech_provider = "provider_selection_version" not in settings["speech"]
         for key, value in speech_defaults.items():
             if key not in settings["speech"]:
@@ -614,6 +629,8 @@ class DesktopState:
         if not isinstance(saved, dict) or not isinstance(saved.get("speech"), dict):
             return self.speech
         speech = self._validated_speech(self.speech, saved["speech"])
+        speech["fish_show_cues"] = bool(self.speech.get("fish_show_cues", False))
+        speech["volume"] = self.speech.get("volume", 1.0)
         if speech.get("provider") != "disabled":
             speech["auto_speak"] = bool(self.speech.get("auto_speak", False))
         return speech
@@ -1316,7 +1333,7 @@ class DesktopState:
         return copy.deepcopy(self.settings.get("speech", {}))
 
     def update_provider_key(self, provider: str, api_key: str = "", clear: bool = False) -> None:
-        if provider not in {"gemini", "openai", "local", "deapi"}:
+        if provider not in {"gemini", "openai", "local", "deapi", "fish"}:
             raise ValueError("Unsupported credential provider.")
         if not isinstance(api_key, str) or len(api_key) > 4096:
             raise ValueError("API key must be text of at most 4096 characters.")
@@ -1343,10 +1360,11 @@ class DesktopState:
         from petey.deapi_tts import DEAPI_TTS_MODEL, DEAPI_TTS_VOICES
         from petey.gemini_tts import GEMINI_TTS_MODELS, GEMINI_TTS_VOICES
         from petey.openai_tts import OPENAI_TTS_MODELS, OPENAI_TTS_VOICES
+        from petey.fish_tts import FISH_TTS_MODELS, FISH_TTS_LATENCIES, validate_voice_id
 
         current = copy.deepcopy(base)
         provider = str(changes.get("provider") or current.get("provider") or "automatic")
-        if provider not in {"disabled", "automatic", "deapi", "gemini", "openai"}:
+        if provider not in {"disabled", "automatic", "deapi", "gemini", "openai", "fish"}:
             raise ValueError("Unsupported speech provider.")
         current["provider"] = provider
         current["provider_selection_version"] = 2
@@ -1380,10 +1398,35 @@ class DesktopState:
             if voice not in OPENAI_TTS_VOICES:
                 raise ValueError("Choose a supported OpenAI voice.")
             current["openai_voice"] = voice
+        if "fish_model" in changes:
+            model = str(changes.get("fish_model") or "").strip()
+            if model == "drama-3-preview":
+                model = "drama-3"
+            if model not in FISH_TTS_MODELS:
+                raise ValueError("Choose a supported Fish Audio TTS model.")
+            current["fish_model"] = model
+        if "fish_voice" in changes:
+            current["fish_voice"] = validate_voice_id(changes["fish_voice"])
+        if "fish_latency" in changes:
+            latency = str(changes.get("fish_latency") or "").strip()
+            if latency not in FISH_TTS_LATENCIES:
+                raise ValueError("Choose Normal, Balanced, or Low latency for Fish Audio.")
+            current["fish_latency"] = latency
+        for key in ("fish_emotions", "fish_show_cues", "fish_streaming"):
+            if key in changes:
+                if not isinstance(changes[key], bool):
+                    raise ValueError("Fish Audio switches must be true or false.")
+                current[key] = changes[key]
         if "style" in changes:
             current["style"] = str(changes.get("style") or "").strip()[:2000]
         if "consistent_voice" in changes:
             current["consistent_voice"] = bool(changes["consistent_voice"])
+        if "volume" in changes:
+            volume = changes["volume"]
+            if (isinstance(volume, bool) or not isinstance(volume, (int, float))
+                    or not math.isfinite(volume) or not 0 <= volume <= 1):
+                raise ValueError("Petey volume must be a number between 0 and 1.")
+            current["volume"] = float(volume)
         if "auto_speak" in changes:
             current["auto_speak"] = bool(changes["auto_speak"])
         if provider == "disabled":
@@ -1605,6 +1648,7 @@ class DesktopState:
         # happened to be off.
         auto_speak = bool(self.speech.get("auto_speak", False))
         speech = self._validated_speech(self.speech, saved.get("speech") or {})
+        speech["volume"] = self.speech.get("volume", 1.0)
         if speech.get("provider") != "disabled":
             speech["auto_speak"] = auto_speak
         with self._lock:

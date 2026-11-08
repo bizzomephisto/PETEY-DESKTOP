@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch
 
 from petey.tools import build_desktop_tool_registry
 from petey.desktop_state import DesktopState
-from petey.tools.media import build_media_tools, explicit_image_request
+from petey.media_service import MediaInput
+from petey.tools.media import build_media_tools, explicit_image_edit_request, explicit_image_request
 from petey.tools.registry import ToolError, ToolRegistry, ToolSpec
 
 
@@ -105,6 +106,11 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(explicit_image_request("Draw me a portrait of Petey"))
         self.assertFalse(explicit_image_request("Tell me how image generation works"))
         self.assertFalse(explicit_image_request("That photograph looks great"))
+        self.assertFalse(explicit_image_request("Can you make a caption for this image?"))
+        self.assertFalse(explicit_image_edit_request("Make a caption for this image"))
+        self.assertFalse(explicit_image_edit_request("How do I add hats to both?"))
+        self.assertTrue(explicit_image_edit_request("Could you put a funny hat on each of them?"))
+        self.assertTrue(explicit_image_edit_request("Use these two photos to make a collage"))
 
     def test_generate_image_queues_existing_deapi_job_manager(self):
         state = MagicMock()
@@ -145,6 +151,23 @@ class ToolRegistryTests(unittest.TestCase):
                     {"prompt": "A robot"},
                     "Generate an image of a robot",
                 )
+
+    def test_chat_image_tools_queue_the_full_15000_character_prompt(self):
+        state = MagicMock(ai_provider={"deapi": {"api_key": "test-key"}})
+        state.selected_model.return_value = ""
+        prompt = "画" * 14_999 + "."
+        for name, request, references in (
+            ("generate_image", "Generate an image", ()),
+            ("edit_images", "Edit this photo", (MediaInput("cat.png", "image/png", b"cat"),)),
+        ):
+            with self.subTest(tool=name):
+                jobs = MagicMock()
+                jobs.submit.return_value = {"id": "test-job"}
+                registry = ToolRegistry(build_media_tools(
+                    state, lambda: jobs, MagicMock(), image_references=references,
+                ))
+                registry.execute(name, {"prompt": prompt}, request)
+                self.assertEqual(jobs.submit.call_args.kwargs["prompt"], prompt)
 
     def test_direct_image_request_bypasses_only_the_autonomous_daily_limit(self):
         with tempfile.TemporaryDirectory() as directory:

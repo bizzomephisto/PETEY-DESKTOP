@@ -2,7 +2,9 @@ const messages = document.getElementById('messages');
 const composer = document.getElementById('composer');
 const messageInput = document.getElementById('message');
 const attachmentInput = document.getElementById('attachment');
-const attachmentChip = document.getElementById('attachment-chip');
+const attachmentList = document.getElementById('attachment-list');
+const attachmentFeedback = document.getElementById('attachment-feedback');
+const attachButton = document.getElementById('attach-button');
 const sendButton = document.getElementById('send');
 const voiceResponseButtons = [
     document.getElementById('voice-response-toggle'),
@@ -76,6 +78,7 @@ let aiProviderLoaded = false;
 let aiProviderConfiguration = null;
 let speechSettingsLoaded = false;
 let speechConfiguration = null;
+let speechPlaybackSerial = 0;
 let voiceResponseEnabled = false;
 let voiceResponseInitialized = false;
 let voiceInputSettingsLoaded = false;
@@ -126,6 +129,9 @@ let voiceConversationAwaitingReply = false;
 let voiceConversationFollowupTimer = null;
 let keyboardPushToTalkActive = false;
 let visualAudioEnergy = 0;
+let speechVisualizationAnalyser = null;
+const speechOutputGains = new Map();
+let volumeBeforeEdit = null;
 let visualThinking = false;
 let visualErrorUntil = 0;
 let visualGenerating = false;
@@ -501,6 +507,8 @@ async function followChatImageJob(card, event) {
     const jobId = String(event?.result?.job_id || '');
     if (!jobId) return;
     const status = card.querySelector('.chat-image-status');
+    const editing = event.name === 'edit_images';
+    const action = editing ? 'Image edit' : 'Image generation';
     const prompt = String(event.result?.prompt || 'Generated image');
     for (let attempt = 0; attempt < 600 && card.isConnected; attempt += 1) {
         try {
@@ -508,7 +516,7 @@ async function followChatImageJob(card, event) {
             const job = payload.job;
             if (job.status === 'failed') {
                 card.classList.add('failed');
-                status.textContent = job.error || 'Image generation failed.';
+                status.textContent = job.error || `${action} failed.`;
                 return;
             }
             if (job.status === 'completed') {
@@ -546,7 +554,8 @@ async function followChatImageJob(card, event) {
             }
             const progress = Number(job.progress);
             const progressText = Number.isFinite(progress) ? ` · ${Math.round(progress)}%` : '';
-            status.textContent = `${job.status === 'queued' ? 'Image queued' : 'Creating image'}${progressText}…`;
+            const stage = job.status === 'queued' ? `${action} queued` : (editing ? 'Editing images' : 'Creating image');
+            status.textContent = `${stage}${progressText}…`;
         } catch (error) {
             if (attempt === 0) {
                 try {
@@ -567,22 +576,26 @@ async function followChatImageJob(card, event) {
                 } catch (_galleryError) { /* The job may still be starting. */ }
             }
             card.classList.add('failed');
-            status.textContent = `Could not follow image generation: ${error.message}`;
+            status.textContent = `Could not follow this image job: ${error.message}`;
             return;
         }
         await new Promise(resolve => window.setTimeout(resolve, 1000));
     }
-    if (card.isConnected) status.textContent = 'Image generation is still running. Check Media for progress.';
+    if (card.isConnected) status.textContent = `${action} is still running. Check Media for progress.`;
 }
 
 function appendChatImageJobs(content, toolEvents) {
+    const jobs = new Set();
     for (const event of toolEvents || []) {
-        if (event.name !== 'generate_image' || event.result?.status !== 'queued' || !event.result?.job_id) continue;
+        const jobId = event.result?.job_id;
+        if (!['generate_image', 'edit_images'].includes(event.name)
+                || event.result?.status !== 'queued' || !jobId || jobs.has(jobId)) continue;
+        jobs.add(jobId);
         const card = document.createElement('figure');
         card.className = 'chat-generated-image pending';
         const status = document.createElement('figcaption');
         status.className = 'chat-image-status';
-        status.textContent = 'Image queued…';
+        status.textContent = event.name === 'edit_images' ? 'Image edit queued…' : 'Image queued…';
         card.append(status);
         content.append(card);
         window.setTimeout(() => followChatImageJob(card, event), 0);
@@ -640,6 +653,97 @@ function appendChatToolImages(content, toolEvents) {
     }
 }
 
+function fishChatText(text, show = speechConfiguration?.fish_show_cues === true, partial = false) {
+    let source = String(text || '');
+    if (partial) {
+        const marker = source.lastIndexOf('[[fish:');
+        if (marker >= 0 && !source.slice(marker).includes(']]')) source = source.slice(0, marker);
+        source = source.replace(/\[\[(?:f(?:i(?:s(?:h)?)?)?)?$/, '');
+    }
+    return source
+        .replace(/\[\[fish:<(\/?)(whisper|emphasis|soft|fast|slow|stress|forceful)>\]\]/g,
+            (_match, close, tag) => show ? `<${close}${tag}>` : '')
+        .replace(/\[\[fish:([A-Za-z][A-Za-z ,'-]{0,79})\]\]/g, (_match, cue) => show ? `[${cue}]` : '')
+        .trimStart();
+}
+
+function refreshFishCueVisibility() {
+    messages.querySelectorAll('.bubble[data-fish-text]').forEach(bubble => {
+        renderAssistantBubble(bubble, bubble.dataset.fishText);
+    });
+}
+
+function renderAssistantBubble(bubble, rawText) {
+    const text = fishChatText(rawText);
+    bubble.replaceChildren();
+    const artifactPath = '\\/api\\/addons\\/petey-opencode\\/artifacts\\/\\d+\\/\\d+';
+    const galleryPath = '\\/api\\/desktop\\/gallery\\/file\\/[a-f0-9]{32}';
+    const pattern = new RegExp(
+        `\\[([^\\]\\n]+)\\]\\((https?:\\/\\/[^\\s<>()]+|${artifactPath}|${galleryPath})\\)`
+        + `|(https?:\\/\\/[^\\s<>()\\[\\]]+|${artifactPath}|${galleryPath})`,
+        'g',
+    );
+    let offset = 0;
+    for (const match of String(text).matchAll(pattern)) {
+        bubble.append(document.createTextNode(text.slice(offset, match.index)));
+        const link = document.createElement('a');
+        const originalHref = match[2] || match[3];
+        let href = originalHref;
+        let artifactHref = '';
+        let galleryItemId = '';
+        try {
+            const parsed = new URL(originalHref, window.location.href);
+            const artifact = /^\/api\/addons\/petey-opencode\/artifacts\/\d+\/\d+$/.test(parsed.pathname);
+            const galleryMatch = /^\/api\/desktop\/gallery\/file\/([a-f0-9]{32})$/.exec(parsed.pathname);
+            const localOrigin = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+            const sameOrigin = parsed.origin === window.location.origin;
+            if ((artifact || galleryMatch) && (localOrigin || sameOrigin)) {
+                artifactHref = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+                if (galleryMatch) galleryItemId = galleryMatch[1];
+            }
+            if (artifactHref && localOrigin) {
+                href = artifactHref;
+            }
+        } catch (_error) {
+            // Keep the displayed text; malformed links remain inert below.
+        }
+        link.href = href;
+        if (galleryItemId) link.dataset.galleryItemId = galleryItemId;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.addEventListener('click', async event => {
+            if (artifactHref) {
+                event.preventDefault();
+                openArtifactPreview(artifactHref, match[1] || 'OpenCode artifact');
+                return;
+            }
+            if (galleryItemId && window.pywebview?.api?.open_gallery_item) {
+                event.preventDefault();
+                try {
+                    const result = await window.pywebview.api.open_gallery_item(galleryItemId);
+                    if (!result?.ok) window.alert(result?.error || 'Could not open this image.');
+                } catch (_error) {
+                    window.alert('Could not open this image.');
+                }
+                return;
+            }
+            if (!window.pywebview?.api?.open_external_url) return;
+            event.preventDefault();
+            try {
+                if (!await window.pywebview.api.open_external_url(link.href)) {
+                    window.alert('Could not open the default browser. Copy the link to open it manually.');
+                }
+            } catch (error) {
+                window.alert('Could not open the default browser. Copy the link to open it manually.');
+            }
+        });
+        link.textContent = artifactHref || match[1] || originalHref;
+        bubble.append(link);
+        offset = match.index + match[0].length;
+    }
+    bubble.append(document.createTextNode(text.slice(offset)));
+}
+
 function addMessage(role, text, options = {}) {
     const deferLayout = Boolean(options.deferLayout);
     const followLatest = !deferLayout
@@ -677,7 +781,7 @@ function addMessage(role, text, options = {}) {
         copyButton.className = 'copy-message';
         copyButton.textContent = 'Copy';
         copyButton.title = 'Copy message';
-        copyButton.addEventListener('click', () => copyChatText(text, copyButton));
+        copyButton.addEventListener('click', () => copyChatText(role === 'assistant' ? fishChatText(text) : text, copyButton));
         meta.append(copyButton);
         if (role === 'assistant' && speechConfiguration?.provider !== 'disabled') {
             const speakButton = document.createElement('button');
@@ -694,88 +798,29 @@ function addMessage(role, text, options = {}) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
         if (role === 'assistant' && !options.typing) {
-            const artifactPath = '\\/api\\/addons\\/petey-opencode\\/artifacts\\/\\d+\\/\\d+';
-            const galleryPath = '\\/api\\/desktop\\/gallery\\/file\\/[a-f0-9]{32}';
-            const pattern = new RegExp(
-                `\\[([^\\]\\n]+)\\]\\((https?:\\/\\/[^\\s<>()]+|${artifactPath}|${galleryPath})\\)`
-                + `|(https?:\\/\\/[^\\s<>()\\[\\]]+|${artifactPath}|${galleryPath})`,
-                'g',
-            );
-            let offset = 0;
-            for (const match of String(text).matchAll(pattern)) {
-                bubble.append(document.createTextNode(text.slice(offset, match.index)));
-                const link = document.createElement('a');
-                const originalHref = match[2] || match[3];
-                let href = originalHref;
-                let artifactHref = '';
-                let galleryItemId = '';
-                try {
-                    const parsed = new URL(originalHref, window.location.href);
-                    const artifact = /^\/api\/addons\/petey-opencode\/artifacts\/\d+\/\d+$/.test(parsed.pathname);
-                    const galleryMatch = /^\/api\/desktop\/gallery\/file\/([a-f0-9]{32})$/.exec(parsed.pathname);
-                    const localOrigin = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
-                    const sameOrigin = parsed.origin === window.location.origin;
-                    if ((artifact || galleryMatch) && (localOrigin || sameOrigin)) {
-                        artifactHref = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-                        if (galleryMatch) galleryItemId = galleryMatch[1];
-                    }
-                    if (artifactHref && localOrigin) {
-                        href = artifactHref;
-                    }
-                } catch (_error) {
-                    // Keep the displayed text; malformed links remain inert below.
-                }
-                link.href = href;
-                if (galleryItemId) link.dataset.galleryItemId = galleryItemId;
-                link.target = '_blank';
-                link.rel = 'noopener';
-                link.addEventListener('click', async event => {
-                    if (artifactHref) {
-                        event.preventDefault();
-                        openArtifactPreview(artifactHref, match[1] || 'OpenCode artifact');
-                        return;
-                    }
-                    if (galleryItemId && window.pywebview?.api?.open_gallery_item) {
-                        event.preventDefault();
-                        try {
-                            const result = await window.pywebview.api.open_gallery_item(galleryItemId);
-                            if (!result?.ok) window.alert(result?.error || 'Could not open this image.');
-                        } catch (_error) {
-                            window.alert('Could not open this image.');
-                        }
-                        return;
-                    }
-                    if (!window.pywebview?.api?.open_external_url) return;
-                    event.preventDefault();
-                    try {
-                        if (!await window.pywebview.api.open_external_url(link.href)) {
-                            window.alert('Could not open the default browser. Copy the link to open it manually.');
-                        }
-                    } catch (error) {
-                        window.alert('Could not open the default browser. Copy the link to open it manually.');
-                    }
-                });
-                link.textContent = artifactHref || match[1] || originalHref;
-                bubble.append(link);
-                offset = match.index + match[0].length;
-            }
-            bubble.append(document.createTextNode(text.slice(offset)));
+            bubble.dataset.fishText = text;
+            renderAssistantBubble(bubble, text);
         } else {
             bubble.textContent = text;
         }
         content.append(bubble);
     }
 
-    if (options.attachmentPreviewUrl) {
+    for (const file of options.attachments || []) {
         const attachment = document.createElement('figure');
         attachment.className = 'message-attachment';
-        const image = document.createElement('img');
-        image.src = options.attachmentPreviewUrl;
-        image.alt = options.attachmentName ? `Attached image: ${options.attachmentName}` : 'Attached image';
-        image.addEventListener('load', () => URL.revokeObjectURL(options.attachmentPreviewUrl), {once: true});
         const caption = document.createElement('figcaption');
-        caption.textContent = options.attachmentName || 'Attached image';
-        attachment.append(image, caption);
+        if (isChatImage(file)) {
+            const image = document.createElement('img');
+            const preview = URL.createObjectURL(file);
+            image.alt = `Attached image: ${file.name}`;
+            image.addEventListener('load', () => URL.revokeObjectURL(preview), {once: true});
+            image.addEventListener('error', () => URL.revokeObjectURL(preview), {once: true});
+            image.src = preview;
+            attachment.append(image);
+        }
+        caption.textContent = file.name;
+        attachment.append(caption);
         content.append(attachment);
     }
 
@@ -923,7 +968,7 @@ function renderConversationMessages(history) {
     });
     messages.append(fragment);
     if (!history.length) showEmptyState();
-    else if (latestPeteyReply) setLastPeteyCaption(latestPeteyReply);
+    else if (latestPeteyReply) setLastPeteyCaption(fishChatText(latestPeteyReply, false));
     scrollToLatest(false);
     updateChatHeader();
 }
@@ -1146,71 +1191,103 @@ mobileChatPersonaSelect.addEventListener('change', () => {
     chatPersonaSelect.dispatchEvent(new Event('change', {bubbles: true}));
 });
 
-let selectedAttachmentPreviewUrl = '';
-let selectedAttachmentFile = null;
+const selectedAttachments = [];
+const attachmentPreviewUrls = [];
 
-function clearAttachmentPreview() {
-    if (selectedAttachmentPreviewUrl) URL.revokeObjectURL(selectedAttachmentPreviewUrl);
-    selectedAttachmentPreviewUrl = '';
-    attachmentChip.replaceChildren();
-    attachmentChip.hidden = true;
+function isChatImage(file) {
+    return file.type.startsWith('image/')
+        || ((!file.type || file.type === 'application/octet-stream') && /\.(?:jpe?g|png|gif|bmp|webp)$/i.test(file.name));
 }
 
-function clearSelectedAttachment() {
-    selectedAttachmentFile = null;
-    attachmentInput.value = '';
-    clearAttachmentPreview();
-    messageInput.focus();
+function showAttachmentFeedback(text = '') {
+    attachmentFeedback.textContent = text;
+    attachmentFeedback.hidden = !text;
 }
 
-function renderAttachmentPreview(file) {
-    clearAttachmentPreview();
-    if (!file) return;
-    if (file.type.startsWith('image/')) {
-        selectedAttachmentPreviewUrl = URL.createObjectURL(file);
-        const image = document.createElement('img');
-        image.src = selectedAttachmentPreviewUrl;
-        image.alt = `Selected image: ${file.name}`;
-        attachmentChip.append(image);
+function renderAttachmentPreviews() {
+    attachmentPreviewUrls.splice(0).forEach(url => URL.revokeObjectURL(url));
+    attachmentList.replaceChildren();
+    attachmentList.hidden = !selectedAttachments.length;
+    let imageNumber = 0;
+    selectedAttachments.forEach((file, index) => {
+        const chip = document.createElement('li');
+        chip.className = 'attachment-chip';
+        const isImage = isChatImage(file);
+        if (isImage) {
+            const preview = URL.createObjectURL(file);
+            attachmentPreviewUrls.push(preview);
+            const image = document.createElement('img');
+            image.src = preview;
+            image.alt = '';
+            chip.append(image);
+            imageNumber += 1;
+        }
+        const details = document.createElement('span');
+        const name = document.createElement('strong');
+        name.textContent = file.name;
+        name.title = file.name;
+        const label = document.createElement('small');
+        label.textContent = isImage ? `Image ${imageNumber}` : formatFileSize(file.size);
+        details.append(name, label);
+        const remove = document.createElement('button');
+        remove.className = 'attachment-remove';
+        remove.type = 'button';
+        remove.innerHTML = '<svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+        remove.title = 'Remove attachment';
+        remove.setAttribute('aria-label', `Remove attachment ${file.name}`);
+        remove.addEventListener('click', () => {
+            selectedAttachments.splice(index, 1);
+            showAttachmentFeedback();
+            renderAttachmentPreviews();
+            const remaining = attachmentList.querySelectorAll('.attachment-remove');
+            (remaining[Math.min(index, remaining.length - 1)] || attachButton).focus();
+        });
+        chip.append(details, remove);
+        attachmentList.append(chip);
+    });
+}
+
+function addAttachments(files) {
+    if (!files.length) return;
+    if (selectedAttachments.length + files.length > 16) {
+        showAttachmentFeedback('You can attach up to 16 files. Remove a file or select fewer.');
+        return;
     }
-    const details = document.createElement('span');
-    const name = document.createElement('strong');
-    name.textContent = file.name;
-    const size = document.createElement('small');
-    size.textContent = formatFileSize(file.size);
-    details.append(name, size);
-    const remove = document.createElement('button');
-    remove.className = 'attachment-remove';
-    remove.type = 'button';
-    remove.textContent = '×';
-    remove.title = 'Remove attachment';
-    remove.setAttribute('aria-label', `Remove attachment ${file.name}`);
-    remove.addEventListener('click', clearSelectedAttachment);
-    attachmentChip.append(details, remove);
-    attachmentChip.hidden = false;
+    const total = [...selectedAttachments, ...files].reduce((bytes, file) => bytes + file.size, 0);
+    if (total > 25 * 1024 * 1024) {
+        showAttachmentFeedback('Attachments must total 25 MB or less. Try smaller or fewer files.');
+        return;
+    }
+    selectedAttachments.push(...files);
+    showAttachmentFeedback();
+    renderAttachmentPreviews();
+    if (attachmentList.scrollWidth > attachmentList.clientWidth) {
+        attachmentList.scrollLeft = attachmentList.scrollWidth;
+    }
 }
 
-function selectAttachment(file) {
-    selectedAttachmentFile = file || null;
-    renderAttachmentPreview(selectedAttachmentFile);
-}
-
+attachButton.addEventListener('click', () => attachmentInput.click());
 attachmentInput.addEventListener('change', () => {
-    selectAttachment(attachmentInput.files[0]);
+    addAttachments(Array.from(attachmentInput.files));
+    attachmentInput.value = '';
 });
 
 messageInput.addEventListener('paste', async event => {
     const clipboard = event.clipboardData;
-    let file = Array.from(clipboard?.items || [])
-        .find(item => item.kind === 'file')?.getAsFile()
-        || Array.from(clipboard?.files || [])[0];
-    if (file) {
-        event.preventDefault();
-        if (!file.name) {
-            const extension = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
-            file = new File([file], `pasted-file-${Date.now()}.${extension}`, {type: file.type});
+    const files = Array.from(clipboard?.files || []);
+    if (!files.length) {
+        for (const item of Array.from(clipboard?.items || [])) {
+            const file = item.kind === 'file' ? item.getAsFile() : null;
+            if (file) files.push(file);
         }
-        selectAttachment(file);
+    }
+    if (files.length) {
+        event.preventDefault();
+        addAttachments(files.map((file, index) => {
+            if (file.name) return file;
+            const extension = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+            return new File([file], `pasted-file-${Date.now()}-${index + 1}.${extension}`, {type: file.type});
+        }));
         return;
     }
     const plainText = clipboard?.getData('text/plain') || '';
@@ -1222,14 +1299,14 @@ messageInput.addEventListener('paste', async event => {
         if (result?.ok && result.data_base64) {
             const binary = atob(result.data_base64);
             const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-            selectAttachment(new File([bytes], result.filename || 'pasted-file', {
+            addAttachments([new File([bytes], result.filename || 'pasted-file', {
                 type: result.content_type || 'application/octet-stream',
-            }));
+            })]);
             return;
         }
-        if (result?.error) statusText.textContent = result.error;
+        if (result?.error) showAttachmentFeedback(result.error);
     } catch (_error) {
-        statusText.textContent = 'Could not read the clipboard file.';
+        showAttachmentFeedback('Could not read the clipboard file.');
     }
     if (plainText) {
         messageInput.setRangeText(plainText, messageInput.selectionStart, messageInput.selectionEnd, 'end');
@@ -1282,8 +1359,8 @@ composer.addEventListener('submit', async event => {
         primeSpeechPlayback();
     }
     const text = messageInput.value.trim();
-    const file = selectedAttachmentFile || attachmentInput.files[0];
-    if (sendButton.disabled || (!text && !file)) return;
+    const files = selectedAttachments.slice();
+    if (sendButton.disabled || (!text && !files.length)) return;
     showView('chat');
     setSidebarChatsOpen(false);
     const voiceTiming = pendingVoiceTiming;
@@ -1291,18 +1368,16 @@ composer.addEventListener('submit', async event => {
     const continueVoiceConversation = effectiveVoiceInputMode() === 'wake_word'
         && voiceConversationActive && voiceConversationAwaitingReply;
 
-    const attachmentPreviewUrl = file?.type?.startsWith('image/') ? URL.createObjectURL(file) : '';
-    const displayedText = text || (file && !attachmentPreviewUrl ? `Attached: ${file.name}` : '');
-    const historyText = text || (file ? `[Attached ${file.name}]` : '');
+    const historyText = text || `[Attached ${files.map(file => file.name).join(', ')}]`;
     const temporary = document.getElementById('temporary-mode').checked;
     const priorTemporaryHistory = temporaryHistory.slice();
-    addMessage('user', displayedText, {attachmentPreviewUrl, attachmentName: file?.name || '', forceScroll: true});
+    addMessage('user', text, {attachments: files, forceScroll: true});
     const typing = addMessage('assistant', 'Typing…', {typing: true, forceScroll: true});
     const body = new FormData();
     body.append('message', text);
     body.append('stream', 'true');
     body.append('surface', mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop');
-    if (file) body.append('attachment', file);
+    for (const file of files) body.append('attachment', file);
     if (temporary) {
         body.append('temporary', 'true');
         body.append('temporary_history', JSON.stringify(priorTemporaryHistory));
@@ -1311,9 +1386,10 @@ composer.addEventListener('submit', async event => {
 
     messageInput.value = '';
     messageInput.style.height = 'auto';
-    selectedAttachmentFile = null;
+    selectedAttachments.length = 0;
     attachmentInput.value = '';
-    clearAttachmentPreview();
+    showAttachmentFeedback();
+    renderAttachmentPreviews();
     sendButton.disabled = true;
     statusText.textContent = 'Petey is preparing a reply…';
     visualThinking = true;
@@ -1342,14 +1418,15 @@ composer.addEventListener('submit', async event => {
             const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
             partialText += event.text;
             typing.classList.remove('typing');
-            typing.querySelector('.bubble').textContent = partialText;
+            typing.querySelector('.bubble').textContent = fishChatText(partialText, undefined, true);
             statusText.textContent = 'Petey is replying…';
-            if (streamSpeechEarly && !spokenPrefix) {
+            if (streamSpeechEarly && (!spokenPrefix || speechConfiguration?.provider === 'fish')) {
                 const segment = firstStreamingSpeechSegment(
-                    partialText, continueVoiceConversation ? 12 : 28,
+                    partialText.slice(spokenPrefix.length), continueVoiceConversation ? 12 : 28,
                 );
                 if (segment && !/(?:^|\n)\s*Created files:/i.test(segment)) {
-                    spokenPrefix = segment;
+                    const segmentStart = partialText.indexOf(segment, spokenPrefix.length);
+                    spokenPrefix = partialText.slice(0, segmentStart + segment.length);
                     autoSpeechChain = autoSpeechChain.then(() => speakChatText(
                         segment, null, true, replySpeechGeneration, voiceTiming,
                     ));
@@ -1388,7 +1465,7 @@ composer.addEventListener('submit', async event => {
         visualErrorUntil = performance.now() + 4000;
         if (partialText) {
             typing.classList.remove('typing');
-            typing.querySelector('.bubble').textContent = `${partialText}\n\n[Reply interrupted]`;
+            typing.querySelector('.bubble').textContent = `${fishChatText(partialText)}\n\n[Reply interrupted]`;
         } else {
             typing.remove();
         }
@@ -1406,13 +1483,30 @@ composer.addEventListener('submit', async event => {
     }
 });
 
+function fishSafeSpeechBoundary(text, end) {
+    const open = [];
+    for (const match of text.slice(0, end).matchAll(/\[\[fish:<(\/?)(whisper|emphasis|soft|fast|slow|stress|forceful)>\]\]/g)) {
+        if (!match[1]) open.push({tag: match[2], start: match.index});
+        else if (open.at(-1)?.tag === match[2]) open.pop();
+    }
+    // Preserve the whole emphasized phrase, even when it contains punctuation.
+    if (open.length) end = open[0].start;
+    const marker = text.lastIndexOf('[[fish:', end - 1);
+    if (marker >= 0 && (text.indexOf(']]', marker) < 0 || text.indexOf(']]', marker) + 2 > end)) end = marker;
+    return end;
+}
+
 function firstStreamingSpeechSegment(text, minimum = 28) {
     if (text.length < minimum) return '';
-    const sentence = text.match(new RegExp(`^([\\s\\S]{${minimum},}?[.!?]["')\\]]?)(?:\\s|$)`));
-    if (sentence) return sentence[1].trim();
+    // Sentence boundaries are candidates only after any word-scoped tags close.
+    for (const match of text.matchAll(/[.!?]["')\]]?(?:\s|$)/g)) {
+        const end = match.index + match[0].trimEnd().length;
+        if (end >= minimum && fishSafeSpeechBoundary(text, end) === end) return text.slice(0, end).trim();
+    }
     if (text.length < 180) return '';
     const boundary = text.lastIndexOf(' ', 170);
-    return text.slice(0, boundary >= 100 ? boundary : 170).trim();
+    const end = fishSafeSpeechBoundary(text, boundary >= 100 ? boundary : 170);
+    return text.slice(0, end).trim();
 }
 
 async function pollAddonEvents() {
@@ -1498,6 +1592,7 @@ function collapseAddonSettings() {
 collapseAddonSettings();
 
 function renderVoiceResponseToggle() {
+    renderSpeechVolume();
     const available = speechConfiguration?.provider !== 'disabled';
     const enabled = available && voiceResponseEnabled;
     voiceResponseButtons.forEach(button => {
@@ -1533,6 +1628,7 @@ function setVoiceResponseEnabled(enabled) {
 }
 
 window.peteyAudioControls = {
+    outputVolume: () => speechOutputVolume(),
     speakerEnabled: () => Boolean(
         voiceResponseEnabled && speechConfiguration?.provider !== 'disabled'
     ),
@@ -1926,12 +2022,12 @@ document.getElementById('visual-style-select').addEventListener('change', event 
 });
 
 function captionExcerpt(text, wordLimit = 28) {
-    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+    const words = fishChatText(text, false).trim().split(/\s+/).filter(Boolean);
     return words.slice(Math.max(0, words.length - wordLimit)).join(' ');
 }
 
 function setLastPeteyCaption(text) {
-    lastPeteyCaption = String(text || '').trim();
+    lastPeteyCaption = fishChatText(text, false).trim();
     if (!visualCaptionTimer) {
         showVisualCaption(captionExcerpt(lastPeteyCaption));
         scheduleVisualCaptionFade();
@@ -1956,8 +2052,8 @@ function startVisualCaption(text) {
     window.clearInterval(visualCaptionTimer);
     window.clearTimeout(visualCaptionHideTimer);
     visualCaptionHideTimer = null;
-    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-    lastPeteyCaption = String(text || '').trim();
+    const words = fishChatText(text, false).trim().split(/\s+/).filter(Boolean);
+    lastPeteyCaption = fishChatText(text, false).trim();
     let cursor = 1;
     const render = () => {
         const start = Math.max(0, cursor - 16);
@@ -2060,9 +2156,9 @@ function fillMobileVoiceChoices(configuration = speechConfiguration) {
     const provider = configuration?.provider || 'automatic';
     const gemini = provider === 'automatic' || provider === 'gemini';
     const choices = provider === 'deapi'
-        ? deapiSpeechVoices : gemini ? geminiSpeechVoices : provider === 'openai' ? openaiSpeechVoices : [];
+        ? deapiSpeechVoices : gemini ? geminiSpeechVoices : provider === 'openai' ? openaiSpeechVoices : provider === 'fish' && configuration?.fish_voice ? [configuration.fish_voice] : [];
     const selected = provider === 'deapi'
-        ? configuration?.deapi_voice : gemini ? configuration?.gemini_voice : configuration?.openai_voice;
+        ? configuration?.deapi_voice : gemini ? configuration?.gemini_voice : provider === 'fish' ? configuration?.fish_voice : configuration?.openai_voice;
     mobileVoiceSelect.innerHTML = '';
     if (!choices.length) {
         const option = document.createElement('option');
@@ -2214,7 +2310,7 @@ document.getElementById('mobile-settings-save').addEventListener('click', async 
         if (!mobileVoiceSelect.disabled && mobileVoiceSelect.value) {
             const provider = speechConfiguration?.provider || 'automatic';
             const voiceKey = provider === 'deapi'
-                ? 'deapi_voice' : provider === 'openai' ? 'openai_voice' : 'gemini_voice';
+                ? 'deapi_voice' : provider === 'openai' ? 'openai_voice' : provider === 'fish' ? 'fish_voice' : 'gemini_voice';
             speechUpdate[voiceKey] = mobileVoiceSelect.value;
         }
         if (Object.keys(speechUpdate).length) {
@@ -3782,6 +3878,7 @@ function speakFallbackWakeCue() {
         return;
     }
     const utterance = new window.SpeechSynthesisUtterance(phrase);
+    utterance.volume = speechOutputVolume();
     utterance.rate = 1.08;
     utterance.pitch = .92;
     utterance.onend = finishWakeCuePlayback;
@@ -3801,7 +3898,7 @@ function playVoiceInterruptionAcknowledgement() {
         if (decoded && microphoneContext?.state === 'running') {
             const source = microphoneContext.createBufferSource();
             source.buffer = decoded;
-            source.connect(microphoneContext.destination);
+            source.connect(speechOutputGain(microphoneContext));
             source.onended = finishWakeCuePlayback;
             wakeCueAudio = source;
             setWakeCuePlaybackActive(true, true);
@@ -3817,6 +3914,7 @@ function playVoiceInterruptionAcknowledgement() {
         }
         const audio = voiceInterruptAudios[index];
         audio.currentTime = 0;
+        audio.volume = speechOutputVolume();
         audio.onended = finishWakeCuePlayback;
         audio.onerror = finishWakeCuePlayback;
         wakeCueAudio = audio;
@@ -3832,6 +3930,7 @@ function playVoiceInterruptionAcknowledgement() {
         || ['Oh, sorry. Go ahead.'];
     const phrase = phrases[Math.floor(Math.random() * phrases.length)];
     const utterance = new window.SpeechSynthesisUtterance(phrase);
+    utterance.volume = speechOutputVolume();
     utterance.rate = 1.08;
     utterance.pitch = .92;
     utterance.onend = finishWakeCuePlayback;
@@ -3871,7 +3970,7 @@ function playInstantWakeCue() {
     gain.gain.exponentialRampToValueAtTime(.075, now + .012);
     gain.gain.exponentialRampToValueAtTime(.0001, now + .12);
     oscillator.connect(gain);
-    gain.connect(context.destination);
+    gain.connect(speechOutputGain(context));
     oscillator.onended = finishWakeCuePlayback;
     wakeCueAudio = oscillator;
     oscillator.start(now);
@@ -3909,7 +4008,7 @@ function playWakeAcknowledgement(preserveCapture = false) {
     if (decoded && microphoneContext?.state === 'running') {
         const source = microphoneContext.createBufferSource();
         source.buffer = decoded;
-        source.connect(microphoneContext.destination);
+        source.connect(speechOutputGain(microphoneContext));
         source.onended = finishWakeCuePlayback;
         wakeCueAudio = source;
         source.start();
@@ -3917,6 +4016,7 @@ function playWakeAcknowledgement(preserveCapture = false) {
     }
     wakeCueAudio = wakeCueAudios[index];
     wakeCueAudio.currentTime = 0;
+    wakeCueAudio.volume = speechOutputVolume();
     wakeCueAudio.onended = finishWakeCuePlayback;
     const useFallback = () => {
         if (!wakeCueAudio) return;
@@ -4406,6 +4506,7 @@ function fillSelect(select, items, selectedValue, labelFor) {
 
 function fillSpeechForm(configuration) {
     if (!configuration) return;
+    renderSpeechVolume();
     speechProviderSelect.value = configuration.provider || 'automatic';
     document.getElementById('speech-deapi-model').value = configuration.deapi_model || 'Qwen3_TTS_12Hz_1_7B_CustomVoice';
     document.getElementById('speech-deapi-voice').value = configuration.deapi_voice || 'Vivian';
@@ -4413,6 +4514,14 @@ function fillSpeechForm(configuration) {
     document.getElementById('speech-gemini-voice').value = configuration.gemini_voice || 'Kore';
     document.getElementById('speech-openai-model').value = configuration.openai_model || 'gpt-4o-mini-tts';
     document.getElementById('speech-openai-voice').value = configuration.openai_voice || 'marin';
+    document.getElementById('speech-fish-model').value = configuration.fish_model || 's2.1-pro-free';
+    document.getElementById('speech-fish-voice').value = configuration.fish_voice || '';
+    window.peteyFishVoices?.sync?.();
+    document.getElementById('speech-fish-latency').value = configuration.fish_latency || 'balanced';
+    document.getElementById('speech-fish-emotions').checked = configuration.fish_emotions !== false;
+    document.getElementById('speech-fish-streaming').checked = configuration.fish_streaming !== false;
+    document.getElementById('speech-fish-show-cues').checked = configuration.fish_show_cues === true;
+    refreshFishCueVisibility();
     document.getElementById('speech-style').value = configuration.style || '';
     document.getElementById('speech-consistent-voice').checked = configuration.consistent_voice !== false;
     document.getElementById('speech-auto-speak').checked = Boolean(configuration.auto_speak);
@@ -4427,7 +4536,13 @@ function readSpeechForm() {
         gemini_model: document.getElementById('speech-gemini-model').value,
         gemini_voice: document.getElementById('speech-gemini-voice').value,
         openai_model: document.getElementById('speech-openai-model').value,
+        fish_model: document.getElementById('speech-fish-model').value,
         openai_voice: document.getElementById('speech-openai-voice').value,
+        fish_voice: document.getElementById('speech-fish-voice').value.trim(),
+        fish_latency: document.getElementById('speech-fish-latency').value,
+        fish_emotions: document.getElementById('speech-fish-emotions').checked,
+        fish_streaming: document.getElementById('speech-fish-streaming').checked,
+        fish_show_cues: document.getElementById('speech-fish-show-cues').checked,
         style: document.getElementById('speech-style').value,
         consistent_voice: document.getElementById('speech-consistent-voice').checked,
         auto_speak: document.getElementById('speech-auto-speak').checked,
@@ -4446,12 +4561,16 @@ function configureSpeechSettings() {
     document.getElementById('speech-gemini-voice-field').hidden = !gemini;
     document.getElementById('speech-openai-model-field').hidden = !openai;
     document.getElementById('speech-openai-voice-field').hidden = !openai;
-    document.getElementById('speech-style-field').hidden = provider === 'disabled';
+    for (const id of ['speech-fish-model-field', 'speech-fish-voice-field', 'speech-fish-latency-field', 'speech-fish-help', 'speech-fish-emotions-row', 'speech-fish-streaming-row']) {
+        document.getElementById(id).hidden = provider !== 'fish';
+    }
+    document.getElementById('speech-fish-show-cues-row').hidden = provider !== 'fish' && !messages.querySelector('.bubble[data-fish-text*="[[fish:"]');
+    document.getElementById('speech-style-field').hidden = provider === 'disabled' || provider === 'fish';
     document.getElementById('speech-consistent-voice-row').hidden = !gemini;
     document.getElementById('speech-auto-speak').disabled = provider === 'disabled';
     if (provider === 'disabled') document.getElementById('speech-auto-speak').checked = false;
     document.getElementById('speech-provider-badge').textContent = {
-        automatic: 'Automatic', deapi: 'deAPI', gemini: 'Gemini', openai: 'OpenAI', disabled: 'Disabled',
+        automatic: 'Automatic', deapi: 'deAPI', gemini: 'Gemini', openai: 'OpenAI', fish: 'Fish Audio', disabled: 'Disabled',
     }[provider];
     document.getElementById('speech-provider-note').textContent = provider === 'deapi'
         ? 'deAPI generates speech with its saved API key and selected voice.'
@@ -4459,6 +4578,8 @@ function configureSpeechSettings() {
         ? 'Gemini generates 24 kHz speech and follows natural-language directions for style, accent, pace, and tone.'
         : provider === 'openai'
             ? 'OpenAI uses GPT-4o Mini TTS and follows the delivery directions above.'
+        : provider === 'fish'
+            ? 'Fish Audio uses your saved key and voice model ID. Streaming and expression follow this profile’s settings.'
         : provider === 'disabled'
             ? 'Text to speech is unavailable on the Media page while disabled.'
             : 'Petey streams Gemini speech first and uses OpenAI only if Gemini fails.';
@@ -4495,12 +4616,15 @@ async function loadSpeechSettings() {
         );
         fillSelect(document.getElementById('speech-openai-model'), openaiSpeechModels, speechConfiguration.openai_model);
         fillSelect(document.getElementById('speech-openai-voice'), openaiSpeechVoices, speechConfiguration.openai_voice, voice => voice[0].toUpperCase() + voice.slice(1));
+        fillSelect(document.getElementById('speech-fish-model'), payload.fish_models?.length ? payload.fish_models : ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3'], speechConfiguration.fish_model || 's2.1-pro-free');
         fillSpeechForm(speechConfiguration);
         speechSettingsLoaded = true;
         if (speechConfiguration.provider === 'deapi' && !payload.deapi_has_api_key) {
             setFeedback(feedback, 'Add a deAPI key in API key settings before generating speech.', 'error');
         } else if (speechConfiguration.provider === 'gemini' && !payload.gemini_has_api_key) {
             setFeedback(feedback, 'Add a Gemini API key in AI provider settings before generating speech.', 'error');
+        } else if (speechConfiguration.provider === 'fish' && !payload.fish_has_api_key) {
+            setFeedback(feedback, 'Add a Fish Audio key in Models & API keys before generating speech.', 'error');
         } else if (speechConfiguration.provider === 'openai' && !payload.openai_has_api_key) {
             setFeedback(feedback, 'Add an OpenAI API key in AI provider settings before generating speech.', 'error');
         }
@@ -4510,6 +4634,25 @@ async function loadSpeechSettings() {
 }
 
 speechProviderSelect.addEventListener('change', configureSpeechSettings);
+document.getElementById('speech-fish-show-cues').addEventListener('change', async event => {
+    const control = event.currentTarget;
+    const previous = speechConfiguration?.fish_show_cues === true;
+    control.disabled = true;
+    try {
+        await apiJson('/api/desktop/speech', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({fish_show_cues: control.checked}),
+        });
+        speechConfiguration = {...speechConfiguration, fish_show_cues: control.checked};
+        refreshFishCueVisibility();
+        setFeedback(document.getElementById('speech-settings-status'), 'Chat cue visibility saved.', 'success');
+    } catch (error) {
+        control.checked = previous;
+        setFeedback(document.getElementById('speech-settings-status'), error.message, 'error');
+    } finally {
+        control.disabled = false;
+    }
+});
 
 function resetSpeechButton(button) {
     if (!button) return;
@@ -4529,6 +4672,71 @@ function getSpeechPlaybackContext() {
         }
     }
     return speechPlaybackContext;
+}
+
+function speechOutputVolume() {
+    const value = speechConfiguration?.volume;
+    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+}
+
+function speechOutputGain(context) {
+    if (!speechOutputGains.has(context)) {
+        const gain = context.createGain();
+        gain.gain.setValueAtTime(speechOutputVolume(), context.currentTime);
+        gain.connect(context.destination);
+        speechOutputGains.set(context, gain);
+    }
+    return speechOutputGains.get(context);
+}
+
+function renderSpeechVolume() {
+    const volume = speechOutputVolume();
+    const percent = Math.round(volume * 100);
+    document.querySelectorAll('[data-speech-volume]').forEach(input => {
+        input.value = String(percent);
+        input.setAttribute('aria-valuetext', `${percent}%`);
+    });
+    document.querySelectorAll('[data-speech-volume-value]').forEach(output => { output.textContent = `${percent}%`; });
+    document.querySelectorAll('.speech-volume-button').forEach(button => { button.title = `Petey output volume: ${percent}%`; });
+    speechOutputGains.forEach((gain, context) => {
+        if (context.state === 'closed') { speechOutputGains.delete(context); return; }
+        gain.gain.setTargetAtTime(volume, context.currentTime, .015);
+    });
+    if (wakeCueAudio instanceof HTMLMediaElement) wakeCueAudio.volume = volume;
+}
+
+for (const input of document.querySelectorAll('[data-speech-volume]')) {
+    input.addEventListener('input', () => {
+        if (volumeBeforeEdit === null) volumeBeforeEdit = speechOutputVolume();
+        speechConfiguration = {...speechConfiguration, volume: Number(input.value) / 100};
+        renderSpeechVolume();
+    });
+    input.addEventListener('change', async () => {
+        const previous = volumeBeforeEdit ?? speechOutputVolume();
+        const volume = Number(input.value) / 100;
+        document.querySelectorAll('[data-speech-volume]').forEach(control => { control.disabled = true; });
+        try {
+            await apiJson('/api/desktop/speech', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({volume})});
+            document.querySelectorAll('[data-speech-volume-status]').forEach(status => { status.textContent = `Petey volume saved at ${Math.round(volume * 100)}%.`; });
+        } catch (error) {
+            speechConfiguration = {...speechConfiguration, volume: previous};
+            renderSpeechVolume();
+            document.querySelectorAll('[data-speech-volume-status]').forEach(status => { status.textContent = `Volume was not saved: ${error.message}`; });
+        } finally {
+            volumeBeforeEdit = null;
+            document.querySelectorAll('[data-speech-volume]').forEach(control => { control.disabled = false; });
+        }
+    });
+}
+
+// Meter the same output bus used for both queued and streaming speech.
+function speechVisualizationOutput(context) {
+    if (!speechVisualizationAnalyser || speechVisualizationAnalyser.context !== context) {
+        speechVisualizationAnalyser = context.createAnalyser();
+        speechVisualizationAnalyser.fftSize = 256;
+        speechVisualizationAnalyser.connect(speechOutputGain(context));
+    }
+    return speechVisualizationAnalyser;
 }
 
 function primeSpeechPlayback({carSafe = false} = {}) {
@@ -4573,7 +4781,8 @@ async function speakChatText(
     generation = automaticSpeechGeneration,
     timing = null,
 ) {
-    const automaticCancelled = () => automatic
+    const requestId = ++speechPlaybackSerial;
+    const automaticCancelled = () => requestId !== speechPlaybackSerial || automatic
         && (!voiceResponseEnabled || generation !== automaticSpeechGeneration);
     if (automaticCancelled()) return;
     text = textForChatSpeech(text);
@@ -4597,18 +4806,22 @@ async function speakChatText(
     try {
         let skipGemini = false;
         if (
-            ['automatic', 'gemini'].includes(speechConfiguration?.provider)
-            && String(speechConfiguration.gemini_model || '').startsWith('gemini-3.1-')
+            (speechConfiguration?.provider === 'fish' && speechConfiguration.fish_streaming !== false)
+            || (['automatic', 'gemini'].includes(speechConfiguration?.provider)
+                && String(speechConfiguration.gemini_model || '').startsWith('gemini-3.1-'))
         ) {
-            startVisualCaption(text);
+            startVisualCaption(fishChatText(text, false));
             setVoicePlaybackActive(true);
             try {
                 if (automaticCancelled()) return;
                 if (timing && !timing.ttsStarted) timing.ttsStarted = performance.now();
-                await playGeminiSpeechStream(text, button, timing);
+                await playChatSpeechStream(text, button, timing);
                 return;
             } catch (error) {
+                if (requestId !== speechPlaybackSerial) return;
                 const automatic = speechConfiguration?.provider === 'automatic';
+                // Never restart Fish speech after a partial stream: that repeats spoken words.
+                if (speechConfiguration?.provider === 'fish') throw error;
                 if (!automatic && !/without returning audio/i.test(String(error?.message || error))) throw error;
                 skipGemini = automatic;
                 if (activeSpeechCancel) activeSpeechCancel();
@@ -4618,7 +4831,7 @@ async function speakChatText(
                     ? 'Gemini speech unavailable · trying OpenAI…'
                     : 'Speech stream was empty · retrying once…';
             } finally {
-                setVoicePlaybackActive(false);
+                if (requestId === speechPlaybackSerial) setVoicePlaybackActive(false);
             }
         }
         if (automaticCancelled()) return;
@@ -4658,7 +4871,7 @@ async function speakChatText(
         if (automaticCancelled()) return;
         const sourceNode = context.createBufferSource();
         sourceNode.buffer = audio;
-        sourceNode.connect(context.destination);
+        sourceNode.connect(speechVisualizationOutput(context));
         activeChatAudio = sourceNode;
         activeSpeechCancel = () => {
             try { sourceNode.stop(); } catch (_error) { /* already stopped */ }
@@ -4680,7 +4893,7 @@ async function speakChatText(
             resetSpeechButton(button);
             resolvePlayback();
         }, {once: true});
-        startVisualCaption(text);
+        startVisualCaption(fishChatText(text, false));
         setVoicePlaybackActive(true);
         sourceNode.start();
         if (timing && !timing.firstAudio) {
@@ -4689,6 +4902,7 @@ async function speakChatText(
         }
         await playbackFinished;
     } catch (error) {
+        if (requestId !== speechPlaybackSerial) return;
         if (activeSpeechCancel) activeSpeechCancel();
         setVoicePlaybackActive(false);
         resetSpeechButton(button);
@@ -4698,19 +4912,20 @@ async function speakChatText(
     }
 }
 
-async function playGeminiSpeechStream(text, button, timing = null) {
+async function playChatSpeechStream(text, button, timing = null) {
     const context = getSpeechPlaybackContext();
     const controller = new AbortController();
     const scheduled = new Set();
     let nextStart = 0;
     let receivedAudio = false;
     let streamFinished = false;
+    let receivedDone = false;
     let resolvePlayback;
     const playbackFinished = new Promise(resolve => { resolvePlayback = resolve; });
     const finishIfReady = () => {
         if (streamFinished && scheduled.size === 0) resolvePlayback();
     };
-    activeSpeechCancel = () => {
+    const cancelStream = () => {
         controller.abort();
         scheduled.forEach(source => {
             try { source.stop(); } catch (_error) { /* already stopped */ }
@@ -4720,6 +4935,7 @@ async function playGeminiSpeechStream(text, button, timing = null) {
         setVoicePlaybackActive(false);
         resolvePlayback();
     };
+    activeSpeechCancel = cancelStream;
     if (button) {
         button.textContent = 'Stop';
         button.classList.add('speaking');
@@ -4743,6 +4959,7 @@ async function playGeminiSpeechStream(text, button, timing = null) {
     let pending = '';
 
     const schedulePCM = encoded => {
+        if (controller.signal.aborted) return;
         const binary = window.atob(encoded);
         const byteCount = binary.length - (binary.length % 2);
         if (!byteCount) return;
@@ -4762,8 +4979,9 @@ async function playGeminiSpeechStream(text, button, timing = null) {
         buffer.copyToChannel(pcm, 0);
         const source = context.createBufferSource();
         source.buffer = buffer;
-        source.connect(context.destination);
-        const startAt = Math.max(context.currentTime + 0.035, nextStart);
+        source.connect(speechVisualizationOutput(context));
+        const leadTime = speechConfiguration?.provider === 'fish' ? 0.1 : 0.035;
+        const startAt = Math.max(context.currentTime + leadTime, nextStart);
         nextStart = startAt + buffer.duration;
         scheduled.add(source);
         source.onended = () => {
@@ -4773,7 +4991,7 @@ async function playGeminiSpeechStream(text, button, timing = null) {
         source.start(startAt);
         receivedAudio = true;
         if (timing && !timing.firstAudio) {
-            timing.route = 'Gemini stream';
+            timing.route = speechConfiguration?.provider === 'fish' ? 'Fish stream' : 'Gemini stream';
             timing.firstAudio = performance.now() + Math.max(0, startAt - context.currentTime) * 1000;
             showVoiceTiming(timing);
         }
@@ -4788,6 +5006,7 @@ async function playGeminiSpeechStream(text, button, timing = null) {
             if (!line.trim()) continue;
             const event = JSON.parse(line);
             if (event.error) throw new Error(event.error);
+            if (event.status === 'done') receivedDone = true;
             if (event.audio) schedulePCM(event.audio);
         }
         if (done) break;
@@ -4795,13 +5014,16 @@ async function playGeminiSpeechStream(text, button, timing = null) {
     if (pending.trim()) {
         const event = JSON.parse(pending);
         if (event.error) throw new Error(event.error);
+        if (event.status === 'done') receivedDone = true;
         if (event.audio) schedulePCM(event.audio);
     }
     streamFinished = true;
-    if (!receivedAudio) throw new Error('Gemini finished without returning audio.');
+    if (controller.signal.aborted) throw new DOMException('Speech stopped.', 'AbortError');
+    if (!receivedDone) throw new Error('Speech stream disconnected before completion.');
+    if (!receivedAudio) throw new Error('Speech stream finished without returning audio.');
     finishIfReady();
     await playbackFinished;
-    activeSpeechCancel = null;
+    if (activeSpeechCancel === cancelStream) activeSpeechCancel = null;
     if (activeSpeechButton === button) activeSpeechButton = null;
     resetSpeechButton(button);
 }
@@ -4937,11 +5159,11 @@ function renderSavedPersonaSlots() {
         const description = document.createElement('small');
         const provider = persona?.speech?.provider || '';
         const providerName = {
-            automatic: 'Automatic', deapi: 'deAPI', gemini: 'Gemini', openai: 'OpenAI', disabled: 'No speech',
+            automatic: 'Automatic', deapi: 'deAPI', gemini: 'Gemini', openai: 'OpenAI', fish: 'Fish Audio', disabled: 'No speech',
         }[provider] || '';
         const voice = provider === 'deapi'
             ? persona?.speech?.deapi_voice
-            : provider === 'openai' ? persona?.speech?.openai_voice : persona?.speech?.gemini_voice;
+            : provider === 'openai' ? persona?.speech?.openai_voice : provider === 'fish' ? persona?.speech?.fish_voice : persona?.speech?.gemini_voice;
         description.textContent = persona
             ? [persona.role_tag, providerName, provider === 'disabled' ? '' : voice]
                 .filter(Boolean).join(' · ')
@@ -5748,10 +5970,11 @@ const pricedMediaOperations = new Set(['txt2img', 'img2img', 'txt2video', 'img2v
 const mediaPromptDraftStorageKey = 'petey.media-prompt-drafts.v1';
 const mediaSpeechProviderStorageKey = 'petey.media-speech-provider.v1';
 let deapiSpeechConfiguration = {default_model: '', voices: []};
+let defaultMediaPromptMax = 0;
 
 const mediaOperationUI = {
     txt2img: {source: null, prompt: 'Image prompt', placeholder: 'Describe the image you want…', visual: true},
-    img2img: {source: 'image', prompt: 'Restyle prompt', placeholder: 'Describe how the image should change…', visual: true},
+    img2img: {source: null, references: true, prompt: 'Image edit prompt', placeholder: 'Describe the edit; refer to the first image, second image, etc.…', visual: true},
     txt2video: {source: null, prompt: 'Video prompt', placeholder: 'Describe the scene and motion…', visual: true, video: true},
     img2video: {source: 'image', prompt: 'Animation prompt', placeholder: 'Describe how the image should move…', visual: true, video: true},
     ref2vid: {source: null, references: true, prompt: 'Reference video prompt', placeholder: 'Use <Picture 1>, <Video 1>, and <Audio 1> to describe the scene…', visual: true, video: true},
@@ -5802,6 +6025,50 @@ function savedMediaSpeechProvider() {
     }
 }
 
+function selectedMediaPromptModel() {
+    const operation = mediaOperation.value;
+    const models = mediaModelsCache.get(operation) || [];
+    const slug = mediaModel.value || (operation === 'txt2audio' && deapiSpeechConfiguration.default_model);
+    return slug ? models.find(item => item.slug === slug) : models.length === 1 && models[0];
+}
+
+function selectedMediaPromptLimits() {
+    const defaults = {min: 0, max: defaultMediaPromptMax};
+    const speechProvider = document.getElementById('media-speech-provider').value;
+    if (mediaOperation.value === 'txt2audio' && speechProvider === 'gemini') return defaults;
+    const model = selectedMediaPromptModel();
+    if (model) return model.prompt_limits || defaults;
+    if (mediaModel.value || mediaOperation.value === 'txt2audio') return null;
+    const limits = (mediaModelsCache.get(mediaOperation.value) || []).map(item => item.prompt_limits || defaults);
+    if (!limits.length) return null;
+    return {
+        min: Math.min(...limits.map(item => item.min)),
+        max: Math.max(...limits.map(item => item.max)),
+    };
+}
+
+function mediaPromptLengthError() {
+    if (!mediaOperationUI[mediaOperation.value].prompt) return '';
+    const limits = selectedMediaPromptLimits();
+    if (!limits) return '';
+    const length = [...mediaPrompt.value.trim()].length;
+    if (limits.max && length > limits.max) {
+        return `Shorten the text to ${limits.max.toLocaleString()} characters or fewer. It has ${length.toLocaleString()}.`;
+    }
+    if (length && length < limits.min) {
+        return `Enter at least ${limits.min.toLocaleString()} characters for this model.`;
+    }
+    return '';
+}
+
+function updateMediaPromptLabel() {
+    const label = mediaOperationUI[mediaOperation.value].prompt;
+    if (!label) return;
+    const max = selectedMediaPromptLimits()?.max;
+    document.getElementById('media-prompt-label').textContent =
+        max ? `${label} · Max ${max.toLocaleString()} characters` : label;
+}
+
 async function loadMediaCatalog() {
     const connection = document.getElementById('media-connection');
     setFeedback(connection, 'Connecting…');
@@ -5813,6 +6080,7 @@ async function loadMediaCatalog() {
         openaiSpeechModels = builtInOpenAISpeechModels;
         openaiSpeechVoices = builtInOpenAISpeechVoices;
         deapiSpeechConfiguration = payload.deapi_speech || deapiSpeechConfiguration;
+        defaultMediaPromptMax = payload.default_prompt_max || 0;
         mediaSelectedModels = payload.selected_models || {};
         const savedSpeechModel = mediaSelectedModels.txt2audio || '';
         document.getElementById('media-speech-provider').value =
@@ -5868,7 +6136,7 @@ function configureMediaOperation(preserveSource = false) {
     }
     document.getElementById('media-upscale-fields').hidden = !config.upscale;
     setFeedback(mediaStatus, '');
-    loadMediaModels(operation);
+    return loadMediaModels(operation);
 }
 
 function configureMediaSpeechFields() {
@@ -5909,7 +6177,9 @@ async function loadMediaModels(operation) {
                 || (operation === 'ref2vid' ? 'MiniMaxH3_33B_Turbo_INT8' : '');
         mediaModel.value = models.some(model => model.slug === preferredModel) ? preferredModel : '';
         mediaModel.disabled = false;
-        if (operation === 'ref2vid') updateMediaReferenceHint();
+        updateMediaPromptLabel();
+        configureImageModelFields();
+        if (['ref2vid', 'img2img'].includes(operation)) updateMediaReferenceHint();
         scheduleMediaEstimate();
         if (!models.length) setFeedback(mediaStatus, 'No compatible models were returned. Check the media service configuration.', 'error');
     };
@@ -5924,6 +6194,7 @@ async function loadMediaModels(operation) {
     }
     mediaModel.disabled = true;
     mediaModel.innerHTML = '<option value="">Loading compatible models…</option>';
+    updateMediaPromptLabel();
     scheduleMediaEstimate();
     try {
         const payload = await apiJson(`/api/desktop/media/models/${encodeURIComponent(operation)}`);
@@ -5981,7 +6252,55 @@ function referenceKind(file) {
     return '';
 }
 
+function selectedImageModelInfo() {
+    const models = mediaModelsCache.get(mediaOperation.value) || [];
+    return (models.find(model => model.slug === mediaModel.value) || models[0])?.info || {};
+}
+
+function configureImageModelFields() {
+    const image = ['txt2img', 'img2img'].includes(mediaOperation.value);
+    const info = selectedImageModelInfo();
+    const limits = info.limits || {};
+    const features = info.features || {};
+    const defaults = info.defaults || {};
+    document.getElementById('media-image-model-fields').hidden = !image;
+    document.getElementById('media-size').closest('label').hidden = image;
+    for (const [name, fallback] of [['steps', 20], ['guidance', 3.5]]) {
+        const input = document.getElementById(`media-${name}`);
+        input.closest('label').hidden = image && features[`supports_${name}`] === false;
+        input.min = image ? limits[`min_${name}`] ?? (name === 'steps' ? 1 : 0) : (name === 'steps' ? 1 : 0);
+        input.max = image ? limits[`max_${name}`] ?? (name === 'steps' ? 100 : 30) : (name === 'steps' ? 100 : 30);
+        input.disabled = image && input.min === input.max;
+        if (image) input.value = Math.min(Number(input.max), Math.max(Number(input.min), defaults[name] ?? fallback));
+    }
+    const customSize = mediaOperation.value !== 'img2img' || features.supports_custom_output_size !== false;
+    for (const name of ['width', 'height']) {
+        document.getElementById(`media-image-${name}-field`).hidden = !customSize;
+        const input = document.getElementById(`media-image-${name}`);
+        input.min = limits[`min_${name}`] ?? 128;
+        input.max = limits[`max_${name}`] ?? 4096;
+        input.step = limits.resolution_step || limits.dimension_multiple || 1;
+        input.value = defaults[name] ?? 1024;
+    }
+    const options = limits.quality_options || [];
+    const quality = document.getElementById('media-image-quality');
+    quality.replaceChildren(...options.map(value => new Option(value, value)));
+    quality.value = defaults.quality || options[0] || '';
+    document.getElementById('media-image-quality-field').hidden = !options.length;
+    document.getElementById('media-image-negative-field').hidden = !features.supports_negative_prompt;
+    document.getElementById('media-image-model-hint').textContent = customSize
+        ? `Output size follows this model's limits and pixel grid.${limits.max_pixels ? ` Maximum ${Number(limits.max_pixels).toLocaleString()} pixels.` : ''}${limits.max_ratio ? ` Maximum aspect ratio ${limits.max_ratio}:1.` : ''}`
+        : 'This model keeps the input image size.';
+    mediaReferenceFiles.accept = mediaOperation.value === 'img2img'
+        ? '.jpg,.jpeg,.png,.gif,.bmp,.webp'
+        : '.jpg,.jpeg,.png,.gif,.bmp,.webp,.mp4,.mov,.webm,.avi,.mpeg,.mpg,.mp3,.wav,.ogg,.m4a,.flac';
+}
+
 function mediaReferenceLimits() {
+    if (mediaOperation.value === 'img2img') {
+        const maximum = Number(selectedImageModelInfo().limits?.max_input_images ?? 1);
+        return {image: maximum, video: 0, audio: 0, total: maximum};
+    }
     const models = mediaModelsCache.get('ref2vid') || [];
     const selected = models.find(model => model.slug === mediaModel.value) || models[0];
     const limits = selected?.info?.limits || {};
@@ -5995,6 +6314,11 @@ function mediaReferenceLimits() {
 
 function updateMediaReferenceHint() {
     const limits = mediaReferenceLimits();
+    if (mediaOperation.value === 'img2img') {
+        document.getElementById('media-reference-hint').textContent = `Choose up to ${limits.image} input image${limits.image === 1 ? '' : 's'}, up to 10 MB each. Refer to images in the displayed order: first image, second image, etc.`;
+        renderMediaReferences();
+        return;
+    }
     document.getElementById('media-reference-hint').textContent =
         `This H3 model accepts ${limits.total} reference file${limits.total === 1 ? '' : 's'} total: `
         + `up to ${limits.image} image${limits.image === 1 ? '' : 's'}, ${limits.video} video, and `
@@ -6002,9 +6326,17 @@ function updateMediaReferenceHint() {
         + 'Use the displayed tags in your prompt.';
 }
 
-function validateMediaReferences(files) {
+function validateMediaReferences(files, requireVisual = true) {
     if (!files.length) throw new Error('Choose at least one image or video reference.');
     const limits = mediaReferenceLimits();
+    if (mediaOperation.value === 'img2img') {
+        if (files.length > limits.image) throw new Error(`This model accepts at most ${limits.image} input images.`);
+        for (const file of files) {
+            if (referenceKind(file) !== 'image' || !/\.(jpe?g|png|gif|bmp|webp)$/i.test(file.name)) throw new Error('Use JPG, PNG, GIF, BMP, or WebP images.');
+            if (!file.size || file.size > 10 * 1024 * 1024) throw new Error(`${file.name} must be nonempty and at most 10 MB.`);
+        }
+        return {image: files.length, video: 0, audio: 0};
+    }
     const counts = {image: 0, video: 0, audio: 0};
     for (const file of files) {
         const kind = referenceKind(file);
@@ -6019,7 +6351,7 @@ function validateMediaReferences(files) {
     if (counts.image > limits.image || counts.video > limits.video || counts.audio > limits.audio) {
         throw new Error(`This H3 model accepts up to ${limits.image} images, ${limits.video} video, and ${limits.audio} audio clips.`);
     }
-    if (!counts.image && !counts.video) throw new Error('Audio cannot be the only reference; add an image or video.');
+    if (requireVisual && !counts.image && !counts.video) throw new Error('Audio cannot be the only reference; add an image or video.');
     return counts;
 }
 
@@ -6035,7 +6367,7 @@ function renderMediaReferences() {
     selectedMediaReferences.forEach(file => {
         const kind = referenceKind(file);
         indexes[kind] += 1;
-        const tag = `<${labels[kind]} ${indexes[kind]}>`;
+        const tag = mediaOperation.value === 'img2img' ? `image ${indexes[kind]}` : `<${labels[kind]} ${indexes[kind]}>`;
         const item = document.createElement('div');
         item.className = 'media-reference-item';
         const preview = document.createElement(kind === 'image' ? 'img' : 'span');
@@ -6069,7 +6401,18 @@ function renderMediaReferences() {
         name.textContent = file.name;
         const size = document.createElement('small');
         size.textContent = formatFileSize(file.size);
-        item.append(preview, tagButton, name, size);
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'text-button';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => {
+            const url = mediaReferencePreviewUrls.get(file);
+            if (url) URL.revokeObjectURL(url);
+            mediaReferencePreviewUrls.delete(file);
+            selectedMediaReferences = selectedMediaReferences.filter(item => item !== file);
+            renderMediaReferences();
+        });
+        item.append(preview, tagButton, name, size, remove);
         mediaReferenceList.append(item);
     });
     document.getElementById('clear-media-references').hidden = !selectedMediaReferences.length;
@@ -6096,7 +6439,7 @@ mediaReferenceFiles.addEventListener('change', () => {
         selectedMediaReferences = combined;
         mediaReferenceFiles.value = '';
         renderMediaReferences();
-        setFeedback(mediaStatus, `${combined.length} H3 reference${combined.length === 1 ? '' : 's'} selected.`, 'success');
+        setFeedback(mediaStatus, `${combined.length} reference${combined.length === 1 ? '' : 's'} selected.`, 'success');
     } catch (error) {
         mediaReferenceFiles.value = '';
         setFeedback(mediaStatus, error.message, 'error');
@@ -6108,9 +6451,16 @@ document.getElementById('media-reference-video-audio').addEventListener('change'
 function showMediaImageSelection(file, previewUrl) {
     if (mediaSelectionUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaSelectionUrl);
     mediaSelectionUrl = previewUrl;
-    document.getElementById('media-image-selection-preview').src = previewUrl;
+    const selection = document.getElementById('media-image-selection');
+    let preview = selection.querySelector('img');
+    if (!preview) {
+        preview = document.createElement('img');
+        preview.alt = 'Selected source';
+        selection.prepend(preview);
+    }
+    preview.src = previewUrl;
     document.getElementById('media-image-selection-name').textContent = `${file.name} · ${formatFileSize(file.size)}`;
-    document.getElementById('media-image-selection').hidden = false;
+    selection.hidden = false;
     document.getElementById('clear-media-image').hidden = false;
     scheduleMediaEstimate();
 }
@@ -6154,7 +6504,7 @@ document.getElementById('browse-media-reference-images').addEventListener('click
     document.querySelectorAll('#image-browser-grid .image-thumbnail-card.selected').forEach(
         card => card.classList.remove('selected'),
     );
-    document.getElementById('image-browser-title').textContent = 'Choose H3 references';
+    document.getElementById('image-browser-title').textContent = mediaOperation.value === 'img2img' ? 'Choose input images' : 'Choose H3 references';
     document.getElementById('add-reference-images').hidden = false;
     updateReferenceImageAction();
     setFeedback(document.getElementById('image-browser-status'), 'Select images, videos, or audio clips.');
@@ -6213,7 +6563,7 @@ async function loadImageBrowserDirectory(path = '') {
         document.getElementById('image-browser-path').textContent = `/${imageBrowserPath}`;
         grid.innerHTML = '';
         payload.folders.forEach(folder => grid.append(createImageFolderCard(folder)));
-        const items = imageBrowserPurpose === 'references' ? (payload.media || payload.images) : payload.images;
+        const items = imageBrowserPurpose === 'references' && mediaOperation.value !== 'img2img' ? (payload.media || payload.images) : payload.images;
         items.forEach(item => grid.append(createMediaThumbnailCard(item)));
         if (!payload.folders.length && !items.length) {
             grid.innerHTML = `<p class="muted">No supported ${imageBrowserPurpose === 'references' ? 'media files' : 'images'} in this folder.</p>`;
@@ -6326,7 +6676,7 @@ document.getElementById('add-reference-images').addEventListener('click', () => 
         updateReferenceImageAction();
         renderMediaReferences();
         imageBrowserDialog.close();
-        setFeedback(mediaStatus, `${combined.length} H3 reference${combined.length === 1 ? '' : 's'} selected.`, 'success');
+        setFeedback(mediaStatus, `${combined.length} reference${combined.length === 1 ? '' : 's'} selected.`, 'success');
     } catch (error) {
         setFeedback(document.getElementById('image-browser-status'), error.message, 'error');
     }
@@ -6369,7 +6719,7 @@ document.getElementById('enhance-media-prompt').addEventListener('click', async 
     try {
         const payload = await apiJson('/api/desktop/media/enhance', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({operation, prompt}),
+            body: JSON.stringify({operation, prompt, model_slug: selectedMediaPromptModel()?.slug || mediaModel.value}),
         });
         mediaPromptDrafts[operation] = payload.prompt;
         saveMediaPromptDrafts();
@@ -6406,6 +6756,22 @@ function mediaParameters() {
         parameters.ref_images_count = selectedMediaReferences.filter(file => referenceKind(file) === 'image').length;
         parameters.ref_videos_count = selectedMediaReferences.filter(file => referenceKind(file) === 'video').length;
     }
+    if (['txt2img', 'img2img'].includes(mediaOperation.value)) {
+        const info = selectedImageModelInfo();
+        const features = info.features || {};
+        parameters.seed = document.getElementById('media-image-seed').value;
+        parameters.width = document.getElementById('media-image-width').value;
+        parameters.height = document.getElementById('media-image-height').value;
+        if (mediaOperation.value === 'img2img' && features.supports_custom_output_size === false) {
+            delete parameters.width;
+            delete parameters.height;
+        }
+        for (const name of ['steps', 'guidance']) {
+            if (features[`supports_${name}`] === false) delete parameters[name];
+        }
+        if (info.limits?.quality_options?.length) parameters.quality = document.getElementById('media-image-quality').value;
+        if (features.supports_negative_prompt) parameters.negative_prompt = document.getElementById('media-image-negative').value;
+    }
     return parameters;
 }
 
@@ -6436,6 +6802,11 @@ function scheduleMediaEstimate() {
     }
     if (operation === 'ref2vid' && !selectedMediaReferences.length) {
         note.textContent = 'Choose H3 references to estimate cost.';
+        return;
+    }
+    const promptError = mediaPromptLengthError();
+    if (promptError) {
+        note.textContent = promptError;
         return;
     }
     button.textContent = 'Generate · estimating…';
@@ -6480,10 +6851,16 @@ function scheduleMediaEstimate() {
     }, 450);
 }
 
+
 mediaModel.addEventListener('change', () => {
-    if (mediaOperation.value === 'ref2vid') updateMediaReferenceHint();
+    updateMediaPromptLabel();
+    configureImageModelFields();
+    if (['ref2vid', 'img2img'].includes(mediaOperation.value)) updateMediaReferenceHint();
     scheduleMediaEstimate();
 });
+for (const id of ['media-image-seed', 'media-image-quality', 'media-image-width', 'media-image-height', 'media-image-negative']) {
+    document.getElementById(id).addEventListener('input', scheduleMediaEstimate);
+}
 for (const id of ['media-size', 'media-steps', 'media-guidance', 'media-frames', 'media-fps', 'media-scale', 'media-prompt']) {
     document.getElementById(id).addEventListener('input', scheduleMediaEstimate);
     document.getElementById(id).addEventListener('change', scheduleMediaEstimate);
@@ -6550,6 +6927,12 @@ document.getElementById('generate-media').addEventListener('click', async () => 
         setFeedback(mediaStatus, 'Enter a prompt or text first.', 'error');
         return;
     }
+    const promptError = mediaPromptLengthError();
+    if (promptError) {
+        setFeedback(mediaStatus, promptError, 'error');
+        mediaPrompt.focus();
+        return;
+    }
     const button = document.getElementById('generate-media');
     const body = new FormData();
     body.append('operation', operation);
@@ -6557,6 +6940,10 @@ document.getElementById('generate-media').addEventListener('click', async () => 
     body.append('prompt', mediaPrompt.value);
     body.append('parameters', JSON.stringify(mediaParameters()));
     if (file) body.append('source', file);
+    const uploads = selectedMediaReferences.filter(reference => !reference.browser);
+    const browserReferences = selectedMediaReferences.filter(reference => reference.browser);
+    body.append('reference_order', JSON.stringify(selectedMediaReferences.map(reference =>
+        reference.browser ? uploads.length + browserReferences.indexOf(reference) : uploads.indexOf(reference))));
     selectedMediaReferences.forEach(reference => {
         if (reference.browser) {
             body.append('reference_browser_token', reference.token);
@@ -6745,13 +7132,57 @@ async function useGalleryImage(item, operation, button) {
         rememberMediaPrompt(activeMediaOperation);
         mediaOperation.value = operation;
         activeMediaOperation = operation;
-        configureMediaOperation();
-        selectedMediaImageFile = file;
-        showMediaImageSelection(file, URL.createObjectURL(file));
+        await configureMediaOperation();
+        if (operation === 'img2img') {
+            validateMediaReferences([file]);
+            selectedMediaReferences = [file];
+            renderMediaReferences();
+        } else {
+            selectedMediaImageFile = file;
+            showMediaImageSelection(file, URL.createObjectURL(file));
+        }
         showView('media');
         setFeedback(mediaStatus, 'Source image selected. Review the settings, then generate.', 'success');
         if (mediaOperationUI[operation].prompt) mediaPrompt.focus();
         else document.getElementById('generate-media').focus();
+    } catch (error) {
+        window.alert(error.message);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function useGalleryReference(item, button) {
+    button.disabled = true;
+    try {
+        const existing = mediaOperation.value === 'ref2vid' ? [...selectedMediaReferences] : [];
+        if (existing.some(file => file.galleryItemId === item.id)) {
+            showView('media');
+            setFeedback(mediaStatus, 'This gallery item is already selected as an H3 reference.', 'success');
+            return;
+        }
+        const response = await fetch(`/api/desktop/gallery/file/${encodeURIComponent(item.id)}`);
+        if (!response.ok) throw new Error('This local file is unavailable. Refresh the gallery and try again.');
+        const blob = await response.blob();
+        const file = new File([blob], item.local_filename, {type: item.content_type || blob.type});
+        file.galleryItemId = item.id;
+        const combined = [...existing, file];
+        // Audio can be staged first; Generate still requires an image or video.
+        validateMediaReferences(combined, false);
+        rememberMediaPrompt(activeMediaOperation);
+        if (!mediaCatalogLoaded) await loadMediaCatalog();
+        mediaOperation.value = 'ref2vid';
+        activeMediaOperation = 'ref2vid';
+        await configureMediaOperation(true);
+        validateMediaReferences(combined, false);
+        selectedMediaReferences = combined;
+        renderMediaReferences();
+        showView('media');
+        const visual = combined.some(reference => ['image', 'video'].includes(referenceKind(reference)));
+        setFeedback(mediaStatus, visual
+            ? 'Gallery reference added to MiniMax H3. Review the prompt and settings, then generate.'
+            : 'Audio reference added to MiniMax H3. Add an image or video before generating.', 'success');
+        mediaPrompt.focus();
     } catch (error) {
         window.alert(error.message);
     } finally {
@@ -6794,34 +7225,37 @@ function buildGalleryCard(item) {
     }
     media.src = item.kind === 'video' && item.preview_url ? item.preview_url : item.media_url;
     preview.append(media);
-    if (item.kind === 'image') {
+    if (['image', 'video', 'audio'].includes(item.kind)) {
         const menu = document.createElement('details');
         menu.className = 'gallery-menu';
         const toggle = document.createElement('summary');
         toggle.textContent = '☰';
-        toggle.setAttribute('aria-label', 'Use image in media generation');
-        toggle.title = 'Use image…';
+        toggle.setAttribute('aria-label', `Use ${item.kind} in media generation`);
+        toggle.title = `Use ${item.kind}…`;
         const options = document.createElement('div');
         options.className = 'gallery-menu-options';
-        for (const [operation, label] of [
+        const workflows = item.kind === 'image' ? [
             ['img2img', 'Restyle image (img2img)'],
             ['img2video', 'Animate image (img2vid)'],
             ['img-rmbg', 'Remove background'],
             ['img-upscale', 'Upscale image'],
-        ]) {
+        ] : [];
+        workflows.unshift(['ref2vid', 'Add to MiniMax H3 references']);
+        for (const [operation, label] of workflows) {
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = label;
             button.disabled = !item.local_filename;
             button.addEventListener('click', async () => {
-                await useGalleryImage(item, operation, button);
+                if (operation === 'ref2vid') await useGalleryReference(item, button);
+                else await useGalleryImage(item, operation, button);
                 menu.open = false;
             });
             options.append(button);
         }
         if (!item.local_filename) {
             const hint = document.createElement('p');
-            hint.textContent = 'A local copy is needed to reuse this image.';
+            hint.textContent = 'A local copy is needed to reuse this item.';
             options.append(hint);
         }
         menu.append(toggle, options);
@@ -7458,7 +7892,7 @@ document.addEventListener('visibilitychange', () => {
 
 
 let providerKeysLoaded = false;
-const credentialNames = {gemini: 'Google Gemini', openai: 'OpenAI', local: 'Local / compatible server', deapi: 'deAPI media'};
+const credentialNames = {gemini: 'Google Gemini', openai: 'OpenAI', local: 'Local / compatible server', deapi: 'deAPI media', fish: 'Fish Audio speech'};
 function renderProviderKeyStatus(providers) {
     for (const [provider, status] of Object.entries(providers)) {
         document.getElementById(`credential-status-${provider}`).textContent = {
@@ -7672,6 +8106,7 @@ for (const [id, endpoint, statusId, read] of [
     ['save-speech-models', '/api/desktop/speech', 'speech-model-save-status', () => ({
         gemini_model: document.getElementById('speech-gemini-model').value,
         openai_model: document.getElementById('speech-openai-model').value,
+        fish_model: document.getElementById('speech-fish-model').value,
     })],
     ['save-transcription-provider', '/api/desktop/voice-input', 'transcription-provider-status', () => ({
         provider: voiceInputProviderSelect.value,
@@ -8091,3 +8526,82 @@ mobileLayoutQuery.addEventListener('change', event => {
     placeWorkspaceComposer();
     if (event.matches) showView('chat');
 });
+// Fish's voice model catalog is fetched by PETEY; API keys never enter this picker.
+(() => {
+    const field = document.getElementById('speech-fish-voice-field');
+    const picker = document.getElementById('speech-fish-voice-picker');
+    const manual = document.getElementById('speech-fish-voice');
+    const query = document.getElementById('speech-fish-voice-query');
+    const scope = document.getElementById('speech-fish-voice-scope');
+    const status = document.getElementById('speech-fish-voice-status');
+    const search = document.getElementById('speech-fish-voice-search');
+    const previous = document.getElementById('speech-fish-voice-previous');
+    const next = document.getElementById('speech-fish-voice-next');
+    let voices = [], page = 1, hasMore = false, loaded = false, pending = null;
+    function render() {
+        picker.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = ''; placeholder.textContent = 'Choose a voice'; picker.append(placeholder);
+        const selected = manual.value.trim();
+        if (selected && !voices.some(voice => voice.id === selected)) {
+            const current = document.createElement('option');
+            current.value = selected; current.textContent = `Current voice · ${selected}`; picker.append(current);
+        }
+        for (const voice of voices) {
+            const option = document.createElement('option'); option.value = voice.id;
+            option.textContent = voice.name + (voice.author ? ` — ${voice.author}` : '')
+                + (voice.languages.length ? ` (${voice.languages.join(', ')})` : '');
+            picker.append(option);
+        }
+        picker.value = selected;
+    }
+    async function load(wantedPage = 1) {
+        pending?.abort();
+        const controller = new AbortController(); pending = controller;
+        search.disabled = true; previous.disabled = true; next.disabled = true;
+        status.textContent = 'Loading Fish Audio voices…';
+        const params = new URLSearchParams({q: query.value.trim(), scope: scope.value, page: String(wantedPage)});
+        try {
+            const response = await fetch(`/api/desktop/speech/fish/voices?${params}`, {signal: controller.signal});
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || 'Could not load voices.');
+            if (pending !== controller) return;
+            voices = payload.voices; page = payload.page; hasMore = payload.has_more; loaded = true;
+            render();
+            status.textContent = voices.length
+                ? `Page ${page} · ${voices.length} voices. Select one, then save this Petey profile.`
+                : 'No matching voices. Try another name or switch voice libraries.';
+        } catch (error) {
+            if (error.name !== 'AbortError' && pending === controller) {
+                status.textContent = error.message; hasMore = false;
+            }
+        } finally {
+            if (pending === controller) {
+                pending = null; search.disabled = false;
+                previous.disabled = page <= 1; next.disabled = !hasMore;
+            }
+        }
+    }
+    function sync() {
+        render();
+        if (!field.hidden && !loaded && !pending) load(1);
+    }
+    picker.addEventListener('change', () => {
+        if (!picker.value) return;
+        manual.value = picker.value;
+        manual.dispatchEvent(new Event('input', {bubbles: true}));
+        manual.dispatchEvent(new Event('change', {bubbles: true}));
+        status.textContent = 'Voice selected. Save this Petey profile to apply it.';
+    });
+    manual.addEventListener('input', render);
+    search.addEventListener('click', () => load(1));
+    query.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {event.preventDefault(); load(1);}
+    });
+    scope.addEventListener('change', () => load(1));
+    previous.addEventListener('click', () => load(page - 1));
+    next.addEventListener('click', () => load(page + 1));
+    new MutationObserver(sync).observe(field, {attributes: true, attributeFilter: ['hidden']});
+    window.peteyFishVoices = {sync};
+    sync();
+})();
