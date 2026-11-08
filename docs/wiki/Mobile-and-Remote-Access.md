@@ -158,6 +158,13 @@ Quick Tunnels may refuse to start when a `config.yaml` file exists in the local
 `.cloudflared` directory. Rename that file temporarily or use the stable named
 tunnel setup instead.
 
+## Paired Android companions
+
+The full-interface companion can request access to the Desktop workspace after
+pairing. Revoking its device or rotating mobile access also ends that interface
+session. The separate phone-voice build uses Local Whisper on Desktop or VPS
+for transcription. Both builds require network access to the paired PETEY host.
+
 ## Add PETEY to the phone's home screen
 
 Open PETEY's complete private pairing link first, then:

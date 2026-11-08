@@ -20,6 +20,14 @@
         <symbol id="ci-cognitive" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="7" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="19" cy="18" r="1.5"/><circle cx="5" cy="18" r="1.5"/><path d="m7 8 2.7 2.2M14.4 9.9 17.5 7M14.5 14l3.2 2.7M9.7 14.2 6.3 17"/></symbol>
         <symbol id="ci-signal" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.5 4.5a10.6 10.6 0 0 0 0 15M19.5 4.5a10.6 10.6 0 0 1 0 15"/></symbol>
         <symbol id="ci-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></symbol>
+        <symbol id="ci-material" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="6"/><path d="M3 10h18M10 10v11"/></symbol>
+        <symbol id="ci-chat" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z"/></symbol>
+        <symbol id="ci-create" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 7v10M7 12h10"/></symbol>
+        <symbol id="ci-gallery" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol>
+        <symbol id="ci-tasks" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="17" rx="3"/><path d="M9 3h6v3H9zM8 12l2 2 6-5M8 18h8"/></symbol>
+        <symbol id="ci-addons" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M14 17.5h7M17.5 14v7"/></symbol>
+        <symbol id="ci-settings" viewBox="0 0 24 24"><path d="m9 3-1 3-3 1 1 3-2 2 2 2-1 3 3 1 1 3h6l1-3 3-1-1-3 2-2-2-2 1-3-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></symbol>
+        <symbol id="ci-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3M12 17h.01"/></symbol>
         <symbol id="ci-ember" viewBox="0 0 24 24"><path d="M12 22c4.3 0 7-3 7-7 0-3-1.7-5.1-4-7-.1 2-1 3.1-2.1 3.7C13.4 7.7 11 5 9 3c.2 3-1.4 5-2.8 6.9A8.2 8.2 0 0 0 5 15c0 4 2.7 7 7 7Z"/><path d="M12 22c2.1 0 3.5-1.5 3.5-3.5 0-1.4-.8-2.6-2.5-3.8-.1 1.2-.7 2-1.6 2.5-.4-1.3-1.1-2.1-2.1-2.8.1 1.5-1.8 3-1.8 4.1C7.5 20.5 9.4 22 12 22Z"/></symbol>
         <symbol id="ci-wake" viewBox="0 0 24 24"><path d="M13 19c0 1.7-1 3-2.6 3S8 20.8 8 19c0-2.2 3-3.3 3-5.8V9a4 4 0 0 0-8 0M5 12a2 2 0 0 0 2 2M16 7a5 5 0 0 1 0 10M19 4a9 9 0 0 1 0 16"/></symbol>
         <symbol id="ci-always" viewBox="0 0 24 24"><path d="M4 10v4M8 6v12M12 3v18M16 6v12M20 10v4"/></symbol>
@@ -41,15 +49,15 @@
                 <button id="collapse-sidebar" class="collapse-button" type="button" title="Collapse sidebar">‹</button>
             </div>
             <nav class="desktop-nav" aria-label="Petey sections">
-                <button id="sidebar-chat-toggle" class="nav-button active" data-view="chat" type="button" aria-expanded="false" aria-controls="sidebar-chats"><span class="nav-icon">●</span><span class="nav-label">Chat</span><span class="nav-disclosure" aria-hidden="true">⌄</span></button>
+                <button id="sidebar-chat-toggle" class="nav-button active" data-view="chat" type="button" aria-expanded="false" aria-controls="sidebar-chats"><span class="nav-icon"><span class="incumbent-nav-icon" aria-hidden="true">●</span><svg class="material-nav-icon" aria-hidden="true"><use href="#ci-chat"/></svg></span><span class="nav-label">Chat</span><span class="nav-disclosure" aria-hidden="true">⌄</span></button>
                 <div id="sidebar-chats" class="chat-tools" hidden>
                     <button id="new-chat" class="new-chat-button" type="button">＋ New chat</button>
                     <div id="conversation-list" class="conversation-list" aria-label="Saved chats"></div>
                 </div>
-                <button class="nav-button" data-view="media" type="button"><span class="nav-icon">◆</span><span class="nav-label">Create</span></button>
-                <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon">▦</span><span class="nav-label">Gallery</span></button>
-                {% if tasks_enabled %}<button class="nav-button" data-view="tasks" data-sidebar-addon="tasks" type="button"><span class="nav-icon">◷</span><span class="nav-label">Tasks</span></button>{% endif %}
-                <button class="nav-button" data-view="addons" type="button"><span class="nav-icon">◇</span><span class="nav-label">Addons</span></button>
+                <button class="nav-button" data-view="media" type="button"><span class="nav-icon"><span class="incumbent-nav-icon" aria-hidden="true">◆</span><svg class="material-nav-icon" aria-hidden="true"><use href="#ci-create"/></svg></span><span class="nav-label">Create</span></button>
+                <button class="nav-button" data-view="gallery" type="button"><span class="nav-icon"><span class="incumbent-nav-icon" aria-hidden="true">▦</span><svg class="material-nav-icon" aria-hidden="true"><use href="#ci-gallery"/></svg></span><span class="nav-label">Gallery</span></button>
+                {% if tasks_enabled %}<button class="nav-button" data-view="tasks" data-sidebar-addon="tasks" type="button"><span class="nav-icon"><span class="incumbent-nav-icon" aria-hidden="true">◷</span><svg class="material-nav-icon" aria-hidden="true"><use href="#ci-tasks"/></svg></span><span class="nav-label">Tasks</span></button>{% endif %}
+                <button class="nav-button" data-view="addons" type="button"><span class="nav-icon"><span class="incumbent-nav-icon" aria-hidden="true">◇</span><svg class="material-nav-icon" aria-hidden="true"><use href="#ci-addons"/></svg></span><span class="nav-label">Addons</span></button>
                 <div id="sidebar-addon-shortcuts" class="sidebar-addon-shortcuts">
                     {% if discord_enabled %}<button class="nav-button" data-view="discord" data-sidebar-addon="discord" type="button" hidden><span class="nav-icon">◉</span><span class="nav-label">Discord</span></button>{% endif %}
                     {% for addon in addon_views %}<button class="nav-button" data-view="{{ addon.id }}" data-sidebar-addon="{{ addon.addon_id }}" type="button" hidden><span class="nav-icon">{{ addon.icon }}</span><span class="nav-label">{{ addon.label }}</span></button>{% endfor %}
@@ -57,8 +65,8 @@
             </nav>
             <div class="coming-next">
                 <div class="sidebar-footer-actions">
-                    <button class="nav-button" data-view="settings" type="button" aria-label="Settings" title="Settings"><span class="nav-icon" aria-hidden="true">⚙</span></button>
-                    <button class="nav-button" data-view="help" type="button" aria-label="Help" title="Help"><span class="nav-icon" aria-hidden="true">?</span></button>
+                    <button class="nav-button" data-view="settings" type="button" aria-label="Settings" title="Settings"><span class="nav-icon" aria-hidden="true"><span class="incumbent-nav-icon">⚙</span><svg class="material-nav-icon"><use href="#ci-settings"/></svg></span><span class="material-footer-label">Settings</span></button>
+                    <button class="nav-button" data-view="help" type="button" aria-label="Help" title="Help"><span class="nav-icon" aria-hidden="true"><span class="incumbent-nav-icon">?</span><svg class="material-nav-icon"><use href="#ci-help"/></svg></span><span class="material-footer-label">Help</span></button>
                 </div>
                 <button id="open-changelog" class="sidebar-version" type="button" aria-haspopup="dialog" aria-controls="changelog-dialog" title="Read PETEY changelog">PETEY v{{ app_version }} · What’s new</button>
             </div>
@@ -90,16 +98,16 @@
             </div>
             <button id="jump-to-latest" class="jump-to-latest" type="button" hidden>↓ Jump to latest</button>
 
-            <div id="new-chat-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="new-chat-dialog-title" hidden>
+            <dialog id="new-chat-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="new-chat-dialog-title" hidden>
                 <form id="new-chat-form" class="new-chat-card">
                     <div class="new-chat-heading"><div><span class="page-eyebrow">NEW CONVERSATION</span><h2 id="new-chat-dialog-title">Start a new chat</h2></div><button id="new-chat-cancel-x" class="new-chat-close" type="button" aria-label="Close">×</button></div>
                     <label><span>Chat name</span><input id="new-chat-title" type="text" maxlength="80" value="New chat" autocomplete="off"></label>
                     <label><span>Petey profile</span><select id="new-chat-persona"><option value="system">System persona</option></select><small>System persona follows the active personality from Settings.</small></label>
                     <div class="new-chat-actions"><button id="new-chat-cancel" class="secondary-button" type="button">Cancel</button><button class="primary-button" type="submit">Create chat</button></div>
                 </form>
-            </div>
+            </dialog>
 
-            <div id="delete-chat-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-chat-dialog-title" hidden>
+            <dialog id="delete-chat-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-chat-dialog-title" hidden>
                 <div class="new-chat-card delete-chat-card">
                     <div class="new-chat-heading"><div><span class="page-eyebrow">DELETE CHAT</span><h2 id="delete-chat-dialog-title">Delete “<span id="delete-chat-name"></span>”?</h2></div><button id="delete-chat-cancel-x" class="new-chat-close" type="button" aria-label="Close">×</button></div>
                     <p>Choose whether PETEY should retain this conversation as searchable memory after removing it from the chat list.</p>
@@ -107,10 +115,10 @@
                     <button id="delete-chat-with-memory" class="danger-button" type="button"><strong>Delete chat and memory</strong><small>Permanently deletes every stored message in this chat. This cannot be undone.</small></button>
                     <button id="delete-chat-cancel" class="text-button" type="button">Cancel</button>
                 </div>
-            </div>
+            </dialog>
 
             <div id="visual-chat" class="visual-chat" hidden>
-                <canvas id="neural-canvas" aria-label="Animated Petey neural network visualization"></canvas>
+                <canvas id="neural-canvas" aria-label="Audio-reactive PETEY visualization"></canvas>
                 <iframe id="synapse-frame" title="PETEY Synapse visualizer" data-src="{{ url_for('static', filename='synapse/index.html', v=asset_revision) }}" hidden></iframe>
                 <button id="desktop-visual-back" class="desktop-visual-back" type="button"><span aria-hidden="true">←</span> Back to chat</button>
                 <div id="visual-state-heading" class="visual-state-heading" aria-hidden="true">PRESENT</div>
@@ -151,7 +159,7 @@
                 <div id="mobile-settings-advanced" class="mobile-settings-advanced" hidden>
                     <label><span>Petey profile</span><select id="mobile-persona"><option value="current">Loading profiles…</option></select></label>
                     <label><span>Voice</span><select id="mobile-voice"><option value="">Loading voices…</option></select></label>
-                    <label><span>Animation</span><select id="mobile-animation"><option value="synapse_network">Synapse Network</option><option value="cognitive_pulse">Cognitive Pulse</option><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
+                    <label><span>Animation</span><select id="mobile-animation"><option value="synapse_network">Synapse Network</option><option value="cognitive_pulse">Cognitive Pulse</option><option value="ttik">TTIK</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select></label>
                     <nav class="mobile-settings-links" aria-label="All settings">
                         {% for page in settings_pages %}<button type="button" data-mobile-settings-view="{{ page.id }}"><span aria-hidden="true">{{ page.icon }}</span>{{ page.title }}</button>{% endfor %}
                     </nav>
@@ -333,7 +341,7 @@
                     <button id="command-restart-toggle" class="command-icon-button" type="button" aria-label="Restart PETEY" title="Restart PETEY" aria-controls="command-restart-panel" aria-expanded="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-restart"/></svg></button>
                 </div>
                 <div id="command-theme-panel" class="command-icon-panel" hidden><span class="command-icon-panel-title">Theme and color</span><div class="command-theme-grid">
-                    {% for theme, icon, label in [('nebula', 'nebula', 'Nebula'), ('cognitive', 'cognitive', 'Command Console'), ('signal', 'signal', 'Signal'), ('terminal', 'terminal', 'Terminal'), ('ember', 'ember', 'Ember')] %}
+                    {% for theme, icon, label in [('nebula', 'nebula', 'Nebula'), ('cognitive', 'cognitive', 'Command Console'), ('signal', 'signal', 'Signal'), ('terminal', 'terminal', 'Terminal'), ('material', 'material', 'Material')] %}
                     <div class="command-theme-choice"><button type="button" class="command-choice-icon" data-command-theme="{{ theme }}" aria-label="{{ label }} theme" title="{{ label }} theme" aria-pressed="false"><svg class="command-icon" aria-hidden="true"><use href="#ci-{{ icon }}"/></svg></button><input type="color" data-command-theme-accent="{{ theme }}" aria-label="{{ label }} accent color" title="{{ label }} accent color"><span>{{ label }}</span></div>
                     {% endfor %}
                 </div></div>
@@ -347,7 +355,7 @@
                     <button type="button" class="command-option" data-command-restart="cloudflare"><svg class="command-icon" aria-hidden="true"><use href="#ci-cloud-desktop"/></svg><span>Cloudflare + desktop</span></button>
                     <button type="button" class="command-option" data-command-restart="browser"><svg class="command-icon" aria-hidden="true"><use href="#ci-browser"/></svg><span>Browser</span></button>
                 </div></div>
-                <div id="visual-style-field" class="command-visual-style" hidden><label for="visual-style-select">Animation</label><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="synapse_network">Synapse Network</option><option value="cognitive_pulse">Cognitive Pulse</option><option value="neural_core">Neural Core</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select><a class="command-choice-icon visual-lab-link" href="/static/experiments/neural-three.html" title="Try the experimental Three.js visualizer" aria-label="Try the experimental Three.js visualizer">3D</a><button id="visual-fullscreen" class="command-choice-icon" type="button" title="Full screen (F11)" aria-label="Full screen (F11)"><svg class="command-icon" aria-hidden="true"><use href="#ci-fullscreen"/></svg></button></div>
+                <div id="visual-style-field" class="command-visual-style" hidden><label for="visual-style-select">Animation</label><select id="visual-style-select" class="visual-style-select" aria-label="Visual animation style"><option value="synapse_network">Synapse Network</option><option value="cognitive_pulse">Cognitive Pulse</option><option value="ttik">TTIK</option><option value="synapse_drift">Synapse Drift</option><option value="orbital_mind">Orbital Mind</option><option value="signal_bloom">Signal Bloom</option><option value="aurora_flow">Aurora Flow</option><option value="constellation_field">Constellation Field</option></select><a class="command-choice-icon visual-lab-link" href="/static/experiments/neural-three.html" title="Try the experimental Three.js visualizer" aria-label="Try the experimental Three.js visualizer">3D</a><button id="visual-fullscreen" class="command-choice-icon" type="button" title="Full screen (F11)" aria-label="Full screen (F11)"><svg class="command-icon" aria-hidden="true"><use href="#ci-fullscreen"/></svg></button></div>
             </section>
             <section id="command-media-card" class="command-card command-media-card" data-command-section="media" data-command-panel="media">
                 <div class="command-card-heading"><span>Media</span></div>
@@ -391,6 +399,7 @@
                 <button class="tasks-manager-link" type="button" data-command-view="tasks">◷ Open task manager</button>
                 <div id="tasks-upcoming" class="tasks-upcoming" hidden></div>
             </section>{% endif %}
+            <p id="command-rail-action-status" class="save-status" role="status"></p>
             <details class="command-rail-config">
                 <summary><span>Customize rail</span><span aria-hidden="true">⚙</span></summary>
                 <div>
@@ -495,7 +504,11 @@
     {% if tasks_enabled %}<script src="{{ url_for('static', filename='tasks.js', v=asset_revision) }}"></script>{% endif %}
     {% for addon in addon_views %}{% if addon.script %}<script src="{{ url_for('desktop_addon_asset', addon_id=addon.addon_id, relative_path=addon.script, v=addon.asset_revision) }}"></script>{% endif %}{% endfor %}
     <script src="{{ url_for('static', filename='settings.js', v=asset_revision) }}"></script>
+    <script src="{{ url_for('static', filename='ttik.js', v=asset_revision) }}"></script>
     <script src="{{ url_for('static', filename='desktop.js', v=asset_revision) }}"></script>
     <script src="{{ url_for('static', filename='mcp.js', v=asset_revision) }}"></script>
+    <script src="{{ url_for('static', filename='browser.js', v=asset_revision) }}"></script>
+
+
 </body>
 </html>

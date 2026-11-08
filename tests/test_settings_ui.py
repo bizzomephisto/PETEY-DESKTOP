@@ -114,7 +114,7 @@ class SettingsUITests(unittest.TestCase):
                   if tag == 'input' and attrs.get('name') == 'interface-theme']
         colors = [attrs for tag, attrs in self.markup.elements
                   if tag == 'input' and attrs.get('data-theme-accent')]
-        themes = {'nebula', 'cognitive', 'signal', 'terminal', 'ember'}
+        themes = {'nebula', 'cognitive', 'signal', 'terminal', 'material'}
         self.assertEqual({item.get('value') for item in radios}, themes)
         self.assertEqual({item.get('data-theme-accent') for item in colors}, themes)
         self.assertEqual(len(radios), 5)
@@ -638,7 +638,7 @@ class SettingsUITests(unittest.TestCase):
         javascript = (root / 'web/static/desktop.js').read_text(encoding='utf-8')
         template = (root / 'web/templates/desktop.html').read_text(encoding='utf-8')
         stylesheet = (root / 'web/static/desktop.css').read_text(encoding='utf-8')
-        self.assertIn('<option value="neural_core">Neural Core</option>', template)
+        self.assertIn('<option value="ttik">TTIK</option>', template)
         self.assertIn('<option value="aurora_flow">Aurora Flow</option>', template)
         self.assertIn('<option value="constellation_field">Constellation Field</option>', template)
         self.assertEqual(template.count('<option value="cognitive_pulse">Cognitive Pulse</option>'), 2)
@@ -650,7 +650,7 @@ class SettingsUITests(unittest.TestCase):
         self.assertIn('cognitive_pulse: drawCognitivePulse', javascript)
         self.assertIn("context.fillStyle = '#000';", javascript)
         for renderer in (
-            'drawNeuralCore', 'drawSynapseDrift', 'drawOrbitalMind',
+            'drawSynapseDrift', 'drawOrbitalMind',
             'drawSignalBloom', 'drawAuroraFlow', 'drawConstellationField',
             'drawCognitivePulse',
         ):

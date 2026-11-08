@@ -28,13 +28,25 @@
         } finally { button.disabled = false; }
     }
     function render(payload) {
+        const expanded = new Set([...container.querySelectorAll('details[data-mcp-disclosure][open]')].map(item => item.dataset.mcpDisclosure));
         container.replaceChildren();
         if (!payload.servers.length) container.append(node('p', 'No MCP servers configured.', 'muted'));
         for (const server of payload.servers) {
             const card = node('section', undefined, 'mcp-server-card');
-            card.append(node('h3', server.name));
-            card.append(node('p', `${server.enabled ? 'Enabled' : 'Off'} · ${server.connected ? 'Connected' : 'Disconnected'} · ${server.transport === 'stdio' ? 'Local command' : 'Remote HTTP'}`, 'hint'));
-            if (server.endpoint) card.append(node('p', server.endpoint, 'hint'));
+            const disclosure = node('details', undefined, 'mcp-server-details');
+            disclosure.dataset.mcpDisclosure = JSON.stringify([server.id]);
+            disclosure.open = expanded.has(disclosure.dataset.mcpDisclosure);
+            const summary = node('summary');
+            summary.append(node('h3', server.name));
+            summary.append(node('span', `${server.connected ? 'Connected' : 'Disconnected'} · ${server.transport === 'stdio' ? 'Local command' : 'Remote HTTP'}`, 'hint mcp-server-status'));
+            disclosure.append(summary);
+            const content = node('div', undefined, 'mcp-server-body');
+            disclosure.append(content); card.append(disclosure);
+            const enabled = toggle(`Enable ${server.name}`, server.enabled, card);
+            enabled.parentElement.classList.add('mcp-header-toggle');
+            enabled.parentElement.title = 'Let Petey use selected tools. Save settings to apply.';
+            // Keep controls outside summary so toggling access never folds the details.
+            if (server.endpoint) content.append(node('p', server.endpoint, 'hint'));
             if (server.transport === 'http') {
                 const auth = node('details');
                 auth.open = !server.has_authentication;
@@ -60,29 +72,36 @@
                     action(saveAuth, `/${server.id}`, 'PUT', {credential: {type: kind.value, value: secret.value.trim()}},
                         'Authentication saved. Test connection, select tools, and enable the server again.', () => { secret.value = ''; });
                 };
-                auth.append(saveAuth); card.append(auth);
+                auth.append(saveAuth); content.append(auth);
             }
-            if (server.error) card.append(node('p', server.error, 'wide-status'));
-            const enabled = toggle('Let Petey use selected tools', server.enabled, card);
+            if (server.error) content.append(node('p', server.error, 'wide-status'));
             const keywordLabel = node('label', 'Chat keywords (comma separated)');
             const keywords = node('input'); keywords.type = 'text'; keywords.value = server.keywords.join(', ');
-            keywords.placeholder = server.name; keywords.maxLength = 1600; keywordLabel.append(keywords); card.append(keywordLabel);
-            card.append(node('p', 'Mention a keyword to make these tools available. With no keywords, mention the server name.', 'hint'));
+            keywords.placeholder = server.name; keywords.maxLength = 1600; keywordLabel.append(keywords); content.append(keywordLabel);
+            content.append(node('p', 'Mention a keyword to make these tools available. With no keywords, mention the server name.', 'hint'));
             const surfaces = {};
             for (const [key, label] of [['petey_desktop', 'Desktop'], ['mobile_petey', 'Mobile / companion'], ['discord', 'Discord']]) {
-                surfaces[key] = toggle(label, Boolean(server.surfaces[key]), card);
+                surfaces[key] = toggle(label, Boolean(server.surfaces[key]), content);
             }
             const tools = node('details'); tools.open = true;
             tools.append(node('summary', `Tools (${server.tools.length} discovered)`));
             const choices = [];
             if (!server.tools.length) tools.append(node('p', 'Test connection to discover tools. Previously selected tools remain saved.', 'hint'));
             for (const tool of server.tools) {
-                const selected = toggle(tool.name, server.allowed_tools.includes(tool.name), tools);
+                const row = node('div', undefined, 'mcp-tool-row');
+                const details = node('details', undefined, 'mcp-tool-details');
+                details.dataset.mcpDisclosure = JSON.stringify([server.id, tool.name]);
+                details.open = expanded.has(details.dataset.mcpDisclosure);
+                details.append(node('summary', tool.name));
+                details.append(node('p', tool.description || 'No description provided by this server.', 'hint'));
+                row.append(details);
+                const selected = toggle(`Enable ${tool.name}`, server.allowed_tools.includes(tool.name), row);
+                selected.parentElement.classList.add('mcp-header-toggle');
                 choices.push([tool.name, selected]);
-                if (tool.description) tools.append(node('p', tool.description, 'hint'));
+                tools.append(row);
             }
-            card.append(tools);
-            card.append(node('p', 'Selected tools may change files or external services according to what that server supports.', 'hint'));
+            content.append(tools);
+            content.append(node('p', 'Save settings to apply enable switches and tool selections. Selected tools may change files or external services according to what that server supports.', 'hint'));
             const buttons = node('div', undefined, 'inline-actions');
             const test = node('button', 'Test connection', 'secondary-button'); test.type = 'button';
             test.onclick = () => action(test, `/${server.id}/test`, 'POST', undefined, 'Connection tested. Select tools and save settings.');
@@ -95,7 +114,7 @@
             };
             const remove = node('button', 'Remove server', 'text-button'); remove.type = 'button';
             remove.onclick = () => action(remove, `/${server.id}`, 'DELETE', undefined, 'Server removed.');
-            buttons.append(test, save, remove); card.append(buttons); container.append(card);
+            buttons.append(test, save, remove); content.append(buttons); container.append(card);
         }
     }
     async function load() {

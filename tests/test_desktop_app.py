@@ -517,6 +517,45 @@ class DesktopAppTests(unittest.TestCase):
             )
             app.config["PETEY_ADDONS"].close()
 
+    def test_spotify_dj_persona_is_applied_to_provider_system_profile(self):
+        for source, cue, mix, expected_dj, expected_base in (
+            ("spotify", "track_transition", False, True, False),
+            ("spotify", "track_transition", True, True, True),
+            ("other-addon", "track_transition", False, False, True),
+            ("spotify", "other_event", False, False, True),
+        ):
+            with self.subTest(source=source, cue=cue, mix=mix):
+                with tempfile.TemporaryDirectory() as directory:
+                    state = DesktopState(directory)
+                    memory = DesktopMemory(Path(directory) / "dj.sqlite3", lambda _text: None)
+                    app = create_desktop_app(state=state, memory=memory)
+                    broker = app.config["PETEY_ADDON_EVENTS"]
+                    try:
+                        with patch("petey.assistant.AIProvider.complete", return_value="Up next.") as complete:
+                            broker.emit(
+                                source, "Introduce New Song by New Artist.",
+                                conversation_id=state.conversation_id,
+                                metadata={
+                                    "spotify_dj_cue": cue,
+                                    "spotify_dj_persona": "Night Owl",
+                                    "spotify_dj_prompt": "DJ-STYLE-MARKER: Be a sleepy jazz host.",
+                                    "spotify_dj_mix_with_profile": mix,
+                                },
+                            )
+                            deadline = time.monotonic() + 3
+                            while time.monotonic() < deadline and not broker.events_after(0)["events"]:
+                                time.sleep(0.02)
+                        self.assertTrue(broker.events_after(0)["events"])
+                        system = complete.call_args.args[1]
+                        self.assertEqual("DJ-STYLE-MARKER" in system, expected_dj)
+                        self.assertEqual(state.conversation_system_prompt in system, expected_base)
+                        if expected_dj:
+                            self.assertIn("SPOTIFY DJ PROFILE (Night Owl)", system)
+                    finally:
+                        app.config["PETEY_ADDONS"].close()
+                        broker.close()
+                        app.config["PETEY_RUNTIME"].close()
+
     def test_gallery_exposes_qt_compatible_video_preview(self):
         with tempfile.TemporaryDirectory() as directory:
             preview = Path(directory) / "video-1.preview.webm"

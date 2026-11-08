@@ -15,6 +15,7 @@ from pathlib import Path
 from flask import g, jsonify, request
 
 PREFIX = "/api/companion/v1"
+INTERFACE_COOKIE = "petey_device_session"
 
 
 class CompanionTokens:
@@ -51,10 +52,31 @@ class CompanionTokens:
             self._write(records)
         return token
 
+    def _active(self, record, root):
+        return (
+            bool(root)
+            and record.get('expires', 0) > time.time()
+            and hmac.compare_digest(record.get('root', ''), self.digest(root))
+        )
+
     def valid(self, token, root):
         with self.lock:
+            return self._active(self._read().get(self.digest(token), {}), root)
+
+    def enable_interface(self, token, root):
+        with self.lock:
+            records = self._read()
+            record = records.get(self.digest(token), {})
+            if not self._active(record, root):
+                return False
+            record['interface'] = True
+            self._write(records)
+            return True
+
+    def valid_interface(self, token, root):
+        with self.lock:
             record = self._read().get(self.digest(token), {})
-        return record.get('expires', 0) > time.time() and hmac.compare_digest(record.get('root', ''), self.digest(root))
+            return self._active(record, root) and record.get('interface') is True
 
     def revoke(self, token):
         with self.lock:
@@ -65,6 +87,10 @@ class CompanionTokens:
 
 def register_companion_api(app):
     tokens = CompanionTokens(Path(app.config['PETEY_STATE'].data_dir) / 'companion-devices.json')
+    # The launcher accepts only explicitly granted interface sessions; ordinary
+    # companion bearer tokens still cannot authenticate arbitrary web routes.
+    app.config['PETEY_COMPANION_INTERFACE_AUTH'] = lambda token: tokens.valid_interface(
+        token, app.config.get('PETEY_COMPANION_PAIRING_SECRET', ''))
     jobs = {}
     lock = threading.Lock()
 
@@ -107,6 +133,18 @@ def register_companion_api(app):
             tokens.revoke(g.companion_token)
         return jsonify(version=1, status='revoked' if request.method == 'DELETE' else 'connected')
 
+    @app.post(PREFIX + '/interface-session')
+    def companion_interface_session():
+        if not tokens.enable_interface(
+            g.companion_token, app.config.get('PETEY_COMPANION_PAIRING_SECRET', '')
+        ):
+            return jsonify(error='Pairing required.'), 401
+        response = jsonify(version=1, interface='/')
+        response.set_cookie(INTERFACE_COOKIE, g.companion_token, max_age=365 * 86400,
+                            httponly=True, secure=True, samesite='Strict', path='/')
+        return response
+
+    @app.post(PREFIX + '/transcribe-local')
     @app.post(PREFIX + '/transcribe')
     def companion_transcribe():
         uploaded = request.files.get('audio')
@@ -123,7 +161,10 @@ def register_companion_api(app):
                     raise ValueError
         except (wave.Error, EOFError, ValueError):
             return jsonify(error='Use mono 16 kHz PCM16 WAV, at most 25 seconds.'), 400
-        with app.test_request_context('/api/desktop/voice-input/transcribe', method='POST', data={'audio': (io.BytesIO(audio), 'request.wav', 'audio/wav')}):
+        data = {'audio': (io.BytesIO(audio), 'request.wav', 'audio/wav')}
+        if request.path == PREFIX + '/transcribe-local':
+            data['local_only'] = '1'
+        with app.test_request_context('/api/desktop/voice-input/transcribe', method='POST', data=data):
             return app.view_functions['desktop_voice_input_transcribe']()
 
     @app.post(PREFIX + '/chat')

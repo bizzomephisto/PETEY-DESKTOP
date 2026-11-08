@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.21.2 — 2026-11-08
+
+- Added an optional visible web browser for desktop and mobile chat. It opens
+  on the PETEY host, keeps a separate local browser profile, and starts off.
+  Enable it under Tools & integrations. Refresh Python dependencies after
+  updating, then install Chromium there if PETEY cannot find a browser.
+- Added Desktop support for paired Android interface sessions and a
+  Local Whisper-only transcription route for the phone-voice companion.
+- Replaced Neural Core with TTIK, a voice display driven by speech output
+  and a separate microphone waveform. Added the Material desktop theme.
+- Improved dialog focus, keyboard reordering in Command Center, microphone
+  meter accessibility, and MCP settings. Gemini tool schema conversion
+  preserves argument names, and Spotify transition replies use the DJ persona
+  selected in the add-on.
+
 ## v0.21.1 — 2026-11-08
 
 - Ask PETEY to generate images directly in desktop or mobile browser chat.

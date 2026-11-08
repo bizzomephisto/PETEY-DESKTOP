@@ -13,7 +13,7 @@
                             <label id="voice-follow-up-field" hidden><span>Follow-up idle timeout (seconds)</span><input id="voice-follow-up-seconds" type="number" min="3" max="30" step="1" value="8"></label>
                         </div>
                         <div class="microphone-test">
-                            <div class="microphone-meter" aria-label="Microphone input level"><span id="voice-input-meter"></span></div>
+                            <div class="microphone-meter" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="voice-input-meter" aria-hidden="true"></span></div>
                             <button id="test-voice-input" class="secondary-button" type="button">Test microphone</button>
                             <span id="voice-input-test-status" class="wide-status">Choose Test microphone and speak.</span>
                         </div>

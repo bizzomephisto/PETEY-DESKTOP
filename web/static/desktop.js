@@ -44,6 +44,25 @@ const changelogDialog = document.getElementById('changelog-dialog');
 const newChatTitle = document.getElementById('new-chat-title');
 const newChatPersona = document.getElementById('new-chat-persona');
 const mobileLayoutQuery = window.matchMedia('(max-width: 760px)');
+const nativeAndroidShell = /PeteyAndroid\//.test(navigator.userAgent || '');
+document.body.classList.toggle('native-android', nativeAndroidShell);
+if (nativeAndroidShell) {
+    const drawer = document.createElement('div');
+    drawer.id = 'android-chat-drawer';
+    drawer.className = 'android-chat-drawer';
+    drawer.hidden = true;
+    drawer.setAttribute('aria-label', 'Saved chats');
+    drawer.append(document.getElementById('sidebar-chats'));
+    document.getElementById('view-chat').append(drawer);
+    const toggle = document.createElement('button');
+    toggle.id = 'android-chats-toggle';
+    toggle.className = 'secondary-button';
+    toggle.type = 'button'; toggle.textContent = 'Chats';
+    toggle.setAttribute('aria-controls', drawer.id);
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', () => setSidebarChatsOpen(drawer.hidden));
+    document.querySelector('.chat-header').append(toggle);
+}
 const mobileVoiceModeStorageKey = 'petey.mobile-voice-mode.v1';
 let mobileVoiceMode = '';
 try {
@@ -53,6 +72,7 @@ try {
 } catch (_error) { /* Private browsing may block local storage. */ }
 
 function effectiveVoiceInputMode() {
+    if (nativeAndroidShell) return 'disabled';
     const configured = voiceInputConfiguration?.mode || 'disabled';
     if (configured === 'disabled') return configured;
     return mobileLayoutQuery.matches && mobileVoiceMode ? mobileVoiceMode : configured;
@@ -129,9 +149,12 @@ let voiceConversationAwaitingReply = false;
 let voiceConversationFollowupTimer = null;
 let keyboardPushToTalkActive = false;
 let visualAudioEnergy = 0;
+const visualMicSamples = new Float32Array(128);
+let visualMicUpdatedAt = -Infinity;
 let speechVisualizationAnalyser = null;
 const speechOutputGains = new Map();
 let volumeBeforeEdit = null;
+const speechVisualizationSamples = new Float32Array(256);
 let visualThinking = false;
 let visualErrorUntil = 0;
 let visualGenerating = false;
@@ -848,7 +871,7 @@ window.addEventListener('petey:addon-notification', event => {
                 source: detail.addon,
                 message: detail.message,
                 conversation_id: activeConversationId,
-                surface: mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop',
+                surface: (nativeAndroidShell || mobileLayoutQuery.matches) ? 'mobile_petey' : 'petey_desktop',
             }),
         }).catch(error => { statusText.textContent = `Could not save OpenCode notice: ${error.message}`; });
     }
@@ -914,20 +937,6 @@ async function loadDesktop() {
         conversations = bootstrap.conversations || [];
         conversationPersonaOptions = bootstrap.persona_options || [];
         preferences = {...preferences, ...(bootstrap.preferences || {})};
-        try {
-            // Move the former default to Synapse once; a later explicit Neural Core choice stays put.
-            if (preferences.visual_style === 'neural_core'
-                && window.localStorage.getItem('petey-synapse-default-v1') !== '1') {
-                const updated = await apiJson('/api/desktop/preferences', {
-                    method: 'PUT', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({visual_style: 'synapse_network'}),
-                });
-                preferences = {...preferences, ...updated.preferences};
-                window.localStorage.setItem('petey-synapse-default-v1', '1');
-            }
-        } catch (error) {
-            console.warn('Could not set Synapse as the default visual style:', error);
-        }
         speechConfiguration = bootstrap.speech || {provider: 'automatic', auto_speak: false};
         voiceResponseEnabled = Boolean(speechConfiguration.auto_speak);
         voiceResponseInitialized = true;
@@ -979,13 +988,16 @@ async function loadConversationMessages() {
 }
 
 function setSidebarChatsOpen(open) {
+    const androidDrawer = document.getElementById('android-chat-drawer');
+    if (androidDrawer) androidDrawer.hidden = !open;
+    document.getElementById('android-chats-toggle')?.setAttribute('aria-expanded', String(open));
     document.getElementById('sidebar-chats').hidden = !open;
     document.getElementById('sidebar-chat-toggle').setAttribute('aria-expanded', String(open));
 }
 
 function placeWorkspaceComposer() {
     const host = document.getElementById('workspace-composer');
-    const parent = mobileLayoutQuery.matches ? document.getElementById('view-chat') : host;
+    const parent = (nativeAndroidShell || mobileLayoutQuery.matches) ? document.getElementById('view-chat') : host;
     if (composer.parentElement !== parent) parent.append(composer);
 }
 
@@ -1069,13 +1081,12 @@ async function selectConversation(conversationId) {
 async function deleteConversation(conversation) {
     pendingDeleteConversation = conversation;
     document.getElementById('delete-chat-name').textContent = conversation.title;
-    document.getElementById('delete-chat-dialog').hidden = false;
-    document.getElementById('delete-chat-cancel').focus();
+    showModalDialog(document.getElementById('delete-chat-dialog'), document.getElementById('delete-chat-cancel'));
 }
 
 function closeDeleteChatDialog() {
     pendingDeleteConversation = null;
-    document.getElementById('delete-chat-dialog').hidden = true;
+    hideModalDialog(document.getElementById('delete-chat-dialog'));
 }
 
 async function confirmDeleteConversation(preserveMemory) {
@@ -1108,8 +1119,26 @@ document.getElementById('delete-chat-cancel-x').addEventListener('click', closeD
 document.getElementById('delete-chat-keep-memory').addEventListener('click', () => confirmDeleteConversation(true));
 document.getElementById('delete-chat-with-memory').addEventListener('click', () => confirmDeleteConversation(false));
 
+const modalReturnFocus = new WeakMap();
+function showModalDialog(dialog, initialFocus) {
+    if (!dialog.open) modalReturnFocus.set(dialog, document.activeElement);
+    // A modal must stay renderable even when its originating app view is hidden.
+    if (dialog.parentElement !== document.body) document.body.append(dialog);
+    dialog.hidden = false;
+    if (!dialog.open) dialog.showModal();
+    initialFocus?.focus();
+}
+
+function hideModalDialog(dialog) {
+    if (dialog.open) dialog.close();
+    dialog.hidden = true;
+    const invoker = modalReturnFocus.get(dialog);
+    if (invoker?.isConnected) invoker.focus({preventScroll: true});
+    modalReturnFocus.delete(dialog);
+}
+
 function closeNewChatDialog() {
-    newChatDialog.hidden = true;
+    hideModalDialog(newChatDialog);
 }
 
 async function openNewChatDialog() {
@@ -1118,8 +1147,7 @@ async function openNewChatDialog() {
         if (Array.isArray(payload.persona_options)) conversationPersonaOptions = payload.persona_options;
         fillConversationPersonaSelect(newChatPersona, null);
         newChatTitle.value = 'New chat';
-        newChatDialog.hidden = false;
-        newChatTitle.focus();
+        showModalDialog(newChatDialog, newChatTitle);
         newChatTitle.select();
     } catch (error) {
         window.alert(error.message);
@@ -1376,7 +1404,7 @@ composer.addEventListener('submit', async event => {
     const body = new FormData();
     body.append('message', text);
     body.append('stream', 'true');
-    body.append('surface', mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop');
+    body.append('surface', (nativeAndroidShell || mobileLayoutQuery.matches) ? 'mobile_petey' : 'petey_desktop');
     for (const file of files) body.append('attachment', file);
     if (temporary) {
         body.append('temporary', 'true');
@@ -1516,7 +1544,7 @@ async function pollAddonEvents() {
         const payload = await apiJson(`/api/desktop/addon-events?after=${addonEventCursor}`);
         addonEventCursor = Math.max(addonEventCursor, Number(payload.cursor || 0));
         for (const event of payload.events || []) {
-            const currentSurface = mobileLayoutQuery.matches ? 'mobile_petey' : 'petey_desktop';
+            const currentSurface = (nativeAndroidShell || mobileLayoutQuery.matches) ? 'mobile_petey' : 'petey_desktop';
             if ((event.surface && event.surface !== currentSurface)
                     || event.conversation_id !== activeConversationId
                     || document.getElementById('temporary-mode').checked) continue;
@@ -1720,11 +1748,28 @@ function syncCommandMenu(railEnabled, railOpen) {
     toggle.title = label;
 }
 
+// Keep Material's filled actions readable for every saved or previewed accent.
+function setThemeAccent(accent) {
+    const root = document.documentElement;
+    root.style.setProperty('--theme-accent', accent);
+    const luminance = hex => {
+        const rgb = hex.slice(1).match(/.{2}/g).map(value => parseInt(value, 16) / 255)
+            .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+        return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+    };
+    const lightness = luminance(accent);
+    const dark = '#102b25';
+    const darkContrast = (Math.max(lightness, luminance(dark)) + .05)
+        / (Math.min(lightness, luminance(dark)) + .05);
+    const whiteContrast = 1.05 / (lightness + .05);
+    root.style.setProperty('--material-on-accent', darkContrast >= whiteContrast ? dark : '#ffffff');
+}
+
 function applyPreferences() {
     const theme = preferences.theme || 'nebula';
     const defaultAccents = {
         nebula: '#8b5cf6', cognitive: '#ff9d32', signal: '#31d7a5',
-        terminal: '#63ff8f', ember: '#ff8a4c',
+        terminal: '#63ff8f', material: '#a0d5ca',
     };
     const accents = preferences.theme_accents || {};
     const accent = accents[theme] || defaultAccents[theme] || defaultAccents.nebula;
@@ -1753,7 +1798,7 @@ function applyPreferences() {
         input.checked = railSections[input.dataset.commandSectionSetting] !== false;
         input.disabled = !railEnabled;
     });
-    document.documentElement.style.setProperty('--theme-accent', accent);
+    setThemeAccent(accent);
     document.querySelectorAll('[name="interface-theme"]').forEach(input => { input.checked = input.value === theme; });
     document.querySelectorAll('[data-command-theme]').forEach(button => {
         button.setAttribute('aria-pressed', String(button.dataset.commandTheme === theme));
@@ -1793,9 +1838,15 @@ function applyPreferences() {
     refreshCommandOverview();
 }
 
+function setCommandRailFeedback(message, tone) {
+    for (const id of ['command-rail-status', 'command-rail-action-status']) {
+        setFeedback(document.getElementById(id), message, tone);
+    }
+}
+
 let commandRailSaving = false;
 async function saveCommandRail(changes) {
-    if (commandRailSaving) return;
+    if (commandRailSaving) return false;
     commandRailSaving = true;
     const previous = {...preferences, command_rail_sections: {...(preferences.command_rail_sections || {})}};
     preferences = {...preferences, ...changes};
@@ -1811,9 +1862,11 @@ async function saveCommandRail(changes) {
             body: JSON.stringify(changes),
         });
         preferences = {...preferences, ...payload.preferences};
+        return true;
     } catch (error) {
         preferences = previous;
-        setFeedback(document.getElementById('command-rail-status'), `Could not save rail: ${error.message}`, 'error');
+        setCommandRailFeedback(`Could not save rail: ${error.message}`, 'error');
+        return false;
     } finally {
         commandRailSaving = false;
         applyPreferences();
@@ -1887,7 +1940,7 @@ document.querySelectorAll('[name="interface-theme"]').forEach(input => {
         controls.forEach(control => { control.disabled = true; });
         document.documentElement.dataset.theme = input.value;
         const selectedAccent = document.querySelector(`[data-theme-accent="${input.value}"]`)?.value;
-        if (selectedAccent) document.documentElement.style.setProperty('--theme-accent', selectedAccent);
+        if (selectedAccent) setThemeAccent(selectedAccent);
         const feedback = document.getElementById('theme-status');
         setFeedback(feedback, 'Saving theme…');
         try {
@@ -1911,7 +1964,7 @@ document.querySelectorAll('[data-theme-accent]').forEach(input => {
     input.addEventListener('input', () => {
         input.closest('[data-theme-preview]')?.style.setProperty('--preview-accent', input.value);
         if (input.dataset.themeAccent === (preferences.theme || 'nebula')) {
-            document.documentElement.style.setProperty('--theme-accent', input.value);
+            setThemeAccent(input.value);
         }
     });
     input.addEventListener('change', async () => {
@@ -1925,7 +1978,7 @@ document.querySelectorAll('[data-theme-accent]').forEach(input => {
             control.disabled = true;
         });
         document.documentElement.dataset.theme = theme;
-        document.documentElement.style.setProperty('--theme-accent', input.value);
+        setThemeAccent(input.value);
         const feedback = document.getElementById('theme-status');
         setFeedback(feedback, 'Saving color…');
         try {
@@ -2795,7 +2848,8 @@ function showView(view) {
     const mobileSettingsAllowed = mobileLayoutQuery.matches
         && document.body.classList.contains('mobile-full-settings')
         && targetView?.classList.contains('settings-view');
-    if (mobileLayoutQuery.matches && view !== 'chat' && !mobileSettingsAllowed) view = 'chat';
+    if (mobileLayoutQuery.matches && !nativeAndroidShell && view !== 'chat' && !mobileSettingsAllowed) view = 'chat';
+    if (nativeAndroidShell) document.body.classList.toggle('mobile-full-settings', Boolean(targetView?.classList.contains('settings-view')));
     if (!document.getElementById(`view-${view}`)) return;
     document.body.dataset.activeView = view;
     placeWorkspaceComposer();
@@ -3449,6 +3503,7 @@ async function refreshMicrophoneDevices() {
 }
 
 async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || '') {
+    if (nativeAndroidShell) throw new Error('Use the Android app voice controls above the interface.');
     if (microphoneStream?.active && microphoneContext && microphoneProcessor) return;
     if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('This desktop backend does not provide microphone capture.');
@@ -3513,6 +3568,19 @@ async function ensureMicrophone(deviceId = voiceInputConfiguration.device_id || 
     refreshMicrophoneDevices();
 }
 
+let microphoneMeterUpdatedAt = -Infinity;
+function setMicrophoneMeter(value, force = false) {
+    const level = Math.min(100, Math.max(0, value));
+    const fill = document.getElementById('voice-input-meter');
+    fill.style.width = `${level}%`;
+    const now = performance.now();
+    // Keep the visual response immediate; expose a bounded-rate accessible value.
+    if (force || now - microphoneMeterUpdatedAt >= 250) {
+        fill.parentElement.setAttribute('aria-valuenow', String(Math.round(level)));
+        microphoneMeterUpdatedAt = now;
+    }
+}
+
 function handleMicrophoneAudio(event) {
     microphoneFrameCount += 1;
     const samples = event.inputBuffer.getChannelData(0);
@@ -3528,7 +3596,17 @@ function handleMicrophoneAudio(event) {
         cancelPendingWakeAcknowledgement();
     }
     visualAudioEnergy = Math.max(visualAudioEnergy, Math.min(1, rms * 35));
-    document.getElementById('voice-input-meter').style.width = `${Math.min(100, Math.max(1, rms * 900))}%`;
+    visualMicUpdatedAt = now;
+    // Keep only one small local display buffer, separate from request recordings.
+    const stride = samples.length / visualMicSamples.length;
+    for (let bucket = 0; bucket < visualMicSamples.length; bucket += 1) {
+        let peak = 0;
+        for (let index = Math.floor(bucket * stride); index < Math.floor((bucket + 1) * stride); index += 1) {
+            if (Math.abs(samples[index]) > Math.abs(peak)) peak = samples[index];
+        }
+        visualMicSamples[bucket] = peak;
+    }
+    setMicrophoneMeter(rms * 900);
     if (microphoneTestActive) {
         document.getElementById('voice-input-test-status').textContent = rms > .006
             ? 'Input detected — microphone is working.' : 'Listening… speak into the microphone.';
@@ -4159,7 +4237,7 @@ async function stopVoiceInput() {
     window.peteyMediaDevices.release('petey-core-voice');
     if (microphoneContext) await microphoneContext.close().catch(() => {});
     microphoneContext = null;
-    document.getElementById('voice-input-meter').style.width = '0';
+    setMicrophoneMeter(0, true);
     document.getElementById('test-voice-input').textContent = 'Test microphone';
     configureVoiceInputUI();
 }
@@ -4739,6 +4817,15 @@ function speechVisualizationOutput(context) {
     return speechVisualizationAnalyser;
 }
 
+function sampleSpeechVisualizationEnergy() {
+    if (!voiceInputPlaybackBlocked || !speechVisualizationAnalyser
+        || speechVisualizationAnalyser.context.state !== 'running') return 0;
+    speechVisualizationAnalyser.getFloatTimeDomainData(speechVisualizationSamples);
+    let energy = 0;
+    for (const sample of speechVisualizationSamples) energy += sample * sample;
+    return Math.min(1, Math.sqrt(energy / speechVisualizationSamples.length) * 5);
+}
+
 function primeSpeechPlayback({carSafe = false} = {}) {
     if (speechConfiguration?.provider === 'disabled') return;
     if (carSafe) return;
@@ -5311,7 +5398,7 @@ document.getElementById('persona-preset').addEventListener('change', event => {
 const profileSlotDialog = document.getElementById('profile-slot-dialog');
 
 function closeProfileSlotDialog() {
-    profileSlotDialog.hidden = true;
+    hideModalDialog(profileSlotDialog);
 }
 
 async function openProfileSlotDialog() {
@@ -5339,8 +5426,7 @@ async function openProfileSlotDialog() {
         });
         choices.append(choice);
     });
-    profileSlotDialog.hidden = false;
-    choices.querySelector('button')?.focus();
+    showModalDialog(profileSlotDialog, choices.querySelector('button'));
 }
 
 document.getElementById('save-personality').addEventListener('click', openProfileSlotDialog);
@@ -5384,11 +5470,11 @@ function openPersonalityWizard() {
     wizardGeneratedResult = null;
     renderWizardStep(1);
     updateWizardPreview();
-    wizardDialog.hidden = false;
+    showModalDialog(wizardDialog);
 }
 
 function closePersonalityWizard() {
-    wizardDialog.hidden = true;
+    hideModalDialog(wizardDialog);
 }
 
 function renderWizardStep(step) {
@@ -7415,69 +7501,7 @@ function startNeuralVisualization() {
         }
     };
 
-    const drawNeuralCore = scene => {
-        const {time, energy, cx, cy, scale, primary, secondary, state} = scene;
-        const rotation = time * (.00005 + energy * .000035);
-        const projected = nodes.map(node => {
-            const rx = node.x * Math.cos(rotation) - node.z * Math.sin(rotation);
-            const depth = node.x * Math.sin(rotation) + node.z * Math.cos(rotation);
-            const brainWidth = 1 - Math.max(0, node.y) * .23;
-            const breathe = 1 + Math.sin(time * .0016 + node.phase) * (.025 + energy * .065);
-            return {
-                node, depth,
-                x: cx + rx * brainWidth * scale * 1.24 * breathe,
-                y: cy + (node.y + Math.abs(rx) * .045) * scale * .86 * breathe,
-            };
-        });
-        const linkDistance = scale * (.5 + energy * .1);
-        for (let left = 0; left < projected.length; left += 1) {
-            for (let right = left + 1; right < projected.length; right += 1) {
-                const a = projected[left];
-                const b = projected[right];
-                const distance = Math.hypot(a.x - b.x, a.y - b.y);
-                if (distance > linkDistance) continue;
-                const signal = Math.max(0, Math.sin(time * .005 + a.node.phase + right * .14));
-                context.strokeStyle = rgba((left + right) % 3 ? primary : secondary,
-                    (1 - distance / linkDistance) * (.1 + energy * .36 + signal * energy * .12));
-                context.lineWidth = .45 + energy * 1.15;
-                context.beginPath();
-                context.moveTo(a.x, a.y);
-                context.lineTo(b.x, b.y);
-                context.stroke();
-            }
-        }
-        context.strokeStyle = rgba(secondary, .16 + energy * .16);
-        context.lineWidth = 1 + energy;
-        context.beginPath();
-        context.moveTo(cx, cy + scale * .94);
-        context.bezierCurveTo(cx - scale * 1.15, cy + scale * .75, cx - scale * 1.3, cy - scale * .2, cx - scale * .48, cy - scale * .88);
-        context.bezierCurveTo(cx - scale * .18, cy - scale * 1.06, cx - scale * .04, cy - scale * .94, cx, cy - scale * .82);
-        context.bezierCurveTo(cx + scale * .04, cy - scale * .94, cx + scale * .18, cy - scale * 1.06, cx + scale * .48, cy - scale * .88);
-        context.bezierCurveTo(cx + scale * 1.3, cy - scale * .2, cx + scale * 1.15, cy + scale * .75, cx, cy + scale * .94);
-        context.stroke();
-        projected.forEach(({node, x, y, depth}, index) => {
-            const beat = Math.max(0, Math.sin(time * (.003 + energy * .009) + node.phase));
-            const ignition = ((time * (.00022 + energy * .0005) + node.orbitRadius) % 1);
-            const flash = Math.max(0, 1 - Math.abs(ignition - node.orbitRadius) * 16) * energy;
-            const radius = (node.size + beat * (1 + energy * 3.8) + flash * 3) * (.78 + (depth + 1) * .18);
-            glowDot(x, y, radius, index % 3 ? primary : secondary, .42 + energy * .52 + flash * .32);
-        });
-        const tendrils = projected.filter(({node}) => node.hot);
-        tendrils.forEach(({node, x, y}, index) => {
-            const angle = Math.atan2(y - cy, x - cx) + Math.sin(time * .0005 + node.phase) * .18;
-            const reach = scale * (1.5 + index % 3 * .24) * (1 + energy * .13);
-            const endX = x + Math.cos(angle) * reach;
-            const endY = y + Math.sin(angle) * reach * .7;
-            context.strokeStyle = rgba(index % 2 ? secondary : primary, .08 + energy * .26);
-            context.lineWidth = .6 + energy * 1.2;
-            context.beginPath();
-            context.moveTo(x, y);
-            context.bezierCurveTo(x + Math.cos(angle + .8) * reach * .32, y + Math.sin(angle + .8) * reach * .22,
-                x + Math.cos(angle - .5) * reach * .68, y + Math.sin(angle - .5) * reach * .48, endX, endY);
-            context.stroke();
-        });
-        drawEnergyRings(time, cx, cy, scale * 1.15, energy, primary, secondary, state === 'speaking' ? 4 : 2);
-    };
+    const drawTTIK = window.createTTIKRenderer(context);
 
     const drawSynapseDrift = scene => {
         const {time, delta, energy, cx, cy, primary, secondary} = scene;
@@ -7798,7 +7822,7 @@ function startNeuralVisualization() {
 
     const renderers = {
         cognitive_pulse: drawCognitivePulse,
-        neural_core: drawNeuralCore,
+        ttik: drawTTIK,
         synapse_drift: drawSynapseDrift,
         orbital_mind: drawOrbitalMind,
         signal_bloom: drawSignalBloom,
@@ -7818,6 +7842,7 @@ function startNeuralVisualization() {
         previousTime = time;
         visualAudioEnergy *= .9;
         const state = visualState(time);
+        document.getElementById('visual-chat').classList.toggle('ttik-compact', preferences.visual_style === 'ttik' && height < 400);
         if (preferences.visual_style === 'synapse_network') {
             const energy = Math.min(1, Math.max(visualAudioEnergy, visualTokenEnergy,
                 voiceInputPlaybackBlocked ? .45 : 0, time < visualToolActivityUntil ? .35 : 0));
@@ -7826,6 +7851,8 @@ function startNeuralVisualization() {
             const palette = bloomPalettes[state];
             stateLabel.textContent = palette.label;
             stateHeading.textContent = palette.label.toUpperCase();
+            stateHeading.style.color = rgba(palette.secondary.join(','), .86);
+            activityDetail.style.color = rgba(palette.primary.join(','), .58);
             activityDetail.textContent = state === 'speaking' ? 'VOICE OUTPUT'
                 : state === 'listening' ? 'LIVE MICROPHONE ENERGY'
                 : state === 'thinking' ? (visualGenerating ? 'STREAMING RESPONSE' : 'PREPARING RESPONSE')
@@ -7864,12 +7891,17 @@ function startNeuralVisualization() {
         const cx = width * .5;
         const cy = height * .5;
         const scale = Math.min(width, height) * (.27 + smoothEnergy * .035);
-        const renderer = renderers[style] || drawNeuralCore;
-        renderer({time, delta, energy: smoothEnergy, cx, cy, scale, primary, secondary, state});
+        const renderer = renderers[style] || drawSynapseDrift;
+        renderer({time, delta, energy: smoothEnergy, cx, cy, scale, primary, secondary, state,
+            width, height, mobile: mobileLayoutQuery.matches, speechEnergy: sampleSpeechVisualizationEnergy(),
+            micSamples: visualMicSamples, micMuted: microphoneMuted,
+            micActive: !microphoneMuted && (voiceInputRunning || microphoneCapturing || microphoneTestActive)
+                && time - visualMicUpdatedAt < 250,
+        });
         context.globalCompositeOperation = 'source-over';
         stateLabel.textContent = palette.label;
         stateHeading.textContent = palette.label.toUpperCase();
-        stateHeading.style.color = rgba(secondary, .86);
+        stateHeading.style.color = style === 'ttik' ? '#ff6472' : rgba(secondary, .86);
         const toolLabel = `${visualToolActivityCount} TOOL ACTION${visualToolActivityCount === 1 ? '' : 'S'} COMPLETED`;
         activityDetail.textContent = state === 'error' ? 'SYSTEM ATTENTION'
             : state === 'speaking' ? 'VOICE OUTPUT'
@@ -7878,7 +7910,7 @@ function startNeuralVisualization() {
             : state === 'thinking' ? 'PREPARING RESPONSE'
             : time < visualToolActivityUntil && visualToolActivityCount ? toolLabel
             : state === 'muted' ? 'INPUT DISABLED' : 'READY';
-        activityDetail.style.color = rgba(primary, .58);
+        activityDetail.style.color = style === 'ttik' ? '#b87780' : rgba(primary, .58);
         neuralAnimationFrame = window.requestAnimationFrame(draw);
     };
     neuralDraw = draw;
@@ -8177,6 +8209,22 @@ function currentCommandPanelOrder() {
     return commandPanelCards().map(card => card.dataset.commandPanel);
 }
 
+async function moveCommandPanel(card, direction, button) {
+    if (commandRailSaving) return;
+    const cards = commandPanelCards().filter(item => !item.hidden);
+    const index = cards.indexOf(card);
+    const target = cards[index + direction];
+    if (!target) return;
+    if (direction < 0) target.before(card);
+    else target.after(card);
+    const saved = await saveCommandRail({command_rail_order: currentCommandPanelOrder()});
+    button.focus({preventScroll: true});
+    if (!saved) return;
+    card.scrollIntoView({block: 'nearest'});
+    const position = commandPanelCards().filter(item => !item.hidden).indexOf(card) + 1;
+    setCommandRailFeedback(`Panel moved to position ${position} of ${cards.length}.`, 'success');
+}
+
 function enhanceCommandPanel(card) {
     if (!card || card.dataset.commandPanelReady === 'true') return;
     const heading = card.querySelector(':scope > .command-card-heading');
@@ -8218,7 +8266,7 @@ function enhanceCommandPanel(card) {
         togglePanelCollapse();
     });
 
-    heading.querySelectorAll('.command-card-controls, .command-card-drag').forEach(el => el.remove());
+    heading.querySelectorAll('.command-card-drag').forEach(el => el.remove());
 
     const titleSpan = heading.querySelector(':scope > span:first-child');
     let collapse = heading.querySelector(':scope > .command-card-collapse');
@@ -8236,6 +8284,33 @@ function enhanceCommandPanel(card) {
             heading.appendChild(collapse);
         }
     }
+    const controls = document.createElement('span');
+    controls.className = 'command-card-controls';
+    const panelName = titleSpan?.textContent.trim() || 'Panel';
+    for (const [direction, label, path] of [
+        [-1, 'up', 'M6 9l6-6 6 6M12 3v18'],
+        [1, 'down', 'M6 15l6 6 6-6M12 21V3'],
+    ]) {
+        const move = document.createElement('button');
+        move.type = 'button';
+        move.className = 'command-card-move';
+        move.dataset.direction = String(direction);
+        move.setAttribute('aria-label', `Move ${panelName} panel ${label}`);
+        move.title = `Move ${label}`;
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('viewBox', '0 0 24 24');
+        icon.setAttribute('aria-hidden', 'true');
+        const stroke = document.createElementNS(icon.namespaceURI, 'path');
+        stroke.setAttribute('d', path);
+        icon.append(stroke);
+        move.append(icon);
+        move.addEventListener('click', event => {
+            event.stopPropagation();
+            moveCommandPanel(card, direction, move);
+        });
+        controls.append(move);
+    }
+    heading.append(controls);
 }
 
 
@@ -8276,6 +8351,14 @@ function applyCommandPanelPreferences() {
             button.setAttribute('aria-label', `${isCollapsed ? 'Expand' : 'Collapse'} panel`);
             button.title = isCollapsed ? 'Expand panel' : 'Collapse panel';
         }
+    });
+    const visibleCards = commandPanelCards().filter(card => !card.hidden);
+    visibleCards.forEach((card, index) => {
+        card.querySelectorAll('.command-card-move').forEach(button => {
+            const atEdge = Number(button.dataset.direction) < 0 ? index === 0 : index === visibleCards.length - 1;
+            // Keep a moved control focused even when it reaches the edge.
+            button.setAttribute('aria-disabled', String(atEdge));
+        });
     });
 }
 
@@ -8526,6 +8609,58 @@ mobileLayoutQuery.addEventListener('change', event => {
     placeWorkspaceComposer();
     if (event.matches) showView('chat');
 });
+
+// Called by the trusted Android activity, without exposing a JavaScript/native
+// bridge to pages or addons. Android owns microphone capture and wake handling.
+let androidRefreshPending = false;
+let androidRefreshing = false;
+let androidWasRecording = false;
+window.peteyAndroidSync = async function (state) {
+    if (!nativeAndroidShell) return;
+    if (state.recording && !androidWasRecording) {
+        automaticSpeechGeneration += 1;
+        activeSpeechCancel?.();
+        activeSpeechCancel = null;
+        activeChatAudio = null;
+        resetSpeechButton(activeSpeechButton);
+        activeSpeechButton = null;
+        window.speechSynthesis?.cancel?.();
+        setVoicePlaybackActive(false);
+    }
+    androidWasRecording = Boolean(state.recording);
+    if (state.refresh) androidRefreshPending = true;
+    if (androidRefreshPending && !androidRefreshing && !sendButton.disabled) {
+        androidRefreshing = true;
+        try { await loadConversationMessages(); androidRefreshPending = false; }
+        catch (_error) { /* Retain pending refresh until connectivity returns. */ }
+        finally { androidRefreshing = false; }
+    }
+};
+
+
+// Keep native Escape dismissal and all explicit close paths in sync.
+for (const [id, close] of [
+    ['new-chat-dialog', closeNewChatDialog],
+    ['delete-chat-dialog', closeDeleteChatDialog],
+    ['profile-slot-dialog', closeProfileSlotDialog],
+    ['personality-wizard-dialog', closePersonalityWizard],
+]) {
+    const dialog = document.getElementById(id);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    dialog.addEventListener('keydown', event => {
+        if (event.key !== 'Tab') return;
+        const controls = [...dialog.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+            .filter(control => !control.disabled && control.tabIndex >= 0 && control.getClientRects().length);
+        const first = controls[0], last = controls.at(-1);
+        if (!first) { event.preventDefault(); return; }
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first.focus();
+        }
+    });
+}
+
 // Fish's voice model catalog is fetched by PETEY; API keys never enter this picker.
 (() => {
     const field = document.getElementById('speech-fish-voice-field');

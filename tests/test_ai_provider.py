@@ -245,6 +245,14 @@ class AIProviderTests(unittest.TestCase):
                             "type": "integer", "minimum": 128,
                             "maximum": 2048, "default": 1024,
                         },
+                        "topic": {"type": "string", "const": "general"},
+                        "include_raw_content": {
+                            "anyOf": [
+                                {"type": "boolean", "const": False},
+                                {"type": "string", "const": "markdown"},
+                            ],
+                            "default": False,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -261,6 +269,32 @@ class AIProviderTests(unittest.TestCase):
         self.assertNotIn("additionalProperties", schema)
         self.assertNotIn("default", schema["properties"]["width"])
         self.assertEqual(schema["properties"]["width"]["maximum"], 2048)
+        self.assertEqual(schema["properties"]["topic"]["enum"], ["general"])
+        alternatives = schema["properties"]["include_raw_content"]["anyOf"]
+        self.assertEqual(alternatives[0], {"type": "boolean", "description": "Must equal false."})
+        self.assertEqual(alternatives[1], {"type": "string", "enum": ["markdown"]})
+        self.assertNotIn('"const":', json.dumps(schema))
+        self.assertEqual(tools[0]["function"]["parameters"]["properties"]["topic"]["const"], "general")
+
+    def test_gemini_schema_preserves_argument_names_that_match_keywords(self):
+        schema = {"type": "object", "properties": {
+            name: {"type": "string", "const": "fixed", "default": "fixed"}
+            for name in ("const", "default", "additionalProperties", "examples")
+        }}
+        result = AIProvider._gemini_tool_schema(schema)
+        self.assertEqual(set(result["properties"]), set(schema["properties"]))
+        for field in result["properties"].values():
+            self.assertEqual(field, {"type": "string", "enum": ["fixed"]})
+
+    def test_gemini_schema_converts_nested_constants_and_annotations(self):
+        schema = {"$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "example", "type": "array", "examples": [[3]],
+                  "items": {"const": 3, "description": "A fixed count."}}
+        self.assertEqual(AIProvider._gemini_tool_schema(schema), {
+            "type": "array", "items": {
+                "type": "integer", "description": "A fixed count. Must equal 3."
+            }
+        })
 
     def test_gemini_omits_empty_parameters_for_no_argument_tool(self):
         response = MagicMock()

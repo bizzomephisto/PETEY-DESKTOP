@@ -397,16 +397,39 @@ class AIProvider:
 
     @staticmethod
     def _gemini_tool_schema(value):
-        """Remove JSON Schema keywords unsupported by Gemini function declarations."""
+        """Adapt schema nodes without treating argument names as schema keywords."""
         if isinstance(value, list):
             return [AIProvider._gemini_tool_schema(item) for item in value]
         if not isinstance(value, dict):
             return value
-        return {
-            key: AIProvider._gemini_tool_schema(item)
-            for key, item in value.items()
-            if key not in {"additionalProperties", "default"}
-        }
+        converted = {}
+        for key, item in value.items():
+            if key in {"additionalProperties", "default", "const", "$schema", "$id", "examples"}:
+                continue
+            if key == "properties" and isinstance(item, dict):
+                converted[key] = {
+                    name: AIProvider._gemini_tool_schema(schema)
+                    for name, schema in item.items()
+                }
+            else:
+                converted[key] = AIProvider._gemini_tool_schema(item)
+        if "const" in value:
+            constant = value["const"]
+            # Gemini's Schema enum accepts strings. Keep other fixed values in
+            # the description rather than sending an invalid boolean/number enum.
+            if isinstance(constant, str):
+                converted.setdefault("type", "string")
+                converted["enum"] = [constant]
+            else:
+                if constant is None:
+                    converted["nullable"] = True
+                elif isinstance(constant, bool):
+                    converted.setdefault("type", "boolean")
+                elif isinstance(constant, (int, float)):
+                    converted.setdefault("type", "integer" if isinstance(constant, int) else "number")
+                description = str(converted.get("description") or "").strip()
+                converted["description"] = (description + " " if description else "") + "Must equal " + json.dumps(constant) + "."
+        return converted
 
     @staticmethod
     def _message_content(content) -> str:

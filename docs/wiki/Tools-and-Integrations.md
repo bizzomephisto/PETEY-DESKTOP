@@ -1,5 +1,14 @@
 # Tools and Integrations
 
+## Visible web browser
+
+Open **Settings → Tools & integrations → Web browser** and turn on **Let Petey
+browse the web**. PETEY opens a separate browser window on its host computer,
+including when you request a search from mobile chat. The feature starts off.
+Update the Python dependencies and use **Install Chromium** if needed. See the
+[web browser guide](https://github.com/bizzomephisto/PETEY-DESKTOP/blob/main/docs/web-browser.md)
+for setup and the supported actions.
+
 ## Read-only Filesystem connector
 
 The optional Filesystem connection is under **Settings → Tools & integrations**.

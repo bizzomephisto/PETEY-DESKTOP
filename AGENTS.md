@@ -1,6 +1,6 @@
 # PETEY coding-agent context
 
-Scope: repository. Snapshot: 2026-09-25, current version v0.21.1; retained experimental preview v0.19.0-experimental.1.
+Scope: repository. Snapshot: 2026-09-25, current version v0.21.2; retained experimental preview v0.19.0-experimental.1.
 Start here; read only task-relevant implementation/tests. This is a navigation cache, not a substitute for checking code before edits. Source wins on factual drift; update this file when architecture, commands, contracts, or extension points change. Keep it compact; no session logs or copied source.
 Read `PETEY_MANIFEST.md` for durable product/runtime/release invariants and `ADDONS.md` plus `docs/addons.md` before changing the extension system.
 
@@ -19,6 +19,8 @@ Read `PETEY_MANIFEST.md` for durable product/runtime/release invariants and `ADD
 
 ## Runtime/data flow
 
+Core web browser: `petey/web_browser.py` owns a visible Playwright Chromium window with a separate persistent `browser-profile/` under the local data root. It defaults off under `settings.tools.web_browser`, is offered only to Desktop/Mobile chat, and uses one worker thread for every browser operation. Enablement is rechecked at execution; disabling revokes queued/stale tools and closes the window after the running action. `web/static/browser.js` and Settings Tools expose the switch plus open/close/install buttons; `/api/desktop/tools/browser*` handles them. Browser installation runs separately; shutdown closes the session and installer. Automatic search tries Brave then DuckDuckGo; provider choice persists locally and survives enable toggles. Search returns structured links and explicit `search_completed`/`blocked` flags so challenge pages are not treated as answers. Page text is bounded untrusted data; action refs bind exact current DOM nodes, passwords/files and arbitrary JavaScript are not model tools. Core dependency: Playwright; Chromium can be installed from Settings, with installed Chrome/Edge as fallbacks.
+
 Model control is opt-in per compatible add-on. Persistent policy lives in `DesktopState.settings.petey_control`, defaults off, and covers individual capabilities plus Desktop, Mobile, and Discord surfaces. Metered capabilities have autonomous daily limits; `ToolSpec.explicit_when` lets a direct user request bypass only that limit. `AddonManager.tool_specs(surface=...)` wraps both schema availability and dispatch authorization. Desktop filesystem MCP and unrelated core tools are never included by an add-on grant.
 
 `ToolSpec.required_when` lets a narrowly gated capability require one initial tool call. When a direct request matches one or more required tools, `ToolRegistry.schemas_for()` excludes unrelated autonomous tools so provider required/ANY mode cannot choose the wrong action. `ToolRegistry.requires_tool()` passes that decision through desktop and Discord conversations; provider loops use required/ANY only on the first round and return to automatic selection afterward so the model can produce its final answer.
@@ -31,7 +33,7 @@ Desktop uses the Command Center shell. Its right drawer slides over the app and 
 
 The desktop chat header keeps the conversation title and runtime status visible. Its chevron dropdown owns the profile, visual animation, fullscreen, Chat/Visual, and Temporary controls; it closes after a selection, outside click, or Escape. The private repository is not linked in the app; the version sits beneath the deAPI link in the desktop sidebar footer. Mobile continues to use its separate compact controls.
 
-Visual Mode defaults to `synapse_network`, a bundled, dependency-free WebGL2 network from `web/static/synapse/` hosted in a same-origin iframe; its `postMessage` input maps PETEY listening/thinking/speaking state and audio energy to color and signal flow. The earlier seven canvas styles remain selectable: `cognitive_pulse`, `neural_core`, `synapse_drift`, `orbital_mind`, `signal_bloom`, `aurora_flow`, and `constellation_field`. Browsers without WebGL2 use Synapse's Canvas fallback. Mobile captions remain in the upper third; desktop fullscreen captions sit directly below the state heading. Mobile keeps fixed mic/push-to-talk/speaker controls above PETEY at the bottom. The persisted microphone mute stops recording/listening across desktop and mobile; muted mic and speaker buttons show a red X. The frameless PETEY avatar button toggles a bottom action row with Chat on the left and Fullscreen/Settings on the right.
+Visual Mode defaults to `synapse_network`, a bundled, dependency-free WebGL2 network from `web/static/synapse/` hosted in a same-origin iframe; its `postMessage` input maps PETEY listening/thinking/speaking state and audio energy to color and signal flow. The earlier seven canvas styles remain selectable: `cognitive_pulse`, `ttik`, `synapse_drift`, `orbital_mind`, `signal_bloom`, `aurora_flow`, and `constellation_field`. Browsers without WebGL2 use Synapse's Canvas fallback. Mobile captions remain in the upper third; desktop fullscreen captions sit directly below the state heading. Mobile keeps fixed mic/push-to-talk/speaker controls above PETEY at the bottom. The persisted microphone mute stops recording/listening across desktop and mobile; muted mic and speaker buttons show a red X. The frameless PETEY avatar button toggles a bottom action row with Chat on the left and Fullscreen/Settings on the right.
 
 Add-on panel JavaScript and stylesheets use a revision from their own file mtimes in rendered asset URLs; changing external add-on assets refreshes mobile/tunnel caches independently of core CSS/JS.
 
@@ -150,3 +152,38 @@ in `companion-devices.json`; rotating mobile access invalidates them. The phone
 runs local wake detection; only bounded post-wake WAV reaches Desktop. Existing
 STT, mobile chat/tool policy, and speech jobs remain the implementation boundary.
 Tests: `python -m unittest discover -s tests -p 'test_companion_api.py' -v`.
+
+Connected Android APK v0.3 uses the responsive workspace in a same-origin WebView
+with native voice/file/navigation controls. POST `/api/companion/v1/interface-session`
+explicitly grants full interface access to a paired device and sets the Secure,
+HttpOnly `petey_device_session` cookie. The launcher validates that device grant
+on each request; revocation, token expiry, or root-secret rotation invalidates it.
+Ordinary companion bearers alone still do not authenticate general web routes.
+`PeteyAndroid/` user-agent enables full mobile sections and saved-chat drawer,
+keeps every chat surface `mobile_petey` even in landscape, and disables core
+browser microphone capture. Native reply refreshes do not trigger web TTS;
+`peteyAndroidSync` cancels web speech during native recording. External links
+stay outside the authenticated WebView; no JavaScript/native bridge is exposed.
+
+Android car-voice v0.4 launches a minimal native voice screen. Bluetooth hands-free
+capture is explicit and experimental; USB Mazda compatibility requires hardware
+evidence. POST `/api/companion/v1/transcribe-local` delegates with `local_only=1`;
+the STT handler rejects any provider other than Local Whisper without hosted
+fallback. Existing `/transcribe` behavior is retained for older companions.
+
+TTIK replaces Neural Core (`neural_core` migrates to `ttik` on settings load/update).
+`web/static/ttik.js` draws the three red segmented voice banks and separate mic
+scope. Both speech paths use a shared AnalyserNode on their existing output bus;
+TTIK reads audible output RMS rather than synthesized animation pulses. The mic
+scope uses a bounded 128-sample display buffer from the existing mic callback,
+and flattens on mute/inactive/stale capture. No additional microphone/network
+stream is created. Short viewports place state and controls beside the module.
+
+UI accessibility: shared new-chat/delete/profile/wizard overlays use native dialogs through showModalDialog/hideModalDialog (portal to body, contain Tab, restore focus). Rail panels retain dragging and offer Move up/down buttons through moveCommandPanel. setMicrophoneMeter updates visual level immediately and ARIA at a bounded rate. Regression browser runner: tests/browser/audit_regressions.py (optional Playwright + Chrome, temporary state and mocked APIs).
+
+Fish Audio voices: `petey/fish_voices.py` reads the authenticated `/model` catalog via
+`GET /api/desktop/speech/fish/voices?q=&scope=public|mine&page=1`. The picker under
+Personality & voice searches names, pages results, and fills the existing
+`speech-fish-voice` input; saving remains part of the current Petey profile flow.
+Never expose keys or automatically change the selected voice while browsing.
+Tests: `tests/test_fish_voices.py`, `tests/browser/fish_catalog_regressions.py`.

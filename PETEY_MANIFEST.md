@@ -7,8 +7,8 @@ drifts.
 
 ## Current baseline
 
-- Release: **v0.21.1**
-- Current version: **v0.21.1**
+- Release: **v0.21.2**
+- Current version: **v0.21.2**
 - Experimental preview retained at tag: `v0.19.0-experimental.1`
 - Runtime: Python 3.12+, Flask/Werkzeug, pywebview, vanilla HTML/CSS/JavaScript
 - Test framework: `unittest`; current full suite contains 353 tests
@@ -50,11 +50,13 @@ actions always use the saved active chat provider rather than naming or forcing 
   replies use one speech request per answer; queued replies, add-on announcements,
   and wake acknowledgements re-check and obey the current mute state.
 - Visual mode renders six distinct, full-canvas reactive scenes on pure black:
-  Neural Core, Synapse Drift, Orbital Mind, Signal Bloom, Aurora Flow, and
+  TTIK, Synapse Drift, Orbital Mind, Signal Bloom, Aurora Flow, and
   Constellation Field. Microphone and speech energy drive their motion, scale,
   light, signals, and particle density. Orange indicates listening, violet/blue
   indicates thinking, and electric blue follows PETEY's speech. Muted and error
-  states remain distinct, reduced-motion preferences lower the animation, and the
+  states remain distinct. TTIK uses three red segmented voice columns driven by
+  actual playback amplitude, plus a separate live microphone waveform. Existing
+  Neural Core selections migrate to TTIK. Reduced-motion preferences lower the animation, and the
   current PETEY avatar anchors the frameless bottom controls. Desktop fullscreen
   captions sit immediately below the speaking/listening state heading.
 - Wake-name mode uses a small local keyword detector and a preloaded voice clip or

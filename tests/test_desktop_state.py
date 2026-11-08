@@ -167,12 +167,12 @@ class DesktopStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DesktopState(directory)
             self.assertEqual(state.preferences["theme"], "nebula")
-            for theme in ("nebula", "cognitive", "signal", "terminal", "ember"):
+            for theme in ("nebula", "cognitive", "signal", "terminal", "material"):
                 state.update_preferences({"theme": theme})
                 self.assertEqual(DesktopState(directory).preferences["theme"], theme)
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "unsupported"})
-            self.assertEqual(state.preferences["theme"], "ember")
+            self.assertEqual(state.preferences["theme"], "material")
 
     def test_theme_accents_persist_independently(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -181,7 +181,7 @@ class DesktopStateTests(unittest.TestCase):
             self.assertEqual(result["theme_accents"]["cognitive"], "#aabbcc")
             self.assertEqual(result["theme_accents"]["nebula"], "#8b5cf6")
             self.assertEqual(result["theme_accents"]["terminal"], "#63ff8f")
-            self.assertEqual(result["theme_accents"]["ember"], "#ff8a4c")
+            self.assertEqual(result["theme_accents"]["material"], "#a0d5ca")
             self.assertEqual(DesktopState(directory).preferences["theme_accents"]["cognitive"], "#aabbcc")
             with self.assertRaises(ValueError):
                 state.update_preferences({"theme": "signal", "theme_accent": "red"})
@@ -233,12 +233,26 @@ class DesktopStateTests(unittest.TestCase):
             state = DesktopState(directory)
             for old_theme, new_theme in {
                 "midnight": "nebula", "ocean": "nebula", "forest": "signal",
-                "paper": "cognitive", "studio": "cognitive",
+                "paper": "cognitive", "studio": "cognitive", "ember": "material",
             }.items():
                 settings = json.loads(state.settings_path.read_text())
                 settings["preferences"]["theme"] = old_theme
                 state.settings_path.write_text(json.dumps(settings))
                 self.assertEqual(DesktopState(directory).preferences["theme"], new_theme)
+
+    def test_ember_migrates_to_material_preserving_custom_accents(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            for previous, expected in [("#ff8a4c", "#a0d5ca"), ("#ABCDEF", "#abcdef")]:
+                settings = json.loads(state.settings_path.read_text())
+                settings["preferences"]["theme"] = "ember"
+                settings["preferences"]["theme_accents"] = {"ember": previous}
+                state.settings_path.write_text(json.dumps(settings))
+                migrated = DesktopState(directory).preferences
+                self.assertEqual(migrated["theme"], "material")
+                self.assertEqual(migrated["theme_accents"]["material"], expected)
+                self.assertNotIn("ember", migrated["theme_accents"])
 
     def test_studio_theme_accent_migrates_to_cognitive_pulse(self):
         import json
@@ -390,6 +404,22 @@ class DesktopStateTests(unittest.TestCase):
 
             reloaded.update_selected_model("txt2img", "")
             self.assertEqual(reloaded.selected_model("txt2img"), "")
+
+    def test_ttik_replaces_saved_neural_core_without_changing_other_preferences(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = DesktopState(directory)
+            state.update_preferences({'visual_style': 'ttik', 'visual_mode': True, 'ui_scale': 1.2})
+            self.assertEqual(DesktopState(directory).preferences['visual_style'], 'ttik')
+            settings = json.loads(state.settings_path.read_text())
+            settings['preferences']['visual_style'] = 'neural_core'
+            state.settings_path.write_text(json.dumps(settings))
+            migrated = DesktopState(directory)
+            self.assertEqual(migrated.preferences['visual_style'], 'ttik')
+            self.assertTrue(migrated.preferences['visual_mode'])
+            self.assertEqual(migrated.preferences['ui_scale'], 1.2)
+            self.assertEqual(DesktopState(directory).preferences['visual_style'], 'ttik')
+            migrated.update_preferences({'visual_style': 'neural_core'})
+            self.assertEqual(migrated.preferences['visual_style'], 'ttik')
 
     def test_conversations_and_preferences_persist(self):
         with tempfile.TemporaryDirectory() as directory:

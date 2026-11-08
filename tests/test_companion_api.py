@@ -46,6 +46,42 @@ class CompanionApiTests(unittest.TestCase):
         self.app.config['PETEY_COMPANION_PAIRING_SECRET'] = 'rotated'
         self.assertEqual(self.client.get(PREFIX + '/device', headers=self.headers(second)).status_code, 401)
 
+    def test_full_interface_session_requires_grant_and_revokes_with_device(self):
+        token = self.pair()
+        self.client.set_cookie('petey_device_session', token)
+        self.assertEqual(self.client.get('/private').status_code, 401)
+        result = self.client.post(PREFIX + '/interface-session', headers=self.headers(token))
+        self.assertEqual(result.status_code, 200)
+        cookie = result.headers['Set-Cookie']
+        for attribute in ['Secure', 'HttpOnly', 'SameSite=Strict', 'Path=/']:
+            self.assertIn(attribute, cookie)
+        self.assertNotIn('root-secret', cookie)
+        self.assertEqual(self.client.get('/private', base_url='https://localhost').status_code, 200)
+        self.client.delete(PREFIX + '/device', headers=self.headers(token))
+        self.assertEqual(self.client.get('/private', base_url='https://localhost').status_code, 401)
+
+    def test_full_interface_session_invalidated_by_rotation_or_expiry(self):
+        token = self.pair()
+        self.client.post(PREFIX + '/interface-session', headers=self.headers(token))
+        with patch('web.companion_api.time.time', return_value=10**12):
+            self.assertEqual(self.client.get('/private', base_url='https://localhost').status_code, 401)
+        self.app.config['PETEY_COMPANION_PAIRING_SECRET'] = 'rotated'
+        self.assertEqual(self.client.get('/private', base_url='https://localhost').status_code, 401)
+        self.assertEqual(self.client.post(PREFIX + '/interface-session', headers=self.headers(token)).status_code, 401)
+
+    def test_interface_grant_rechecks_pairing_after_request_authentication(self):
+        token = self.pair()
+        original = CompanionTokens.enable_interface
+
+        def revoke_before_grant(store, token, root):
+            store.revoke(token)
+            return original(store, token, root)
+
+        with patch.object(CompanionTokens, 'enable_interface', revoke_before_grant):
+            result = self.client.post(PREFIX + '/interface-session', headers=self.headers(token))
+        self.assertEqual(result.status_code, 401)
+        self.assertNotIn('Set-Cookie', result.headers)
+
     def test_mobile_surface_and_validation(self):
         headers = self.headers(self.pair())
         result = self.client.post(PREFIX + '/chat', headers=headers, json={'message': 'Hello', 'surface': 'petey_desktop'})
@@ -89,6 +125,39 @@ class CompanionApiTests(unittest.TestCase):
                 wav.writeframes(b'\0\0' * 1600)
             result = self.client.post(PREFIX + '/transcribe', headers=headers, data={'audio': (io.BytesIO(output.getvalue()), 'request.wav')})
             self.assertEqual(result.status_code, expected)
+
+    def test_car_local_transcription_rejects_hosted_providers_and_never_falls_back(self):
+        import io
+        import wave
+        from unittest.mock import MagicMock
+        from petey.desktop_state import DesktopState
+        from petey.local_whisper import LocalWhisperError
+        from web.desktop_app import create_desktop_app
+        state = DesktopState(self.directory.name)
+        state.update_voice_input({'mode': 'push_to_talk', 'provider': 'local_whisper'})
+        app = create_desktop_app(state=state, memory=MagicMock(), job_manager=MagicMock())
+        protect_lan_app(app, 'local-secret', secure_cookie=True)
+        client = app.test_client()
+        token = client.post(PREFIX + '/pair', headers=self.headers('local-secret')).json['token']
+        output = io.BytesIO()
+        with wave.open(output, 'wb') as wav:
+            wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000); wav.writeframes(b'\0\0' * 1600)
+        def transcribe():
+            return client.post(PREFIX + '/transcribe-local', headers=self.headers(token), data={'audio': (io.BytesIO(output.getvalue()), 'request.wav')})
+        with patch('web.desktop_app.LocalWhisper') as local, patch('web.desktop_app.DeapiSTT') as deapi, patch('web.desktop_app.GeminiSTT') as gemini:
+            for provider in ('automatic', 'deapi', 'gemini'):
+                with self.subTest(provider=provider):
+                    state.update_voice_input({'provider': provider})
+                    self.assertEqual(transcribe().status_code, 409)
+                    local.assert_not_called(); deapi.assert_not_called(); gemini.assert_not_called()
+            state.update_voice_input({'provider': 'local_whisper'})
+            local.return_value.transcribe.return_value = 'Car request'
+            result = transcribe()
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json, {'transcript': 'Car request', 'provider': 'local_whisper'})
+            local.return_value.transcribe.side_effect = LocalWhisperError('Model unavailable')
+            self.assertEqual(transcribe().status_code, 502)
+            deapi.assert_not_called(); gemini.assert_not_called()
 
     def test_real_desktop_handlers_with_mocked_providers(self):
         import io

@@ -6,8 +6,9 @@
                 </details>
 
                 <details id="character-settings" class="settings-card settings-section" open>
-                    <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div><button id="open-personality-wizard" class="secondary-button wizard-trigger-btn" type="button">🧙 Personality Wizard</button></div></summary>
+                    <summary><div class="settings-section-heading"><div><h2>Who is Petey?</h2><p>Choose a preset, define a role, and edit Petey’s personality.</p></div></div></summary>
                     <div class="settings-section-body">
+                        <button id="open-personality-wizard" class="secondary-button wizard-trigger-btn" type="button">🧙 Personality Wizard</button>
                         <div class="field-grid two-column">
                             <label><span>Preset</span><select id="persona-preset"><option value="">Custom</option></select></label>
                             <label><span>Name</span><input id="persona-name" type="text" maxlength="80"></label>
@@ -75,7 +76,7 @@
 
 <div class="settings-save-bar"><span>Instructions, traits, communication style, voice, and speech provider save together.</span><button id="save-personality" class="primary-button" type="button">Save Petey profile</button></div>
 
-<div id="profile-slot-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-slot-dialog-title" hidden>
+<dialog id="profile-slot-dialog" class="new-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-slot-dialog-title" hidden>
     <div class="new-chat-card profile-slot-dialog-card">
         <div class="new-chat-heading">
             <div><span class="page-eyebrow">SAVE PETEY PROFILE</span><h2 id="profile-slot-dialog-title">Which profile slot?</h2></div>
@@ -85,10 +86,10 @@
         <div id="profile-slot-choices" class="profile-slot-choices"></div>
         <button id="profile-slot-dialog-cancel" class="text-button" type="button">Cancel</button>
     </div>
-</div>
+</dialog>
 
 <!-- Personality Creation Wizard Dialog -->
-<div id="personality-wizard-dialog" class="new-chat-dialog wizard-dialog" role="dialog" aria-modal="true" aria-labelledby="wizard-dialog-title" hidden>
+<dialog id="personality-wizard-dialog" class="new-chat-dialog wizard-dialog" role="dialog" aria-modal="true" aria-labelledby="wizard-dialog-title" hidden>
     <div class="new-chat-card wizard-card">
         <div class="new-chat-heading">
             <div>
@@ -290,4 +291,4 @@
             </div>
         </div>
     </div>
-</div>
+</dialog>

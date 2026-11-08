@@ -439,9 +439,10 @@ class DesktopBridge:
     def __init__(
         self, gallery=None, addons_dir=None, voice_cues_dir=None, restart_args=(), data_dir=None,
         window_size_store=None, petey_public_origin="", petey_access_token="",
-        restart_modes=None, cloudflare_port=8765,
+        restart_modes=None, cloudflare_port=8765, browser_manager=None,
     ):
         self.window = None
+        self.browser_manager = browser_manager
         self.gallery = gallery
         self.addons_dir = Path(addons_dir) if addons_dir else None
         self.voice_cues_dir = Path(voice_cues_dir) if voice_cues_dir else None
@@ -647,6 +648,8 @@ class DesktopBridge:
                 # Restart must still work if WebEngine is already closing.
                 pass
             terminate_qt_webengine_children()
+            if self.browser_manager is not None:
+                self.browser_manager.close()
             os.chdir(PROJECT_ROOT)
             os.execv(
                 sys.executable,
@@ -1036,6 +1039,10 @@ def protect_lan_app(
                 secure=request_is_secure,
             )
             return response
+        device_session = request.cookies.get("petey_device_session", "")
+        interface_auth = app.config.get("PETEY_COMPANION_INTERFACE_AUTH")
+        if device_session and callable(interface_auth) and interface_auth(device_session):
+            return None
         saved = request.cookies.get(cookie_name, "")
         if saved and hmac.compare_digest(saved, access_token):
             return None
@@ -1123,6 +1130,9 @@ class LocalServer:
         if jobs is not None:
             jobs.close()
         self.app.config["PETEY_MCP"].close()
+        browser = self.app.config.get("PETEY_WEB_BROWSER")
+        if browser is not None:
+            browser.close()
         general_mcp = self.app.config.get("PETEY_GENERAL_MCP")
         if general_mcp is not None:
             general_mcp.close()
@@ -1380,6 +1390,7 @@ def main():
                 "browser": ("--browser", *preserved_cloudflare_args),
             },
             cloudflare_port=remembered_cloudflare_port,
+            browser_manager=local.app.config.get("PETEY_WEB_BROWSER"),
         )
         bridge.window = webview.create_window(
             "PETEY",

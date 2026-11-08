@@ -42,6 +42,8 @@ from petey.fish_tts import (FISH_TTS_MODELS, FishTTS, FishTTSError,
                             fish_expression_prompt, fish_speech_text)
 from petey.media_service import MediaInput, MediaService
 from petey.media_jobs import MediaGallery, MediaJobManager
+from petey.web_browser import WebBrowserManager
+from petey.tools.registry import ToolError
 from petey.general_mcp import GeneralMCPManager
 from petey.mcp_client import FilesystemMCPManager, MCPError
 from petey.image_browser import ImageBrowser, ImageBrowserError
@@ -129,10 +131,11 @@ def create_desktop_app(
     wake_detector: LocalWakeDetector | None = None,
     updater: PeteyUpdater | None = None,
     general_mcp_manager: GeneralMCPManager | None = None,
+    browser_manager: WebBrowserManager | None = None,
 ) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     changelog = load_changelog(Path(__file__).resolve().parents[1] / "CHANGELOG.md")
-    core_assets = ("desktop.css", "desktop.js", "mcp.js", "settings.js", "discord.js", "tasks.css", "tasks.js", "synapse/index.html", "synapse/map.js", "synapse/map.css", "synapse/connection-renderer.js", "synapse/petey-embed.css")
+    core_assets = ("desktop.css", "desktop.js", "ttik.js", "mcp.js", "browser.js", "settings.js", "discord.js", "tasks.css", "tasks.js", "synapse/index.html", "synapse/map.js", "synapse/map.css", "synapse/connection-renderer.js", "synapse/petey-embed.css")
     app.config["PETEY_ASSET_REVISION"] = str(max(
         (Path(app.static_folder) / name).stat().st_mtime_ns for name in core_assets
     ))
@@ -194,6 +197,7 @@ def create_desktop_app(
         app.config["PETEY_STATE"]
     )
     app.config["PETEY_GENERAL_MCP"] = general_mcp_manager or GeneralMCPManager(app.config["PETEY_STATE"])
+    app.config["PETEY_WEB_BROWSER"] = browser_manager or WebBrowserManager(app.config["PETEY_STATE"])
     app.config["PETEY_IMAGE_BROWSER"] = ImageBrowser()
     app.config["PETEY_VOICE_CUES"] = VoiceCueLibrary(app.config["PETEY_STATE"].data_dir)
     app.config["PETEY_WAKE_DETECTOR"] = wake_detector or LocalWakeDetector(
@@ -307,11 +311,35 @@ def create_desktop_app(
                 app.config["PETEY_MEMORY"],
                 mcp_manager=app.config["PETEY_MCP"],
                 general_mcp_manager=app.config["PETEY_GENERAL_MCP"],
+                browser_manager=app.config["PETEY_WEB_BROWSER"],
                 addon_manager=app.config["PETEY_ADDONS"],
                 surface=identity.surface,
             )
+        system_prompt = current.conversation_system_prompt
+        # DJ style must be part of the system profile: AssistantService's profile
+        # boundary deliberately prevents event text/history from replacing it.
+        dj_prompt = event_metadata.get("spotify_dj_prompt")
+        if (addon_id == "spotify" and not user_initiated
+                and event_metadata.get("spotify_dj_cue") == "track_transition"
+                and isinstance(dj_prompt, str) and dj_prompt.strip()):
+            dj_name = str(event_metadata.get("spotify_dj_persona") or "DJ")[:60]
+            dj_profile = (
+                f"SPOTIFY DJ PROFILE ({dj_name}):\n{dj_prompt[:4000]}"
+            )
+            if event_metadata.get("spotify_dj_mix_with_profile") is True:
+                system_prompt += (
+                    "\n\nFor this Spotify transition, blend your established personality "
+                    "with the following DJ profile. Apply its broadcast directions.\n"
+                    + dj_profile
+                )
+            else:
+                system_prompt = (
+                    "You are PETEY hosting a Spotify radio transition. The following "
+                    "DJ profile controls your personality and delivery for this response.\n"
+                    + dj_profile
+                )
         service = AssistantService(
-            fish_expression_prompt(current.conversation_system_prompt, current.conversation_speech),
+            fish_expression_prompt(system_prompt, current.conversation_speech),
             current.ai_provider,
             app.config["PETEY_MEMORY"],
             tool_registry=tools,
@@ -681,6 +709,36 @@ def create_desktop_app(
     def desktop_tools():
         return jsonify({"filesystem": app.config["PETEY_MCP"].public_status()})
 
+    @app.route("/api/desktop/tools/browser", methods=["GET", "PUT"])
+    def desktop_browser_settings():
+        manager = app.config["PETEY_WEB_BROWSER"]
+        try:
+            if request.method == "PUT":
+                payload = request.get_json(silent=True) or {}
+                if "search_engine" in payload:
+                    manager.set_search_engine(payload["search_engine"])
+                if "enabled" in payload:
+                    manager.set_enabled(payload["enabled"])
+            return jsonify({"browser": manager.public_status()})
+        except ValueError as exc:
+            return jsonify({"error": str(exc), "browser": manager.public_status()}), 400
+
+    @app.post("/api/desktop/tools/browser/<action>")
+    def desktop_browser_action(action):
+        manager = app.config["PETEY_WEB_BROWSER"]
+        try:
+            if action == "install":
+                manager.install_browser()
+            elif action == "close":
+                manager.close_window()
+            elif action == "open":
+                manager.execute({"action": "open"})
+            else:
+                return jsonify({"error": "Unknown browser action."}), 404
+            return jsonify({"browser": manager.public_status()})
+        except ToolError as exc:
+            return jsonify({"error": str(exc), "browser": manager.public_status()}), 400
+
     @app.get("/api/desktop/mcp/servers")
     def desktop_mcp_servers():
         return jsonify(app.config["PETEY_GENERAL_MCP"].public_status())
@@ -866,6 +924,7 @@ def create_desktop_app(
             temporary=temporary,
             mcp_manager=app.config["PETEY_MCP"],
             general_mcp_manager=app.config["PETEY_GENERAL_MCP"],
+            browser_manager=app.config["PETEY_WEB_BROWSER"],
             addon_manager=app.config["PETEY_ADDONS"],
             surface=identity.surface,
             image_references=image_references,
@@ -1031,6 +1090,8 @@ def create_desktop_app(
         wake_word = str(configuration.get("wake_word") or "Petey")
         mime = uploaded.mimetype or "audio/wav"
         provider = str(configuration.get("provider") or "automatic")
+        if request.form.get("local_only") == "1" and provider != "local_whisper":
+            return jsonify({"error": "Car voice requires Local Whisper on Desktop/VPS. Select Local Whisper in microphone settings."}), 409
         failures = []
         if provider == "local_whisper":
             try:

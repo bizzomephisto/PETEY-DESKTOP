@@ -21,7 +21,7 @@ from petey.subscription_plans import DEFAULT_PLAN, normalize_plan
 PERSONA_SLOT_COUNT = 5
 DISCORD_MEMORY_POLICIES = {"room_only", "store", "shared"}
 PETEY_CONTROL_SURFACES = {"petey_desktop", "mobile_petey", "discord"}
-DESKTOP_THEMES = {"nebula", "cognitive", "signal", "terminal", "ember"}
+DESKTOP_THEMES = {"nebula", "cognitive", "signal", "terminal", "material"}
 COMMAND_RAIL_SECTIONS = {"media", "session", "launch", "addons", "signals", "tasks"}
 DEFAULT_COMMAND_RAIL_SECTIONS = {section: True for section in COMMAND_RAIL_SECTIONS}
 DEFAULT_COMMAND_RAIL_ORDER = ["media", "session", "launch", "tasks", "addons", "signals"]
@@ -31,11 +31,11 @@ DEFAULT_THEME_ACCENTS = {
     "cognitive": "#ff9d32",
     "signal": "#31d7a5",
     "terminal": "#63ff8f",
-    "ember": "#ff8a4c",
+    "material": "#a0d5ca",
 }
 LEGACY_THEME_MIGRATION = {
     "midnight": "nebula", "ocean": "nebula", "forest": "signal",
-    "paper": "cognitive", "studio": "cognitive",
+    "paper": "cognitive", "studio": "cognitive", "ember": "material",
 }
 HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 PETEY_CONTROL_ID = re.compile(r"[a-z][a-z0-9_-]{1,63}")
@@ -171,6 +171,9 @@ class DesktopState:
             if key not in settings["preferences"]:
                 settings["preferences"][key] = value
                 changed = True
+        if settings["preferences"].get("visual_style") == "neural_core":
+            settings["preferences"]["visual_style"] = "ttik"
+            changed = True
         try:
             plan_preview = normalize_plan(settings.get("plan_preview"))
         except ValueError:
@@ -234,6 +237,11 @@ class DesktopState:
                 color = str(saved_accents.get(theme) or "")
                 if HEX_COLOR.fullmatch(color):
                     normalized_accents[theme] = color.lower()
+            legacy_ember_accent = str(saved_accents.get("ember") or "").lower()
+            if (not HEX_COLOR.fullmatch(str(saved_accents.get("material") or ""))
+                    and HEX_COLOR.fullmatch(legacy_ember_accent)
+                    and legacy_ember_accent != "#ff8a4c"):
+                normalized_accents["material"] = legacy_ember_accent
             legacy_studio_accent = str(saved_accents.get("studio") or "")
             if not HEX_COLOR.fullmatch(str(saved_accents.get("cognitive") or "")) and HEX_COLOR.fullmatch(legacy_studio_accent):
                 normalized_accents["cognitive"] = legacy_studio_accent.lower()
@@ -327,6 +335,14 @@ class DesktopState:
             changed = True
         elif not isinstance(filesystem_tool.get("enabled"), bool):
             filesystem_tool["enabled"] = False
+            changed = True
+        browser_tool = settings["tools"].get("web_browser")
+        if not isinstance(browser_tool, dict) or not isinstance(browser_tool.get("enabled"), bool):
+            settings["tools"]["web_browser"] = {"enabled": False}
+            changed = True
+        browser_tool = settings["tools"]["web_browser"]
+        if not isinstance(browser_tool.get("search_engine"), str) or browser_tool.get("search_engine") not in {"auto", "brave", "duckduckgo", "bing", "google"}:
+            browser_tool["search_engine"] = "auto"
             changed = True
         if not isinstance(settings.get("ai_provider"), dict):
             settings["ai_provider"] = {
@@ -795,8 +811,10 @@ class DesktopState:
             preferences["visual_mode"] = bool(changes["visual_mode"])
         if "visual_style" in changes:
             style = str(changes.get("visual_style") or "synapse_network")
+            if style == "neural_core":
+                style = "ttik"
             if style not in {
-                "neural_core", "synapse_drift", "orbital_mind", "signal_bloom",
+                "ttik", "synapse_drift", "orbital_mind", "signal_bloom",
                 "aurora_flow", "constellation_field", "cognitive_pulse", "synapse_network",
             }:
                 raise ValueError("Choose a supported visual style.")
@@ -816,14 +834,21 @@ class DesktopState:
         return copy.deepcopy(self.settings.get("tools", {"filesystem": {"enabled": False}}))
 
     def update_tool(self, tool_id: str, enabled: bool) -> dict:
-        if tool_id != "filesystem":
+        if tool_id not in {"filesystem", "web_browser"}:
             raise ValueError("Unknown tool connection.")
         tools = self.tools
-        tools[tool_id] = {"enabled": bool(enabled)}
+        tools[tool_id] = {**tools.get(tool_id, {}), "enabled": bool(enabled)}
         with self._lock:
             self.settings["tools"] = tools
             self._write_json(self.settings_path, self.settings)
         return copy.deepcopy(tools[tool_id])
+
+    def update_browser_search_engine(self, engine):
+        if not isinstance(engine, str) or engine not in {"auto", "brave", "duckduckgo", "bing", "google"}:
+            raise ValueError("Choose Auto, Brave, DuckDuckGo, Bing, or Google.")
+        with self._lock:
+            self.settings["tools"].setdefault("web_browser", {"enabled": False})["search_engine"] = engine
+            self._write_json(self.settings_path, self.settings)
 
     @property
     def approved_folders(self) -> list[dict]:

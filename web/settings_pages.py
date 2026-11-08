@@ -22,7 +22,7 @@ SETTINGS_PAGES = (
          summary="Local AI, optional keys & capability models", icon="◇", group="Connections",
          save_hint="Each service has its own Save button. Saving a key keeps the other saved keys."),
     dict(id="tools", title="Tools & integrations", description="Manage the capabilities PETEY can use during a conversation.",
-         summary="Approved folders, MCP & add-ons", icon="⌘", group="Connections",
+         summary="Web browser, approved folders, MCP & addons", icon="⌘", group="Connections",
          save_hint="Connection switches apply immediately. Add-on changes require a restart."),
     dict(id="knowledge", title="Knowledge files", description="Add reference material and check what PETEY can find.",
          summary="Upload, manage & search reference files", icon="▤", group="Your data",

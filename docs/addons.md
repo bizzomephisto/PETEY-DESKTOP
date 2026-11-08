@@ -217,6 +217,14 @@ fields. An add-on may render one HTTPS image beneath the visible reply with
 characters, avoid secrets, suppress repeats at the source, and provide a disabled-
 by-default user toggle because each event can invoke the configured chat provider.
 
+Spotify track transitions may also include `spotify_dj_cue="track_transition"`,
+`spotify_dj_persona`, `spotify_dj_prompt` (the selected persona with track placeholders
+rendered), and the boolean `spotify_dj_mix_with_profile`. For background events from
+`spotify` only, PETEY applies this DJ prompt to the response's system profile. Mixing
+off replaces the conversation persona for that response; mixing on combines both.
+The saved conversation persona is unchanged. Other add-on events retain the normal
+conversation profile.
+
 ## Sidebar panels and browser assets
 
 Panel HTML is inserted inside `<section id="view-addon-<id>">`. Add-on JavaScript

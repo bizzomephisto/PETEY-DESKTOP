@@ -1,6 +1,6 @@
 # PETEY
 
-Current version: **v0.21.1** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
+Current version: **v0.21.2** · Previous experimental preview: **v0.19.0-experimental.1** · [Release notes](CHANGELOG.md)
 
 **[Read the PETEY Wiki](https://github.com/bizzomephisto/PETEY-DESKTOP/wiki)**
 
@@ -31,13 +31,12 @@ limits](docs/deapi-image-editing.md).
 
 Current desktop development preview, captured October 2026. Screenshots use demo
 conversations, model data, and artwork; they contain no private chats or credentials.
-Some controls shown here belong to pending desktop changes rather than the tagged release.
 
 ![PETEY desktop conversation with demo artwork](docs/screenshots/chat.png)
 
 | Create | Audio-reactive visual mode |
 | --- | --- |
-| ![PETEY media studio with demo artwork](docs/screenshots/media.png) | ![PETEY Neural Core visual mode](docs/screenshots/visual-mode.png) |
+| ![PETEY media studio with demo artwork](docs/screenshots/media.png) | ![PETEY TTIK voice display with microphone waveform](docs/screenshots/visual-mode.png) |
 
 | Settings overview | Gallery actions |
 | --- | --- |
@@ -111,6 +110,7 @@ speed, and hardware setup.
 - Visual thumbnail browser for selecting source images
 - Multiple saved chats, UI scaling, collapsible navigation, and always-on-top mode
 - Per-chat saved Petey profiles with visible header assignment, system-persona fallback, and jump-to-latest navigation
+- [Visible web browser](docs/web-browser.md), with an on/off switch, a separate local browser window, web search, page reading, and link/form interaction
 - Read-only Filesystem MCP tools scoped to folders approved under Settings → Tools
 - [Discord bot bridge](docs/discord.md) with online Gateway presence, deAPI media slash commands, startup auto-connect, AI-enhanced room prompts, adaptive participation, watched topics, and approved channel-management proposals
 - [Add-on system](docs/addons.md) with explicit enablement, lifecycle hooks, API routes, sidebar panels, shared desktop services, and model-tool extensions
@@ -412,3 +412,13 @@ Core layout:
 - `web/desktop_app.py` — loopback Flask API
 - `web/templates/desktop.html` and `web/static/desktop.*` — desktop interface
 - `petey/quick_window.py` — cursor-anchored compact interface
+
+### Connected Android app
+
+This Desktop release supports two separately distributed Android companion builds.
+The full-interface 0.3 build opens Chat, Create, Gallery, Addons, and Settings
+after pairing and granting an interface session. The phone-voice 0.4 build uses
+the local-transcription endpoint and requires Local Whisper on Desktop or VPS.
+Desktop or VPS retains memory, models, tools, and speech generation. The
+companion source and setup notes live in the separate
+`petey-android-companion` project.
